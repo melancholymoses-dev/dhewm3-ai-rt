@@ -56,6 +56,7 @@ layout(set = 0, binding = 3) uniform GIParams {
     int   stochasticLights; // rchit only — declared here so the block stays in sync
     int   useGbufNormal;    // P9 — r_rtGbufNormals, and 0 when no G-buffer exists
     int   checkerPhase;     // which half of the checkerboard this dispatch traces
+    float playerExcludeRadius; // camera-to-pixel distance below which player instances are culled
 } params;
 
 #include "gi_payload.glsl"
@@ -123,6 +124,13 @@ void main()
     uint  baseSeed  = rt_WorldAnchoredSeed(worldPos, params.frameIndex);
     float phiOffset = rt_PixelPhiOffset(coord, params.frameIndex);
 
+    // Same close-to-eye test as shadow_ray.rgen: this pixel is the first-person body,
+    // standing inside the world body.  Without this the bounce is occluded by that
+    // duplicate too, so direct and indirect both go to zero and the body reads black.
+    uint giCullMask = 0xFFu;
+    if (params.playerExcludeRadius > 0.0 && distance(worldPos, camPos) < params.playerExcludeRadius)
+        giCullMask = 0xFEu;
+
     vec3 accumColour = vec3(0.0);
     int  N           = max(1, params.numSamples);
 
@@ -161,7 +169,7 @@ void main()
         traceRayEXT(
             topLevelAS,
             gl_RayFlagsNoneEXT,
-            0xFF,               // cull mask (all instances)
+            giCullMask,         // 0xFE drops the player body for close-to-eye pixels
             0,                  // SBT offset
             0,                  // SBT stride
             0,                  // miss index

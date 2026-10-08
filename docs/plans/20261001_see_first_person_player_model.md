@@ -312,7 +312,7 @@ offset can cancel. See the torso-channel note under Open Issues.
 |---|---|---|
 | 1 | Capped shoulder rim rendered black and occluded everything below it | Fixed — cap deleted, mesh re-exported (2042 tris) |
 | 2 | Run cycle leans the torso into view; you see your own back | Fix by cutting the mesh to the hip line (Z≈47-48) — see below |
-| 3 | Body renders **pitch black** under a light, not merely shadowed | Root cause found — see below. Still open |
+| 3 | Body renders **pitch black** under a light, not merely shadowed | Fixed — `r_rtPlayerExcludeRadius`, see below. Untested in-game |
 | 6 | Pitch to 89° shows the backs of your own legs | Fixed — `pm_firstPersonBodyMaxPitch` 70 |
 | 4 | Pelvis visible when looking down ("seeing your own backside") | Prefer trimming the mesh's rear over offsetting — see below |
 | 5 | Offset body cast a second, displaced shadow | Fixed — stage 4 landed, fp body out of the TLAS |
@@ -363,8 +363,35 @@ ceiling light 80-150 units up never engages it however high the value — only t
 value was large enough to cover everything, and raising the default that far also loses the
 world body's shadow cast on the floor.
 
-Real fix: flag fp-body pixels in the G-buffer and force cull mask `0xFE` for rays originating
-there — shadow *and* GI, not just shadow. Its own chunk.
+**Fix as built — key the mask on ray-origin distance, not a G-buffer flag.** There is no free
+G-buffer channel (`gbufNormal.a` is F0, `gbufAlbedo.a` is `1 - tcClass`, motion vectors are
+R16G16), so a per-pixel flag would have meant a new attachment plus an extra draw. The
+requirement restates as *rays leaving a surface inside the player's own volume must not hit
+the player's own body* — a property of the ray origin, which every rgen already has.
+
+`r_rtPlayerExcludeRadius` (archived, default 40), defined in `vk_shadows.cpp` and shared:
+
+| Shader | Change |
+|---|---|
+| [shadow_ray.rgen](../../neo/renderer/glsl/shadow_ray.rgen#L303) | per-pixel `cullMask`; reuses the existing `camDist` |
+| [gi_ray.rgen](../../neo/renderer/glsl/gi_ray.rgen#L130) | per-pixel `giCullMask`; reuses the existing `camPos` |
+| [gi_probe_trace.rgen](../../neo/renderer/glsl/gi_probe_trace.rgen#L100) | `0xFE` **unconditionally** |
+
+Neither rgen needed a new camera-position uniform — both already derive `camPos` from
+`invViewProj`. `ShadowParamsUBO` absorbed the radius into `_pad1[0]` (still 192 bytes);
+`GIParamsUBO` grew 128 → 144. `gi_ray.rchit` needs no edit: it already declares a block that
+stops at `stochasticLights`, so appending at the end leaves every earlier offset intact.
+
+Probe GI is unconditional on purpose. Probes are a static world grid; letting a walking player
+occlude them bakes a moving actor into the grid and pops as they pass.
+
+Radius 40 covers thighs and pelvis (25-30 units from the eye) and deliberately leaves boots
+(~65) and the floor at the feet (~68) alone, so the body still casts its contact shadow. Dark
+boots are accepted — read as black leather.
+
+`r_rtShadowPlayerExcludeDist` stays at 30 and keeps its original, separate job: stop an
+*invisible* body casting a shadow from nowhere. That job still exists whenever
+`pm_showFirstPersonBody` is 0, which is the default.
 
 **The fp body has no collision.** `AddEntityDef` creates a render entity only; the player's
 clip model is still `idPhysics_Player`'s bbox plus `SetCombatModel()`. Enabling the body

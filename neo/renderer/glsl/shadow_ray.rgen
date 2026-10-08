@@ -53,6 +53,7 @@ layout(set = 0, binding = 3) uniform ShadowParams {
     vec4  lightAxisFwd;         // point-light 3rd axis; zero half-extent for projected (flat aperture)
     uint  lightKind;            // 0 = point (ellipsoid), 1 = projected (aperture rect) — informational only
     float biasFootprintCoeff;   // world units per render pixel, per unit of view distance
+    float playerExcludeRadius;  // camera-to-pixel distance below which player instances are culled
 } params;
 
 layout(location = 0) rayPayloadEXT float shadowFactor;
@@ -295,6 +296,15 @@ void main() {
     float floorTerm   = params.biasErrCoeff * camDist * camDist;
     float adaptBias   = max( baseTerm, floorTerm );
 
+    // A pixel this close to the eye is the first-person body, which stands inside the
+    // world body — rays from it hit that duplicate within a couple of units and shadow
+    // it to black.  Drop player instances (mask 0x01) for those pixels only, so the
+    // world still shadows the body and the body still shadows the floor.
+    uint cullMask = params.rayCullMask;
+    if ( params.playerExcludeRadius > 0.0 && camDist < params.playerExcludeRadius ) {
+        cullMask = 0xFEu;
+    }
+
     // Debug mode 9: the bias budget.  The origin bias is only *visible* (as peter-panning,
     // shadows detaching from contact points) once it exceeds one pixel's world footprint,
     // and that footprint grows as d while the reconstruction error grows as d^2 — so this
@@ -383,7 +393,7 @@ void main() {
         traceRayEXT(
             topLevelAS,
             gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-            params.rayCullMask, // cull mask (0xFE excludes player body near lights)
+            cullMask, // 0xFE excludes player body (near lights, or close-to-eye pixels)
             0,      // SBT offset
             0,      // SBT stride
             0,      // miss index

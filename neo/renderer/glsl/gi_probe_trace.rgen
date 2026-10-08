@@ -94,7 +94,10 @@ void main()
 
     traceRayEXT(topLevelAS,
                 gl_RayFlagsNoneEXT,
-                0xFF, // cull mask (all instances)
+                // Unconditional, unlike the per-pixel test in gi_ray.rgen: probes are a
+                // static world grid, and letting a walking player occlude them bakes a
+                // moving actor into the grid and pops as they pass.
+                0xFEu, // cull mask — never let the player body occlude probe rays
                 0,    // SBT offset
                 0,    // SBT stride
                 0,    // miss index — gi_ray.rmiss, same as the per-pixel path
