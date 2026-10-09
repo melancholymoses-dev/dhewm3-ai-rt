@@ -7277,9 +7277,15 @@ void idPlayer::UpdateViewAngles(void)
         // dhewm3-rt: the fp body now gives those feet geometry, so the clamp below has to
         // tighten further — the view is on the spine, and past ~70 degrees you are looking
         // at the backs of your own legs from an angle no neck reaches.
+        //
+        // Local client only.  ClientPredictionThink() runs this for remote players too, and
+        // pm_firstPersonBodyMaxPitch is a local display preference with no CVAR_NETWORKSYNC
+        // — applying it to a remote player would clamp a pitch the server never clamped.
+        // Matches the gate UpdateFirstPersonBody() uses, so body and clamp agree.
         float maxPitch = pm_maxviewpitch.GetFloat();
         const float fpMaxPitch = pm_firstPersonBodyMaxPitch.GetFloat();
-        if (pm_showFirstPersonBody.GetBool() && fpMaxPitch < maxPitch)
+        if (pm_showFirstPersonBody.GetBool() && entityNumber == gameLocal.localClientNum &&
+            fpMaxPitch < maxPitch)
         {
             maxPitch = fpMaxPitch;
         }
@@ -11657,6 +11663,10 @@ void idPlayer::ClientPredictionThink(void)
     }
 
     Present();
+
+    // dhewm3-rt: multiplayer clients run this instead of Think(), so the fp body has to
+    // be updated here too or it never gets created in a network game.
+    UpdateFirstPersonBody();
 
     UpdateDamageEffects();
 

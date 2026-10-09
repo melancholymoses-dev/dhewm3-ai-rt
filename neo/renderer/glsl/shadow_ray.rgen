@@ -298,8 +298,13 @@ void main() {
 
     // A pixel this close to the eye is the first-person body, which stands inside the
     // world body — rays from it hit that duplicate within a couple of units and shadow
-    // it to black.  Drop player instances (mask 0x01) for those pixels only, so the
-    // world still shadows the body and the body still shadows the floor.
+    // it to black.  Drop mask 0x01 for those pixels only, so the world still shadows the
+    // body and the body still shadows the floor.
+    //
+    // 0x01 means noSelfShadow, not "player": glass (BrittleFracture), BFG secondaries and
+    // MP player icons carry it too, so they also stop shadowing near-camera pixels.  Narrow
+    // blast radius (only within the radius) and a pre-existing conflation rather than one
+    // introduced here — see the player-mask-bit note in the plan.
     uint cullMask = params.rayCullMask;
     if ( params.playerExcludeRadius > 0.0 && camDist < params.playerExcludeRadius ) {
         cullMask = 0xFEu;

@@ -127,6 +127,7 @@ void main()
     // Same close-to-eye test as shadow_ray.rgen: this pixel is the first-person body,
     // standing inside the world body.  Without this the bounce is occluded by that
     // duplicate too, so direct and indirect both go to zero and the body reads black.
+    // 0xFE drops all noSelfShadow instances, not only the player — see shadow_ray.rgen.
     uint giCullMask = 0xFFu;
     if (params.playerExcludeRadius > 0.0 && distance(worldPos, camPos) < params.playerExcludeRadius)
         giCullMask = 0xFEu;

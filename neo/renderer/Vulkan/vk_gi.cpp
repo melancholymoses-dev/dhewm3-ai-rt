@@ -637,7 +637,7 @@ extern VkImageView VK_RT_GetNullGbufNormalView(void);
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
 extern idCVar r_rtGbufNormals;   // P9 — defined in vk_gbuffer.cpp
-extern idCVar r_rtPlayerExcludeRadius; // defined in vk_shadows.cpp — fp-body self-occlusion cull
+extern float VK_RT_PlayerExcludeRadius(void); // vk_shadows.cpp — 0 unless the fp body is drawn
 extern idCVar r_rtVolMaxLights;  // defined in vk_vol.cpp — cap for the vol-only selection built below
 extern idCVar r_rtVolMaxDist;    // defined in vk_vol.cpp — vol march reach, used to filter that selection
 extern idCVar r_rtVolDump;       // defined in vk_vol.cpp — one-shot verbatim dump of the vol upload
@@ -2745,7 +2745,7 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // P9: 0 also when the G-buffer isn't available, so the rgen never consults the
     // 1x1 null image it still has bound.
     ubo.useGbufNormal = (vk.gbufferSupported && r_rtGbufNormals.GetBool()) ? 1 : 0;
-    ubo.playerExcludeRadius = r_rtPlayerExcludeRadius.GetFloat();
+    ubo.playerExcludeRadius = VK_RT_PlayerExcludeRadius();
     memcpy(uboMapped, &ubo, sizeof(GIParamsUBO));
 
     // Part B: publish this frame's dynamic offset for the probe trace. It shares

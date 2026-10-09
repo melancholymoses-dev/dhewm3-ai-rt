@@ -167,6 +167,30 @@ idCVar r_rtPlayerExcludeRadius(
     "r_rtPlayerExcludeRadius", "40", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
     "cull the player body from shadow/GI rays leaving pixels closer than this to the eye (0 = off)");
 
+/*
+===============
+VK_RT_PlayerExcludeRadius
+
+Effective radius for the shadow/GI passes.  Zero unless the first-person body is actually
+being drawn: with no fp body there is nothing to protect, and leaving the exclusion on would
+change shading for ordinary world pixels near the camera.  Keeping it tied to the game cvar
+also means toggling pm_showFirstPersonBody is an honest A/B of the whole feature.
+===============
+*/
+float VK_RT_PlayerExcludeRadius(void)
+{
+    static idCVar *showFPBody = NULL;
+    if (showFPBody == NULL)
+    {
+        showFPBody = cvarSystem->Find("pm_showFirstPersonBody"); // game cvar, registered by the game DLL
+    }
+    if (showFPBody == NULL || !showFPBody->GetBool())
+    {
+        return 0.0f;
+    }
+    return r_rtPlayerExcludeRadius.GetFloat();
+}
+
 extern idCVar r_rtUnlockNoShadows; // defined in vk_light_classify.cpp — AR6 noShadows shadow unlock
 static idCVar r_rtShadowDebugMode(
     "r_rtShadowDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
@@ -1029,7 +1053,7 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         {
             ubo.rayCullMask = 0xFFu;
         }
-        ubo.playerExcludeRadius = r_rtPlayerExcludeRadius.GetFloat();
+        ubo.playerExcludeRadius = VK_RT_PlayerExcludeRadius();
 
         if (VK_RTDebugLightFrameAllowed(r_vkRTDebugLights.GetInteger() > 0) && VK_RTDebugLightMatch(vLight))
         {

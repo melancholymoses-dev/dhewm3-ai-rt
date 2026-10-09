@@ -652,6 +652,16 @@ routing is purely SBT-based.
 **Trade-offs:**
 - Cleanest separation: world shaders have no player-specific branches.
 - Extra pipeline size: 7 groups vs 5. Minor cost.
+
+### Known limitation: `noSelfShadow` is not "player"
+
+The `0xFE` masks used by the shadow/GI exclusions above drop every `noSelfShadow` instance,
+not only the player — glass, BFG secondaries and MP player icons share mask `0x01`. Narrow
+blast radius here (inside `r_rtPlayerExcludeRadius` only), and a pre-existing conflation
+rather than one introduced by this work.
+
+Tracked as its own stage in `20261009_vol_fix.md` — it is a TLAS-build defect with wider
+symptoms than this feature, including broken reflections in breakable glass.
 - Because the body is opaque to the main reflection ray, a *second* co-located player
   instance (the fp body, before stage 4 lands) is visually indistinguishable from the first.
 
