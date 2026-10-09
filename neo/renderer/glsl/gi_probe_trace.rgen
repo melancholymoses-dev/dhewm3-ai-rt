@@ -94,7 +94,15 @@ void main()
 
     traceRayEXT(topLevelAS,
                 gl_RayFlagsNoneEXT,
-                0xFF, // cull mask (all instances)
+                // Unconditional, unlike the per-pixel test in gi_ray.rgen: probes are a
+                // static world grid, and letting a walking player occlude them bakes a
+                // moving actor into the grid and pops as they pass.
+                //
+                // 0xFE drops every noSelfShadow instance, not just the player — glass
+                // (BrittleFracture), BFG secondaries and MP player icons share mask 0x01.
+                // Defensible here (all transient or transparent), but it is a conflation,
+                // not a precise filter.  See the player-mask-bit note in the plan.
+                0xFEu, // cull mask — no noSelfShadow instance occludes probe rays
                 0,    // SBT offset
                 0,    // SBT stride
                 0,    // miss index — gi_ray.rmiss, same as the per-pixel path

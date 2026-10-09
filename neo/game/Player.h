@@ -699,6 +699,13 @@ class idPlayer : public idActor
     idPlayerIcon playerIcon;
     idAimAssist aimAssist; // dhewm3-rt: gamepad aim assist, transient (not saved)
 
+    // dhewm3-rt: local first-person body.  Borrows this player's animator joint array,
+    // so it needs no animator, model def or anim bindings of its own.  Transient: the
+    // handle is not saved, UpdateFirstPersonBody() recreates it on demand.
+    renderEntity_t fpBodyRenderEnt;
+    qhandle_t fpBodyHandle;
+    bool fpBodyJointsWarned;
+
     bool selfSmooth;
 
     void LookAtKiller(idEntity *inflictor, idEntity *attacker);
@@ -727,6 +734,8 @@ class idPlayer : public idActor
     void Move(void);
     void UpdatePowerUps(void);
     void UpdateDeathSkin(bool state_hitch);
+    void UpdateFirstPersonBody(void); // dhewm3-rt
+    void FreeFirstPersonBody(void);   // dhewm3-rt
     void ClearPowerup(int i);
     void SetSpectateOrigin(void);
 

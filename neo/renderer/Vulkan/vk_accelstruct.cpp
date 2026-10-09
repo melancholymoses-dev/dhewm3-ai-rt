@@ -1171,6 +1171,15 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             ent->blasFrameCount = tr.frameCount;
             continue;
         }
+        // View-local-only entities (first-person body) duplicate world geometry that is
+        // already in the TLAS, so they must never be RT occluders — a duplicate casts a
+        // second shadow, visibly displaced once the fp body is offset from the world body.
+        // Same blasFrameCount stamp as above so pass 3 skips them too.
+        if (ent->parms.allowSurfaceInViewID)
+        {
+            ent->blasFrameCount = tr.frameCount;
+            continue;
+        }
 
         // Build or rebuild BLAS for this entity if needed
         idRenderModel *model = ent->dynamicModel ? ent->dynamicModel : ent->parms.hModel;
@@ -1474,6 +1483,11 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             if (ent->dynamicModel)
                 continue;
 
+            // View-local-only entities are excluded from every pass, so the invariant
+            // holds uniformly rather than depending on the dynamicModel check above.
+            if (ent->parms.allowSurfaceInViewID)
+                continue;
+
             // Must have a valid cached BLAS — no building allowed in this pass.
             idRenderModel *model = ent->parms.hModel;
             if (!model || model->NumSurfaces() == 0)
@@ -1589,6 +1603,12 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             // Exclude first-person weapon (view model). weaponDepthHack identifies
             // the view-space gun mesh — it must not appear in RT reflections.
             if (ent->parms.weaponDepthHack)
+                continue;
+
+            // Same for view-local-only entities (first-person body): a duplicate of
+            // world geometry already in the TLAS. Pass 1 stamps blasFrameCount, but this
+            // pass also runs when the entity was never in viewEntitys, so check here too.
+            if (ent->parms.allowSurfaceInViewID)
                 continue;
 
             // Regenerate the current animation pose. The game keeps parms.joints

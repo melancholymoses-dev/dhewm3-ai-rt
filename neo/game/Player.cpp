@@ -34,6 +34,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "framework/async/NetworkSystem.h"
 #include "framework/DeclEntityDef.h"
 #include "renderer/RenderSystem.h"
+#include "renderer/ModelManager.h" // dhewm3-rt: first-person body model lookup
 
 #include "gamesys/SysCvar.h"
 #include "script/Script_Thread.h"
@@ -1262,6 +1263,10 @@ idPlayer::idPlayer()
     isLagged = false;
     isChatting = false;
 
+    memset(&fpBodyRenderEnt, 0, sizeof(fpBodyRenderEnt));
+    fpBodyHandle = -1;
+    fpBodyJointsWarned = false;
+
     selfSmooth = false;
 }
 
@@ -1799,6 +1804,7 @@ idPlayer::~idPlayer()
 {
     delete weapon.GetEntity();
     weapon = NULL;
+    FreeFirstPersonBody();
 }
 
 /*
@@ -6107,10 +6113,26 @@ void idPlayer::UpdateViewAngles(void)
     }
     else
     {
-        if (viewAngles.pitch > pm_maxviewpitch.GetFloat())
+        // dhewm3-rt: the fp body now gives those feet geometry, so the clamp below has to
+        // tighten further — the view is on the spine, and past ~70 degrees you are looking
+        // at the backs of your own legs from an angle no neck reaches.
+        //
+        // Local client only.  ClientPredictionThink() runs this for remote players too, and
+        // pm_firstPersonBodyMaxPitch is a local display preference with no CVAR_NETWORKSYNC
+        // — applying it to a remote player would clamp a pitch the server never clamped.
+        // Matches the gate UpdateFirstPersonBody() uses, so body and clamp agree.
+        float maxPitch = pm_maxviewpitch.GetFloat();
+        const float fpMaxPitch = pm_firstPersonBodyMaxPitch.GetFloat();
+        if (pm_showFirstPersonBody.GetBool() && entityNumber == gameLocal.localClientNum &&
+            fpMaxPitch < maxPitch)
+        {
+            maxPitch = fpMaxPitch;
+        }
+
+        if (viewAngles.pitch > maxPitch)
         {
             // don't let the player look down enough to see the shadow of his (non-existant) feet
-            viewAngles.pitch = pm_maxviewpitch.GetFloat();
+            viewAngles.pitch = maxPitch;
         }
         else if (viewAngles.pitch < pm_minviewpitch.GetFloat())
         {
@@ -7681,6 +7703,135 @@ void idPlayer::StartFxOnBone(const char *fx, const char *bone)
 
 /*
 ==============
+idPlayer::FreeFirstPersonBody
+==============
+*/
+void idPlayer::FreeFirstPersonBody(void)
+{
+    if (fpBodyHandle == -1)
+    {
+        return;
+    }
+
+    gameRenderWorld->FreeEntityDef(fpBodyHandle);
+    fpBodyHandle = -1;
+
+    if (pm_firstPersonBodyDebug.GetBool())
+    {
+        gameLocal.Printf("fpBody: freed (player %d)\n", entityNumber);
+    }
+}
+
+/*
+==============
+idPlayer::UpdateFirstPersonBody
+
+Local-only torso/legs shown when looking down in first person.  The world body stays
+untouched: it is still suppressed in this view and still carries the RT lighting.
+
+The fp entity borrows this player's animator joint array rather than owning an
+animator.  models/sp_player.md5mesh keeps the same 75-joint hierarchy as the world
+body, so the pose is correct by construction and costs no second evaluation.
+
+Must be called after Present() so renderEntity.origin/axis/bounds are current.
+==============
+*/
+void idPlayer::UpdateFirstPersonBody(void)
+{
+    // Only the local client has a first-person view to show this in.  The viewID gate
+    // below would hide it for everyone else anyway, but there is no point building it.
+    if (!pm_showFirstPersonBody.GetBool() || fl.hidden || spectating || !animator.ModelHandle() ||
+        entityNumber != gameLocal.localClientNum)
+    {
+        FreeFirstPersonBody();
+        return;
+    }
+
+    idRenderModel *model = renderModelManager->FindModel("models/sp_player.md5mesh");
+    if (!model || model->IsDefaultModel())
+    {
+        if (!fpBodyJointsWarned)
+        {
+            gameLocal.Warning("fpBody: models/sp_player.md5mesh missing or failed to load");
+            fpBodyJointsWarned = true;
+        }
+        FreeFirstPersonBody();
+        return;
+    }
+
+    // The world body is dropped from viewEntitys by suppressSurfaceInViewID, so its
+    // ModelCallback never fires in this view and the joint array would go stale.
+    // CreateFrame early-outs when the pose is already current for this tick.
+    animator.CreateFrame(gameLocal.time, false);
+
+    int numJoints = 0;
+    idJointMat *joints = NULL;
+    animator.GetJoints(&numJoints, &joints);
+
+    if (!joints || numJoints != model->NumJoints())
+    {
+        if (!fpBodyJointsWarned)
+        {
+            gameLocal.Warning("fpBody: joint mismatch - animator has %d, sp_player.md5mesh wants %d", numJoints,
+                              model->NumJoints());
+            fpBodyJointsWarned = true;
+        }
+        FreeFirstPersonBody();
+        return;
+    }
+
+    const bool firstBuild = (fpBodyHandle == -1);
+    if (firstBuild)
+    {
+        memset(&fpBodyRenderEnt, 0, sizeof(fpBodyRenderEnt));
+        fpBodyRenderEnt.hModel = model;
+        fpBodyRenderEnt.entityNum = entityNumber;
+        // No callback: the pose is pushed from here, and ModelCallback would resolve
+        // renderEntity->entityNum back to the player and re-enter the animator.
+        fpBodyRenderEnt.callback = NULL;
+        // Visible only in this player's own first-person view.  Mirrors, remote cameras
+        // and third person all use viewID 0, so they drop it with no extra code.
+        fpBodyRenderEnt.allowSurfaceInViewID = entityNumber + 1;
+        // Keep out of the stencil shadow path; RT exclusion is handled in the renderer.
+        fpBodyRenderEnt.noShadow = true;
+        fpBodyRenderEnt.noSelfShadow = true;
+        fpBodyRenderEnt.weaponDepthHack = false;
+    }
+
+    fpBodyRenderEnt.numJoints = numJoints;
+    fpBodyRenderEnt.joints = joints;
+    fpBodyRenderEnt.origin = renderEntity.origin;
+    fpBodyRenderEnt.axis = renderEntity.axis;
+    // Horizontal only.  axis[0] is the body's forward vector, so this tracks yaw; a vertical
+    // shift is deliberately not offered because it would sink the feet through the floor.
+    const float fpOffset = pm_firstPersonBodyOffset.GetFloat();
+    if (fpOffset != 0.0f)
+    {
+        fpBodyRenderEnt.origin += renderEntity.axis[0] * fpOffset;
+    }
+    // World-body bounds are a superset of the trimmed mesh, so culling stays conservative.
+    fpBodyRenderEnt.bounds = renderEntity.bounds;
+    // Track the world body's skin/parms so influence and powerup effects match.
+    fpBodyRenderEnt.customSkin = renderEntity.customSkin;
+    memcpy(fpBodyRenderEnt.shaderParms, renderEntity.shaderParms, sizeof(fpBodyRenderEnt.shaderParms));
+
+    if (firstBuild)
+    {
+        fpBodyHandle = gameRenderWorld->AddEntityDef(&fpBodyRenderEnt);
+        if (pm_firstPersonBodyDebug.GetBool())
+        {
+            gameLocal.Printf("fpBody: created handle %d, %d joints, viewID gate %d, origin (%s)\n", fpBodyHandle,
+                             numJoints, fpBodyRenderEnt.allowSurfaceInViewID, fpBodyRenderEnt.origin.ToString());
+        }
+    }
+    else
+    {
+        gameRenderWorld->UpdateEntityDef(fpBodyHandle, &fpBodyRenderEnt);
+    }
+}
+
+/*
+==============
 idPlayer::Think
 
 Called every tic for each player
@@ -7926,6 +8077,10 @@ void idPlayer::Think(void)
 
         playerView.CalculateShake();
     }
+
+    // dhewm3-rt: after Present(), so renderEntity origin/axis/bounds are current.
+    // Outside the g_stopTime block so the body can still be torn down while paused.
+    UpdateFirstPersonBody();
 
     if (!(thinkFlags & TH_THINK))
     {
@@ -9761,6 +9916,10 @@ void idPlayer::ClientPredictionThink(void)
     }
 
     Present();
+
+    // dhewm3-rt: multiplayer clients run this instead of Think(), so the fp body has to
+    // be updated here too or it never gets created in a network game.
+    UpdateFirstPersonBody();
 
     UpdateDamageEffects();
 

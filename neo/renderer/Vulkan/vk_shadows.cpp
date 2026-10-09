@@ -60,7 +60,10 @@ struct ShadowParamsUBO
     // visible as peter-panning once it exceeds the pixel footprint, and the
     // footprint grows as d while the reconstruction error grows as d^2.
     float biasFootprintCoeff; // offset 180
-    float _pad1[2];           // pad block to 16-byte multiple (192 total) // offset 184
+    // Camera-to-pixel distance below which player instances are culled from shadow rays.
+    // Separate from rayCullMask above, which is a per-light decision.
+    float playerExcludeRadius; // was _pad1[0] // offset 184
+    float _pad1;               // pad block to 16-byte multiple (192 total) // offset 188
 };
 // Must stay within the shared RT UBO ring stride (384 bytes, sized off VkInteractionUBO
 // in vk_backend.cpp) and match the std140 layout of ShadowParams in shadow_ray.rgen exactly.
@@ -152,6 +155,41 @@ static idCVar r_vkRTDebugLightFilter(
 static idCVar r_rtShadowPlayerExcludeDist(
     "r_rtShadowPlayerExcludeDist", "30", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
     "exclude player body from shadow rays when player-to-light distance is below this (0 = never exclude)");
+
+// Distinct from the cvar above, which keys on light-to-camera distance and exists so an
+// *invisible* body doesn't cast a shadow from nowhere.  This one keys on pixel-to-camera
+// distance: a pixel this close to the eye is the first-person body, which stands inside the
+// world body, so rays leaving it hit that duplicate and lose both direct light and bounce.
+// Shared with vk_gi.cpp — the same exclusion must apply to GI or the body still reads black.
+// ~40 covers thighs and pelvis (25-30 units out) while leaving boots (~65) and the floor at
+// the feet (~68) alone, so the body still casts its contact shadow.
+idCVar r_rtPlayerExcludeRadius(
+    "r_rtPlayerExcludeRadius", "40", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+    "cull the player body from shadow/GI rays leaving pixels closer than this to the eye (0 = off)");
+
+/*
+===============
+VK_RT_PlayerExcludeRadius
+
+Effective radius for the shadow/GI passes.  Zero unless the first-person body is actually
+being drawn: with no fp body there is nothing to protect, and leaving the exclusion on would
+change shading for ordinary world pixels near the camera.  Keeping it tied to the game cvar
+also means toggling pm_showFirstPersonBody is an honest A/B of the whole feature.
+===============
+*/
+float VK_RT_PlayerExcludeRadius(void)
+{
+    static idCVar *showFPBody = NULL;
+    if (showFPBody == NULL)
+    {
+        showFPBody = cvarSystem->Find("pm_showFirstPersonBody"); // game cvar, registered by the game DLL
+    }
+    if (showFPBody == NULL || !showFPBody->GetBool())
+    {
+        return 0.0f;
+    }
+    return r_rtPlayerExcludeRadius.GetFloat();
+}
 
 extern idCVar r_rtUnlockNoShadows; // defined in vk_light_classify.cpp — AR6 noShadows shadow unlock
 static idCVar r_rtShadowDebugMode(
@@ -1015,6 +1053,7 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         {
             ubo.rayCullMask = 0xFFu;
         }
+        ubo.playerExcludeRadius = VK_RT_PlayerExcludeRadius();
 
         if (VK_RTDebugLightFrameAllowed(r_vkRTDebugLights.GetInteger() > 0) && VK_RTDebugLightMatch(vLight))
         {

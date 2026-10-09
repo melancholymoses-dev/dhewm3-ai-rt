@@ -1,9 +1,9 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-09-29 · **Next work: validate U4 in-game + the denoiser retune sweep, then skinned motion vectors.**
+**Status reviewed:** 2026-10-07 · **Next work: First Person Model**
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
-designs live in the linked docs. Prior cycle: `completed/202608_ROADMAP.md`.
+designs live in the linked docs. Prior cycle: `completed/202609_ROADMAP.md`.
 
 ---
 
@@ -35,11 +35,10 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 2 | **Froxel volumetrics + probe GI** — vol/GI sampling moved into world-space caches | `completed/20260906_froxel_probe_gi.md` | ✅ **Closed 2026-09-19.** Both default (`r_rtVolFroxel 1`, `r_rtGIProbes 1`); old paths kept as A/B. Vol 1.63 → 0.29 ms, GI 4.41 → ~1.3 ms |
 | 3 | **FSR upscaling** — render resolution decoupled from display; FSR 1/2 resolve | `completed/20260918_fsr_upscaling.md` | ✅ **Closed 2026-09-30.** U0-U4 landed and validated in-game: `r_fsrRenderScale`, FSR 1 (`r_fsr 1`), motion vectors + Halton jitter, FSR 2.2.1 (`r_fsr 2`) with reactive and T&C masks, texture LOD bias. U4 denoiser retune dropped (~0.1-0.2 ms, no visible double-accumulation). 0.67 scale saves ~2.8 ms of RT at 1440p; arc 2's ~0.7 ms world-space floor caps further gains. U3b (RT texture LOD) and U5 (menu, FSR 3.1, dynamic res, skinned MVs) moved to backlog |
 | 3b | **AO / GI refinement** — AO distance falloff; AO moved from direct light onto GI | `completed/20260930_AO_GI_refine.md` | ✅ Closed 2026-10-02. Two open checks not run (viewmodel AO in debug mode 2, AO cost) |
+| 4 | **Reflection Emitters** - Show emitted particles in reflections | `completed/20261002_reflection_emitters.md | Completed 2026-10-6 | 
+| 5 | **Bloom** - Add lighting bloom around emissive sources| `completed/20260906_bloom_plan.md` | Completed 2026-10-7. |
+| 6 | **Player Body** - Add visible body from first person | `20261001_see_first_person_player.md` | Started 2026-10-7|
 
-- Constants are tuned and a default is selected (raster fallout, reach=1). Closed.
-- U0 gated the screen-space composites on `hasRealCamera` — they had been running twice
-  per frame (3D view + 2D GUI overlay view), doubling the GI/refl/vol contribution. Noted
-  because it shifted the baseline the current constants sit on.
 
 ### Measured RT budget
 
@@ -106,18 +105,18 @@ while new lighting techniques enhance without fighting too much.
 
 | Doc | Owns |
 |---|---|
-| `20260906_bloom_plan.md` | Bloom: emissive-sourced, composited after FSR and before the HUD. B0-B2 validated 2026-10-07; B3's settings menu written. Remaining: `r_rtBloomDebug 3` then the B4 strength sweep — the 0.15 default is swallowed by the tonemap toe. |
-| `see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. |
+| `20261001_see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. |
 | `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine. Load it before chasing any AMD-vs-NVIDIA or device-lost bug. |
 
 ---
 
 ## Completed
 
-All in `completed/`. Waves 1-7 of the original roadmap are done.
+All in `completed/`. 
 
 | Doc | Owns |
 |---|---|
+| `20260906_bloom_plan.md` | Bloom: emissive-sourced, composited after FSR and before the HUD. |
 | `20261002_reflection_emitters.md` | Projectile and smoke-particle glows in glass reflections via an analytic emitter list. |
 | `20260930_AO_GI_refine.md` | **Arc 3b.** AO distance falloff, AO on GI instead of direct light, `r_rtAODebug`, spectrum lights out of GI/vol, projected range from `light_end` |
 | `20260924_controller_gunfeel.md` | Gamepad: radial look stick + ramp fix, rumble (incl. monster steps, chainsaw rev), aim assist, D-pad weapon groups + selector. C6 wheel parked |
@@ -146,9 +145,6 @@ All in `completed/`. Waves 1-7 of the original roadmap are done.
 | AO/GI open checks | `completed/20260930_AO_GI_refine.md` | Dark viewmodel in `r_rtAODebug 2`; AO cost of closest-hit vs first-hit traversal |
 | FSR U5 polish | `completed/20260918_fsr_upscaling.md` U5 | `r_fsrQuality` in the video menu, FSR 3.1 evaluation, dynamic resolution. Skinned-MV double-buffering only on the reopen trigger listed in U5 |
 | RT texture LOD (U3b) | `completed/20260918_fsr_upscaling.md` U3b | RT fetches sample mip 0 at any distance. Real, but not the grating artifact |
-| Adaptive probe hysteresis (was G5 fix 2) | `completed/20260906_froxel_probe_gi.md` | Boost alpha when a probe's new value differs sharply from `prev`. The answer for **doors and moving lights** — G5b handles flicker and explicitly cannot help here. Needs a lower-variance estimator first (`r_rtGIProbeRays 256`), so it costs ~+0.5 ms before it starts - Skip|
-| Probe relocation / per-area isolation | `completed/20260906_froxel_probe_gi.md` | Dropped from G4. Revisit only if leaks reappear on a map where Chebyshev isn't enough - Skip|
-| Projectiles in reflections | `20261002_reflection_emitters.md` | Working in-game (plasma, rockets, lost souls), default on. E5 explosions + E6 scanner beam landed, untested |
-| Roughness-blurred reflections | — | Now the *only* route to reflective non-glass surfaces: sharp mirror reflection is why opaque geometry looks wrong, so "dimmer" can't fix it. Affordable for the first time now the traced pixel set is tiny. Not scheduled. |
+| Adaptive probe hysteresis (was G5 fix 2) | `completed/20260906_froxel_probe_gi.md` | Boost alpha when a probe's new value differs | Roughness-blurred reflections | — | Now the *only* route to reflective non-glass surfaces: sharp mirror reflection is why opaque geometry looks wrong, so "dimmer" can't fix it. Affordable for the first time now the traced pixel set is tiny. Not scheduled. |
 | Runtime emissive-state lights | `completed/20260810_auto_relight.md` | v2 of auto-relight - Skip |
 | Translucent square borders over reflections | `completed/20260423_reflection_enhancements.md` | Option A (deferred glass overlays) is in `VK_RB_DrawShaderPasses`; re-check in-game, likely closable |

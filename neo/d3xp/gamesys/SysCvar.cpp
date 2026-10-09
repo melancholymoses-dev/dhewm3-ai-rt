@@ -413,6 +413,21 @@ idCVar pm_deadheight("pm_deadheight", "20", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_
                      "height of player's bounding box while dead");
 idCVar pm_deadviewheight("pm_deadviewheight", "10", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
                          "height of player's view while dead");
+// dhewm3-rt: local first-person body (models/sp_player.md5mesh).  Off by default
+// until the artifact/perf criteria in docs/plans are met.
+idCVar pm_showFirstPersonBody("pm_showFirstPersonBody", "0", CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL,
+                              "show the player's own torso and legs in first person");
+// The view sits at Loneck (the spine), not at the eyes, so the body hangs symmetrically
+// around the camera and you see your own backside when looking down.  Negative = back.
+idCVar pm_firstPersonBodyOffset("pm_firstPersonBodyOffset", "-4", CVAR_GAME | CVAR_ARCHIVE | CVAR_FLOAT,
+                                "horizontal shift of the first-person body along its forward axis");
+// The view sits on the spine and can pitch to pm_maxviewpitch (89), far past what a neck
+// allows — at that angle you look at the backs of your own legs.  Applies only while the
+// fp body is shown, so vanilla look-down is untouched when the feature is off.
+idCVar pm_firstPersonBodyMaxPitch("pm_firstPersonBodyMaxPitch", "70", CVAR_GAME | CVAR_ARCHIVE | CVAR_FLOAT,
+                                  "max downward view pitch while the first-person body is shown");
+idCVar pm_firstPersonBodyDebug("pm_firstPersonBodyDebug", "0", CVAR_GAME | CVAR_BOOL,
+                               "log first-person body create/free and pose diagnostics");
 idCVar pm_crouchrate("pm_crouchrate", "0.87", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
                      "time it takes for player's view to change from standing to crouching");
 idCVar pm_bboxwidth("pm_bboxwidth", "32", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,

@@ -581,12 +581,15 @@ int VK_RT_GIFastLightCount(void)
 //   int   stochasticLights  offset 116  size  4
 //   int   useGbufNormal     offset 120  size  4
 //   int   checkerPhase      offset 124  size  4
-//   total: 128 bytes
+//   float playerExcludeRadius offset 128 size 4
+//   (pad to 16-byte multiple)
+//   total: 144 bytes
 //
 // gi_ray.rchit declares a matching block (it reads maxBounceLights, frameIndex
 // and stochasticLights), so any field added here must be mirrored in *both*
 // gi_ray.rgen and gi_ray.rchit — a prefix mismatch silently shifts every
-// offset after it.
+// offset after it.  Appending at the end is safe: rchit already stops at
+// stochasticLights, and a shorter trailing block leaves earlier offsets intact.
 // ---------------------------------------------------------------------------
 
 struct GIParamsUBO
@@ -612,8 +615,13 @@ struct GIParamsUBO
     // frameIndex-based parity locks each slot to one fixed half of the image
     // forever (the "GI checkerboard ghost" bug).
     int32_t checkerPhase;
+    // Camera-to-pixel distance below which the player body is culled from GI rays.
+    // The fp body stands inside the world body, so without this the bounce is occluded
+    // by that duplicate and the body reads black even under a light.
+    float playerExcludeRadius;
+    float _pad0[3]; // pad block to 16-byte multiple (144 total)
 };
-static_assert(sizeof(GIParamsUBO) == 128, "GIParamsUBO size mismatch");
+static_assert(sizeof(GIParamsUBO) == 144, "GIParamsUBO size mismatch");
 
 // ---------------------------------------------------------------------------
 // Forward declarations
@@ -629,6 +637,7 @@ extern VkImageView VK_RT_GetNullGbufNormalView(void);
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
 extern idCVar r_rtGbufNormals;   // P9 — defined in vk_gbuffer.cpp
+extern float VK_RT_PlayerExcludeRadius(void); // vk_shadows.cpp — 0 unless the fp body is drawn
 extern idCVar r_rtVolMaxLights;  // defined in vk_vol.cpp — cap for the vol-only selection built below
 extern idCVar r_rtVolMaxDist;    // defined in vk_vol.cpp — vol march reach, used to filter that selection
 extern idCVar r_rtVolDump;       // defined in vk_vol.cpp — one-shot verbatim dump of the vol upload
@@ -2736,6 +2745,7 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // P9: 0 also when the G-buffer isn't available, so the rgen never consults the
     // 1x1 null image it still has bound.
     ubo.useGbufNormal = (vk.gbufferSupported && r_rtGbufNormals.GetBool()) ? 1 : 0;
+    ubo.playerExcludeRadius = VK_RT_PlayerExcludeRadius();
     memcpy(uboMapped, &ubo, sizeof(GIParamsUBO));
 
     // Part B: publish this frame's dynamic offset for the probe trace. It shares
