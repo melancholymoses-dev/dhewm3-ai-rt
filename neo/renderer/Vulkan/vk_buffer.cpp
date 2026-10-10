@@ -450,7 +450,20 @@ void VK_Buffer_DrainGarbage(uint32_t frameIdx)
         VK_VcTrimEmptyChunks();
     }
 
-    if (r_vkLogBufferGarbage.GetBool() && (ringDrained || overflowDrained))
+    // Accumulate and log once per 30 drains instead of every frame.
+    static int s_logDrains = 0, s_logRing = 0, s_logOverflow = 0;
+    if (r_vkLogBufferGarbage.GetBool())
+    {
+        s_logDrains++;
+        s_logRing += ringDrained;
+        s_logOverflow += overflowDrained;
+    }
+    else
+    {
+        s_logDrains = s_logRing = s_logOverflow = 0;
+    }
+
+    if (r_vkLogBufferGarbage.GetBool() && s_logDrains >= 30)
     {
         int chunks = 0;
         VkDeviceSize totalBytes = 0, freeBytes = 0, largestFree = 0;
@@ -468,10 +481,12 @@ void VK_Buffer_DrainGarbage(uint32_t frameIdx)
                     largestFree = c->freeRanges[r].size;
             }
         }
-        common->Printf("VK buf drain slot %u: ring %d, overflow %d -> live %d bufs / %d KB | chunks %d / %d MB, free %d MB "
-                       "(largest %d KB)\n",
-                       frameIdx, ringDrained, overflowDrained, s_bufferLiveCount, (int)(s_bufferLiveBytes >> 10), chunks,
-                       (int)(totalBytes >> 20), (int)(freeBytes >> 20), (int)(largestFree >> 10));
+        common->Printf("VK buf drain (last %d): freed %d (overflow %d) -> live %d bufs / %d KB | chunks %d / %d MB, "
+                       "free %d MB (largest %d KB)\n",
+                       s_logDrains, s_logRing + s_logOverflow, s_logOverflow, s_bufferLiveCount,
+                       (int)(s_bufferLiveBytes >> 10), chunks, (int)(totalBytes >> 20), (int)(freeBytes >> 20),
+                       (int)(largestFree >> 10));
+        s_logDrains = s_logRing = s_logOverflow = 0;
     }
 }
 
