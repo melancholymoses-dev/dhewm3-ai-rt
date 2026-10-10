@@ -189,7 +189,14 @@ void main()
             float cosOuter = max(cd.w - VOL_CONE_PENUMBRA * max(1.0 - cd.w, 1e-3), -1.0);
             if (cosAngle < cosOuter)
                 continue;
-            atten = clamp(1.0 - alongCone / max(bx.w, 0.001), 0.0, 1.0);
+            int   projMode = fp.gridDim.w;
+            float x        = alongCone / fp.densities.z;
+            if (projMode == 1)
+                atten = clamp(1.0 - x * x, 0.0, 1.0);
+            else if (projMode == 2)
+                atten = 1.0 / (1.0 + x * x);
+            else
+                atten = clamp(1.0 - alongCone / max(bx.w, 0.001), 0.0, 1.0);
             atten *= smoothstep(cosOuter, cd.w, cosAngle);
         }
 

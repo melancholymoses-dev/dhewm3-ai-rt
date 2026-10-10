@@ -73,6 +73,15 @@ static idCVar r_rtVolProjEmitterBias("r_rtVolProjEmitterBias", "24", CVAR_RENDER
                                      "emitter, so the lamp housing the light sits inside doesn't occlude its own "
                                      "beam. 0 = stop at the emitter.");
 
+static idCVar r_rtVolProjFalloff("r_rtVolProjFalloff", "2", CVAR_RENDERER | CVAR_INTEGER,
+                                 "Projected-light intensity along the beam, x = distance / "
+                                 "r_rtVolProjFalloffDist: 0 = linear over the light's full reach (nearly flat "
+                                 "inside the fog range), 1 = max(0, 1 - x^2), 2 = 1 / (1 + x^2).");
+
+static idCVar r_rtVolProjFalloffDist("r_rtVolProjFalloffDist", "512", CVAR_RENDERER | CVAR_FLOAT,
+                                     "Distance along the beam where r_rtVolProjFalloff modes 1 and 2 reach "
+                                     "x = 1 (0 intensity for mode 1, half for mode 2).");
+
 static idCVar r_rtVolFroxelDebugSlice("r_rtVolFroxelDebugSlice", "32", CVAR_RENDERER | CVAR_INTEGER,
                                       "Which Z slice r_rtVolFroxelDebug 1 displays. r_rtVolFroxelDump prints the "
                                       "slice->distance table to pick one with.");
@@ -133,7 +142,7 @@ struct VolFroxelParamsUBO
     float invViewProj[16];  //   0
     float cameraPosW[4];    //  64  xyz = camera world position
     float camForwardW[4];   //  80  xyz = viewaxis[0]
-    int32_t gridDim[4];     //  96  xyz = Nx,Ny,Nz   w = unused (std140 pad)
+    int32_t gridDim[4];     //  96  xyz = Nx,Ny,Nz   w = projected-light falloff mode
     float depthParams[4];   // 112  x=dNear y=dFar z=linNum w=linAdd
     float rangeParams[4];   // 128  x=logRange y=1/logRange z=maxDist w=unused
     float densities[4];     // 144  x=sigma_t y=albedo(diag) z=unused w=whiteNoiseMix
@@ -463,7 +472,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     ubo.gridDim[0] = (int32_t)grid.width;
     ubo.gridDim[1] = (int32_t)grid.height;
     ubo.gridDim[2] = (int32_t)grid.depth;
-    ubo.gridDim[3] = 0; // unused — F3's cluster cull was dropped 2026-09-13
+    ubo.gridDim[3] = idMath::ClampInt(0, 2, r_rtVolProjFalloff.GetInteger());
 
     const float maxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
     const float sigmaT = VK_RT_VolExtinction();
@@ -505,7 +514,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     // folded into strengths[] below; w is unrelated (jitter).
     ubo.densities[0] = sigmaT;
     ubo.densities[1] = VK_RT_VolAlbedo(); // diagnostic only — dump reads it
-    ubo.densities[2] = 0.0f;
+    ubo.densities[2] = Max(1.0f, r_rtVolProjFalloffDist.GetFloat());
     ubo.densities[3] = idMath::ClampFloat(0.0f, 1.0f, r_rtVolWhiteNoiseMix.GetFloat());
 
     // sigma_s * per-class gain, folded CPU-side: the fill now does one multiply
