@@ -2545,6 +2545,8 @@ void idRenderSystemLocal::Clear(void)
     frameCount = 0;
     viewCount = 0;
     staticAllocCount = 0;
+    vcSite = VCS_UNKNOWN;
+    vcModelKind = VCK_OTHER;
     frameShaderTime = 0.0f;
     viewportOffset[0] = 0;
     viewportOffset[1] = 0;

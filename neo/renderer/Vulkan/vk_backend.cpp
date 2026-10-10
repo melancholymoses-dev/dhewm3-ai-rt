@@ -667,6 +667,15 @@ static void VK_RTProfile_CollectAndLog(int slot)
     if (slot < 0 || slot >= VK_MAX_FRAMES_IN_FLIGHT)
         return;
 
+    // Submit stamps the slot every frame; with profiling off the event/query counts are
+    // stale, so drop the stamp instead of replaying the last enabled frame's data.
+    if (!VK_RTProfileEnabled())
+    {
+        s_rtProfRecordedFrameCount[slot] = -1;
+        s_rtProfCPURecordedFrameCount[slot] = -1;
+        return;
+    }
+
     const int recordedFrame = s_rtProfRecordedFrameCount[slot];
     const uint32_t eventCount = s_rtProfEventCount[slot];
     const uint32_t queryCount = s_rtProfNextQuery[slot];
@@ -756,6 +765,26 @@ static void VK_RTProfile_CollectAndLog(int slot)
                        pc.c_callbackUsec * 0.001, pc.c_dynCached, pc.c_dynCachedUsec * 0.001, pc.c_dynContinuous,
                        pc.c_dynContinuousUsec * 0.001, pc.c_vcAllocs, pc.c_vcAllocBytes >> 10,
                        pc.c_vcAllocUsec * 0.001, pc.c_vcFrees, pc.c_backEndUsec * 0.001);
+
+        // vcAlloc split by caller. Cells are count/KB/ms; kind (static/cached/continuous/other) is only
+        // known for the two view-surface sites, so the other sites land entirely in "other".
+        static const char *const siteNames[VCS_COUNT] = {"UNKNOWN",     "ambient",   "indexView",  "lighting",
+                                                         "shadowPriv",  "shadowVP",  "indexLight", "indexShadow"};
+        static const char *const kindNames[VCK_COUNT] = {"static", "cached", "cont", "other"};
+        idStr siteLine;
+        for (int s = 0; s < VCS_COUNT; s++)
+        {
+            for (int k = 0; k < VCK_COUNT; k++)
+            {
+                if (pc.c_vcSiteCount[s][k] == 0)
+                    continue;
+                idStr cell;
+                sprintf(cell, " %s.%s=%d/%dKB/%.3f", siteNames[s], kindNames[k], pc.c_vcSiteCount[s][k],
+                        pc.c_vcSiteBytes[s][k] >> 10, pc.c_vcSiteUsec[s][k] * 0.001);
+                siteLine += cell;
+            }
+        }
+        common->Printf("VK VC SITES:%s\n", siteLine.c_str());
     }
 
     s_rtProfRecordedFrameCount[slot] = -1;

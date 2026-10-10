@@ -70,6 +70,7 @@ bool R_CreateAmbientCache(srfTriangles_t *tri, bool needsLighting)
         R_DeriveTangents(tri);
     }
 
+    tr.vcSite = VCS_AMBIENT;
     activeBackend->VertexCache_Alloc(&tri->ambientCache, tri->verts, tri->numVerts * sizeof(tri->verts[0]), false);
     if (!tri->ambientCache)
     {
@@ -142,6 +143,7 @@ bool R_CreateLightingCache(const idRenderEntityLocal *ent, const idRenderLightLo
 
 #endif
 
+    tr.vcSite = VCS_LIGHTING;
     activeBackend->VertexCache_Alloc(&tri->lightingCache, cache, size, false);
     if (!tri->lightingCache)
     {
@@ -164,6 +166,7 @@ void R_CreatePrivateShadowCache(srfTriangles_t *tri)
         return;
     }
 
+    tr.vcSite = VCS_SHADOW_PRIVATE;
     activeBackend->VertexCache_Alloc(&tri->shadowCache, tri->shadowVertexes,
                                      tri->numVerts * sizeof(*tri->shadowVertexes), false);
 }
@@ -210,6 +213,7 @@ void R_CreateVertexProgramShadowCache(srfTriangles_t *tri)
 
 #endif
 
+    tr.vcSite = VCS_SHADOW_VP;
     activeBackend->VertexCache_Alloc(&tri->shadowCache, temp, tri->numVerts * 2 * sizeof(shadowCache_t), false);
     Mem_FreeA(temp, tempOnStack);
 }
@@ -1350,6 +1354,7 @@ void R_AddLightSurfaces(void)
 
             if (!tri->indexCache && r_useIndexBuffers.GetBool())
             {
+                tr.vcSite = VCS_INDEX_SHADOW;
                 activeBackend->VertexCache_Alloc(&tri->indexCache, tri->indexes,
                                                  tri->numIndexes * sizeof(tri->indexes[0]), true);
             }
@@ -1807,9 +1812,11 @@ static void R_AddAmbientDrawsurfs(viewEntity_t *vEntity)
             def->visibleCount = tr.viewCount;
 
             // make sure we have an ambient cache
+            tr.vcModelKind = def->parms.hModel ? (int)def->parms.hModel->IsDynamicModel() : (int)VCK_OTHER;
             if (!R_CreateAmbientCache(tri, shader->ReceivesLighting()))
             {
                 // don't add anything if the vertex cache was too full to give us an ambient cache
+                tr.vcModelKind = VCK_OTHER;
                 return;
             }
             // touch it so it won't get purged
@@ -1817,9 +1824,11 @@ static void R_AddAmbientDrawsurfs(viewEntity_t *vEntity)
 
             if (r_useIndexBuffers.GetBool() && !tri->indexCache)
             {
+                tr.vcSite = VCS_INDEX_VIEW;
                 activeBackend->VertexCache_Alloc(&tri->indexCache, tri->indexes,
                                                  tri->numIndexes * sizeof(tri->indexes[0]), true);
             }
+            tr.vcModelKind = VCK_OTHER;
             if (tri->indexCache)
             {
                 vertexCache.Touch(tri->indexCache);

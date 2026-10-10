@@ -613,6 +613,31 @@ const idMaterial *R_RemapShaderBySkin(const idMaterial *shader, const idDeclSkin
 /*
 ** performanceCounters_t
 */
+// dhewm3-rt: which VertexCache_Alloc caller made a block, for the r_vkRTProfile "VK VC SITES" line.
+// Callers set tr.vcSite just before the call; the backend consumes it and resets it to VCS_UNKNOWN.
+typedef enum
+{
+    VCS_UNKNOWN,
+    VCS_AMBIENT,        // R_CreateAmbientCache
+    VCS_INDEX_VIEW,     // index cache in R_AddAmbientDrawsurfs
+    VCS_LIGHTING,       // R_CreateLightingCache
+    VCS_SHADOW_PRIVATE, // R_CreatePrivateShadowCache
+    VCS_SHADOW_VP,      // R_CreateVertexProgramShadowCache
+    VCS_INDEX_LIGHT,    // index cache for light/interaction tris (tr_light.cpp, Interaction.cpp)
+    VCS_INDEX_SHADOW,   // index cache for shadow tris (Interaction.cpp)
+    VCS_COUNT
+} vcSite_t;
+
+// Model kind behind a VCS_AMBIENT / VCS_INDEX_VIEW block: dynamicModel_t value, or OTHER when not known.
+enum
+{
+    VCK_STATIC,
+    VCK_CACHED,
+    VCK_CONTINUOUS,
+    VCK_OTHER,
+    VCK_COUNT
+};
+
 typedef struct
 {
     int c_sphere_cull_in, c_sphere_cull_clip, c_sphere_cull_out;
@@ -647,6 +672,8 @@ typedef struct
     int c_dynContinuous, c_dynContinuousUsec; // DM_CONTINUOUS instantiations (particles, beams)
     int c_vcAllocs, c_vcAllocBytes, c_vcAllocUsec; // static vertex-cache device buffers created
     int c_vcFrees;
+    // Per-call-site split of the three counters above; [site][model kind], see vcSite_t / vcModelKind.
+    int c_vcSiteCount[VCS_COUNT][VCK_COUNT], c_vcSiteBytes[VCS_COUNT][VCK_COUNT], c_vcSiteUsec[VCS_COUNT][VCK_COUNT];
     int c_gameTicUsec;  // game->RunFrame, copied from time_gameFrameUsec at EndFrame
     int c_backEndUsec;  // previous backend run, copied from backEnd.pc at EndFrame
 } performanceCounters_t;
@@ -859,6 +886,8 @@ class idRenderSystemLocal : public idRenderSystem
 
     performanceCounters_t pc; // performance counters
     performanceCounters_t pcLastFrame; // dhewm3-rt: pc as of the last EndFrame, for r_vkRTProfile
+    int vcSite;      // dhewm3-rt: vcSite_t of the VertexCache_Alloc call about to be made
+    int vcModelKind; // dhewm3-rt: VCK_* of the surface being cached by R_AddAmbientDrawsurfs
 
     drawSurfsCommand_t lockSurfacesCmd; // use this when r_lockSurfaces = 1
     // renderView_t			lockSurfacesRenderView;
