@@ -100,9 +100,76 @@ bool VK_CreateBufferPreferred(VkDeviceSize size, VkBufferUsageFlags usage, VkMem
 // VK_UploadBuffer - copy data into a device-local buffer via a staging buffer
 // ---------------------------------------------------------------------------
 
+// Staging ring: one persistently mapped host-visible buffer shared by every upload in the
+// open batch, replacing a create/alloc/map/free staging buffer per call. Reset once the
+// batch has been submitted and waited on (VK_FlushPendingUploads via VK_StagingRing_Reset).
+static const VkDeviceSize VK_STAGING_RING_SIZE = 16u * 1024u * 1024u;
+static const VkDeviceSize VK_STAGING_ALIGN = 16;
+static VkBuffer s_stagingRingBuf = VK_NULL_HANDLE;
+static VkDeviceMemory s_stagingRingMem = VK_NULL_HANDLE;
+static byte *s_stagingRingPtr = NULL;
+static VkDeviceSize s_stagingRingOffset = 0;
+
+void VK_StagingRing_Reset(void)
+{
+    s_stagingRingOffset = 0;
+}
+
+void VK_StagingRing_Shutdown(void)
+{
+    if (s_stagingRingPtr)
+        vkUnmapMemory(vk.device, s_stagingRingMem);
+    if (s_stagingRingBuf != VK_NULL_HANDLE)
+        vkDestroyBuffer(vk.device, s_stagingRingBuf, NULL);
+    if (s_stagingRingMem != VK_NULL_HANDLE)
+        vkFreeMemory(vk.device, s_stagingRingMem, NULL);
+    s_stagingRingBuf = VK_NULL_HANDLE;
+    s_stagingRingMem = VK_NULL_HANDLE;
+    s_stagingRingPtr = NULL;
+    s_stagingRingOffset = 0;
+}
+
+// Returns false when the request can't use the ring (larger than the ring itself).
+static bool VK_UploadBufferRing(VkBuffer dstBuffer, const void *data, VkDeviceSize size)
+{
+    if (size > VK_STAGING_RING_SIZE)
+        return false;
+
+    if (s_stagingRingBuf == VK_NULL_HANDLE)
+    {
+        VK_CreateBuffer(VK_STAGING_RING_SIZE, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &s_stagingRingBuf,
+                        &s_stagingRingMem);
+        void *mapped = NULL;
+        VK_CHECK(vkMapMemory(vk.device, s_stagingRingMem, 0, VK_STAGING_RING_SIZE, 0, &mapped));
+        s_stagingRingPtr = (byte *)mapped;
+        s_stagingRingOffset = 0;
+    }
+
+    VkDeviceSize start = (s_stagingRingOffset + VK_STAGING_ALIGN - 1) & ~(VK_STAGING_ALIGN - 1);
+    if (start + size > VK_STAGING_RING_SIZE)
+    {
+        // Ring full: submit and wait on what is recorded so far, which also resets the ring.
+        VK_FlushPendingUploads();
+        start = 0;
+    }
+
+    memcpy(s_stagingRingPtr + start, data, (size_t)size);
+    s_stagingRingOffset = start + size;
+
+    VkCommandBuffer cmd = VK_BeginSingleTimeCommands();
+    VkBufferCopy region = {start, 0, size};
+    vkCmdCopyBuffer(cmd, s_stagingRingBuf, dstBuffer, 1, &region);
+    VK_EndSingleTimeCommands(cmd);
+    return true;
+}
+
 void VK_UploadBuffer(VkBuffer dstBuffer, const void *data, VkDeviceSize size)
 {
-    // Create staging buffer (host visible)
+    if (VK_UploadBufferRing(dstBuffer, data, size))
+        return;
+
+    // Oversize request: dedicated staging buffer, freed at the next flush.
     VkBuffer staging;
     VkDeviceMemory stagingMem;
     VK_CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
