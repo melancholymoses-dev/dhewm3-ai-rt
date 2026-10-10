@@ -96,7 +96,69 @@ static idCVar r_vkRTReflDataDiag(
     "r_vkRTReflDataDiag", "0", CVAR_RENDERER | CVAR_INTEGER,
     "Reflection hit-data diagnostics: 0=off, 1=per-frame summary, 2=summary + first suspicious slots");
 
+extern idCVar r_rtVolMaxDist; // vk_vol.cpp — vol shadow-ray reach, reported by r_rtTlasDump
+
+static idCVar r_rtTlasDump("r_rtTlasDump", "0", CVAR_RENDERER | CVAR_BOOL,
+                           "One-shot: dump the next TLAS build — per-pass instance counts, the pass-2 cull radius "
+                           "against each consumer's ray reach, and the pass-2 reject tally by reason.");
+
 static const int VK_RT_MAX_TLAS_INSTANCES = 4096;
+
+// ---------------------------------------------------------------------------
+// TLAS build instrumentation (docs/plans/20261009_vol_fix.md stage 1).
+//
+// The fallback passes exist to re-add occluders that portal/frustum culling
+// dropped, so a zero count there is a silent correctness bug: rays simply pass
+// through geometry that is not in the structure.  Counting admits alone can't
+// tell "nothing to add" from "everything rejected", hence the reject tally.
+// ---------------------------------------------------------------------------
+struct vkRTTlasPassStats_t
+{
+    uint32_t pass1, pass2, pass3;         // instances admitted per pass
+    uint32_t pass1World, pass2World;      // of those, world BSP areas (_area<N>)
+    uint32_t worldAreasInMap;             // total _area<N> entityDefs
+    // Pass-2 rejects, by the check that dropped the entity.
+    uint32_t rejDist, rejAlreadyAdded, rejDynamic, rejViewLocal, rejNoModel, rejNoCachedBlas, rejGeomFull;
+    uint32_t rejDistWorld;                // world areas lost to the distance cull alone
+    float nearestRejWorldOrigin;          // origin-based distance of the closest such area
+    float nearestRejWorldBounds;          // same area measured against its bounds — what stage 2 will use
+};
+
+// Distance from a point to the entity's world-space bounds, 0 when inside.
+// referenceBounds is LOCAL (tr_local.h:288) and there is no cached world-space
+// copy, so the corners go through modelMatrix here.
+static float VK_RT_EntityBoundsDistance(const idRenderEntityLocal *ent, const idVec3 &p)
+{
+    if (ent->referenceBounds.IsCleared())
+        return idMath::INFINITY;
+
+    idBounds world;
+    world.Clear();
+    for (int i = 0; i < 8; i++)
+    {
+        idVec3 v, g;
+        v[0] = ent->referenceBounds[i & 1][0];
+        v[1] = ent->referenceBounds[(i >> 1) & 1][1];
+        v[2] = ent->referenceBounds[(i >> 2) & 1][2];
+        R_LocalPointToGlobal(ent->modelMatrix, v, g);
+        world.AddPoint(g);
+    }
+
+    idVec3 d(0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 3; i++)
+    {
+        if (p[i] < world[0][i])
+            d[i] = world[0][i] - p[i];
+        else if (p[i] > world[1][i])
+            d[i] = p[i] - world[1][i];
+    }
+    return d.Length();
+}
+
+static bool VK_RT_IsWorldAreaEntity(const idRenderEntityLocal *ent)
+{
+    return ent->parms.hModel != NULL && ent->parms.hModel->IsStaticWorldModel();
+}
 
 struct vkRTStaticInstanceCache_t
 {
@@ -1151,6 +1213,11 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     uint64_t staticSignature = 1469598103934665603ull; // FNV-1a 64 offset basis
     bool anyBLASBuilt = false;
 
+    vkRTTlasPassStats_t passStats = {};
+    passStats.nearestRejWorldOrigin = idMath::INFINITY;
+    passStats.nearestRejWorldBounds = idMath::INFINITY;
+    const bool tlasDump = r_rtTlasDump.GetBool();
+
     for (const viewEntity_t *vEntity = viewDef->viewEntitys;
          vEntity != NULL && (staticCount + dynamicCount) < VK_RT_MAX_TLAS_INSTANCES; vEntity = vEntity->next)
     {
@@ -1244,6 +1311,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             continue;
 
         const bool isDynamicInstance = (ent->dynamicModel != NULL);
+        if (VK_RT_IsWorldAreaEntity(ent))
+            passStats.pass1World++;
         VkAccelerationStructureInstanceKHR *dst =
             isDynamicInstance ? &dynamicInstances[dynamicCount++] : &staticInstances[staticCount++];
 
@@ -1450,6 +1519,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         }
     }
 
+    passStats.pass1 = staticCount + dynamicCount;
+
     // Second pass: include static, already-cached entities that were portal/frustum
     // culled from viewEntitys but whose BLASes are already built.  This ensures GI
     // rays can hit geometry in adjacent areas (e.g. the ceiling under a skylight when
@@ -1470,40 +1541,84 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             if (!ent)
                 continue;
 
+            // Read before the culls so the dump can attribute rejects to world BSP
+            // areas specifically — they are the ones the vol shadow rays need.
+            const bool isWorldArea = VK_RT_IsWorldAreaEntity(ent);
+            if (isWorldArea)
+                passStats.worldAreasInMap++;
+
             // Distance cull — entities beyond 2*giRadius can't be reached by any GI ray.
             if ((ent->parms.origin - camPos).LengthSqr() > distCullSq)
+            {
+                passStats.rejDist++;
+                if (isWorldArea && ent->blasFrameCount != tr.frameCount)
+                {
+                    passStats.rejDistWorld++;
+                    // Bounds transform is 8 points per area — dump path only.
+                    if (tlasDump)
+                    {
+                        const float dBounds = VK_RT_EntityBoundsDistance(ent, camPos);
+                        if (dBounds < passStats.nearestRejWorldBounds)
+                        {
+                            passStats.nearestRejWorldBounds = dBounds;
+                            passStats.nearestRejWorldOrigin = (ent->parms.origin - camPos).Length();
+                        }
+                    }
+                }
                 continue;
+            }
 
             // Already included by the viewEntitys pass above.
             if (ent->blasFrameCount == tr.frameCount)
+            {
+                passStats.rejAlreadyAdded++;
                 continue;
+            }
 
             // Only static entities — dynamic ones need a BLAS rebuild each frame
             // which we can't do here safely outside the viewEntitys loop.
             if (ent->dynamicModel)
+            {
+                passStats.rejDynamic++;
                 continue;
+            }
 
             // View-local-only entities are excluded from every pass, so the invariant
             // holds uniformly rather than depending on the dynamicModel check above.
             if (ent->parms.allowSurfaceInViewID)
+            {
+                passStats.rejViewLocal++;
                 continue;
+            }
 
             // Must have a valid cached BLAS — no building allowed in this pass.
             idRenderModel *model = ent->parms.hModel;
             if (!model || model->NumSurfaces() == 0)
+            {
+                passStats.rejNoModel++;
                 continue;
+            }
 
             // Check model BLAS cache.
             vkBLAS_t *cached = VK_RT_ModelBLASCacheLookup(model);
             if (!cached || !cached->isValid)
+            {
+                passStats.rejNoCachedBlas++;
                 continue;
+            }
 
             // Use the cached BLAS; mark as seen so it won't be double-added.
             ent->blas = cached;
             ent->blasFrameCount = tr.frameCount;
 
             if (staticGeomCount + cached->geomCount > VK_MAT_MAX_GEOMS)
+            {
+                passStats.rejGeomFull++;
                 continue; // no room in geom table
+            }
+
+            if (isWorldArea)
+                passStats.pass2World++;
 
             VkAccelerationStructureInstanceKHR &inst = staticInstances[staticCount];
             memset(&inst, 0, sizeof(inst));
@@ -1566,6 +1681,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             staticCount++;
         }
     }
+
+    passStats.pass2 = staticCount + dynamicCount - passStats.pass1;
 
     // Third pass: include nearby off-screen dynamic entities (enemies, characters) so
     // they appear in RT reflections and cast RT shadows when outside the view frustum.
@@ -1700,6 +1817,54 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     s_tlasDynamicInstances = (int)dynamicCount;
 
     const uint32_t instanceCount = staticCount + dynamicCount;
+    passStats.pass3 = instanceCount - passStats.pass1 - passStats.pass2;
+
+    // Printed here rather than beside the build log below so it still fires on the
+    // instanceCount == 0 early return.
+    if (tlasDump)
+    {
+        r_rtTlasDump.SetBool(false);
+
+        const idVec3 camPos = viewDef->renderView.vieworg;
+        const float pass2Radius = 2.0f * r_rtGIRadius.GetFloat();
+
+        common->Printf("=== [r_rtTlasDump] frame=%u frameCount=%d ===\n", vk.currentFrame, tr.frameCount);
+        common->Printf("  camera=(%.0f %.0f %.0f)  dist to map origin=%.0f\n", camPos.x, camPos.y, camPos.z,
+                       camPos.Length());
+        common->Printf("  instances=%u (static=%u dynamic=%u, cap %d)  geoms: static=%u dynamic=%u (cap %u)\n",
+                       instanceCount, staticCount, dynamicCount, VK_RT_MAX_TLAS_INSTANCES, staticGeomCount,
+                       dynamicGeomCount, VK_MAT_MAX_GEOMS);
+        common->Printf("  pass 1  viewEntitys        : %5u instances  (world BSP areas: %u)\n", passStats.pass1,
+                       passStats.pass1World);
+        common->Printf("  pass 2  static off-screen  : %5u instances  (world BSP areas: %u)\n", passStats.pass2,
+                       passStats.pass2World);
+        common->Printf("  pass 3  near dynamic       : %5u instances\n", passStats.pass3);
+        common->Printf("  world BSP areas: %u in map, %u in TLAS this frame\n", passStats.worldAreasInMap,
+                       passStats.pass1World + passStats.pass2World);
+        common->Printf("  pass 2 cull radius = %.0f (2 x r_rtGIRadius=%.0f), measured from parms.origin\n",
+                       pass2Radius, r_rtGIRadius.GetFloat());
+        common->Printf("  pass 3 cull radius = %.0f (r_rtNearDynRadius)\n", r_rtNearDynRadius.GetFloat());
+        // r_rtReflectionDistance is file-static in vk_reflections.cpp; read it by name
+        // rather than widen its linkage for a debug line.
+        common->Printf("  consumer ray reach: GI=%.0f  vol=%.0f+lightDist  refl=%.0f\n", r_rtGIRadius.GetFloat(),
+                       r_rtVolMaxDist.GetFloat(), cvarSystem->GetCVarFloat("r_rtReflectionDistance"));
+        common->Printf("  pass 2 rejects: dist=%u (of which world areas not already added: %u) alreadyAdded=%u "
+                       "dynamic=%u viewLocal=%u noModel=%u noCachedBLAS=%u geomTableFull=%u\n",
+                       passStats.rejDist, passStats.rejDistWorld, passStats.rejAlreadyAdded, passStats.rejDynamic,
+                       passStats.rejViewLocal, passStats.rejNoModel, passStats.rejNoCachedBlas,
+                       passStats.rejGeomFull);
+        if (passStats.rejDistWorld > 0)
+        {
+            // parms.origin is (0,0,0) for every _area<N> (RenderWorld_load.cpp:714), so the
+            // origin column is really camera-to-map-origin. The bounds column is the closest
+            // world area measured honestly — the gap between the two is the defect, and the
+            // bounds figure is what stage 2's radius has to clear.
+            common->Printf("  closest world area rejected by the distance cull: bounds-based=%.0f  "
+                           "origin-based=%.0f\n",
+                           passStats.nearestRejWorldBounds, passStats.nearestRejWorldOrigin);
+        }
+        fflush(NULL);
+    }
 
     if (instanceCount == 0)
     {
@@ -1931,8 +2096,11 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     if (r_vkLogRT.GetInteger() >= 1)
     {
-        common->Printf("VK RT TLAS: building — instances=%u (static=%u dynamic=%u) blasBuiltThisFrame=%s\n",
-                       instanceCount, staticCount, dynamicCount, anyBLASBuilt ? "yes" : "no");
+        common->Printf("VK RT TLAS: building — instances=%u (static=%u dynamic=%u) pass1=%u pass2=%u pass3=%u "
+                       "worldAreas=%u/%u blasBuiltThisFrame=%s\n",
+                       instanceCount, staticCount, dynamicCount, passStats.pass1, passStats.pass2, passStats.pass3,
+                       passStats.pass1World + passStats.pass2World, passStats.worldAreasInMap,
+                       anyBLASBuilt ? "yes" : "no");
         fflush(NULL);
 
         const size_t uploadedBytes = (rewriteStatic ? staticBytes : 0) + dynamicBytes;
