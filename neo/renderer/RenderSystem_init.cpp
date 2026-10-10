@@ -2712,6 +2712,11 @@ idRenderSystemLocal::EndLevelLoad
 */
 void idRenderSystemLocal::EndLevelLoad(void)
 {
+    if (glConfig.isVulkan)
+    {
+        extern void VK_VertexCache_RequestTrim(void);
+        VK_VertexCache_RequestTrim();
+    }
     renderModelManager->EndLevelLoad();
     globalImages->EndLevelLoad();
     if (r_forceLoadImages.GetBool())

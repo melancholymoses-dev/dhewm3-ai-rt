@@ -801,6 +801,8 @@ void VKimp_Shutdown(void)
     VK_Image_DrainAllGarbage();
     extern void VK_Buffer_DrainAllGarbage(void);
     VK_Buffer_DrainAllGarbage();
+    extern void VK_VertexCache_Shutdown(void);
+    VK_VertexCache_Shutdown();
     extern void VK_CleanupReadback(void);
     VK_CleanupReadback();
 
