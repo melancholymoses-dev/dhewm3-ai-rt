@@ -125,6 +125,7 @@ void main()
     // cull AND the occlusion ray). Written to alpha in place of extinction — see
     // the imageStore at the end.
     int litCount = 0;
+    int occludedProjCount = 0; // debug mode 4: projected-light cone hits killed by the shadow ray
 
     for (int li = 0; li < maxLights; li++)
     {
@@ -203,7 +204,9 @@ void main()
                                         : fp.anisos.x;
         float phase = PhaseFunction(cosTheta, localAniso, fp.strengths.w);
 
-        float tShadow = max(0.01, dist - VOL_SHADOW_BIAS);
+        // Projected emitters usually sit inside their own fixture; stop the ray short.
+        float tShadow = max(0.01, dist - ((lt != 0u) ? max(fp.rangeParams.w, VOL_SHADOW_BIAS)
+                                                     : VOL_SHADOW_BIAS));
 
         rayQueryEXT rq;
         rayQueryInitializeEXT(
@@ -221,7 +224,11 @@ void main()
 
         if (rayQueryGetIntersectionTypeEXT(rq, true) !=
             gl_RayQueryCommittedIntersectionNoneEXT)
+        {
+            if (lt != 0u)
+                occludedProjCount++;
             continue; // occluded
+        }
 
         // sigma_s * per-class radiance gain, already folded CPU-side
         // (VK_RT_VolScatterScale).  Applied here, not at the end, because the
@@ -245,7 +252,9 @@ void main()
     // Alpha is sigma_t, the extinction coefficient the integrate pass
     // exponentiates — except under debug mode 2 where it carries the light count
     // instead (uniform branch, no divergence cost).
-    float alphaOut = (fp.misc.z == 2) ? float(litCount) : fp.densities.x;
+    float alphaOut = (fp.misc.z == 2) ? float(litCount)
+                   : (fp.misc.z == 4) ? float(occludedProjCount)
+                                      : fp.densities.x;
 
     imageStore(froxelScatter, cell, vec4(scatter, alphaOut));
 }

@@ -165,8 +165,10 @@ void main()
         if (zDist <= surfDist)
             outValue.rgb = cellData.rgb * fp.anisos.w;
     }
-    else if (mode == 2)
+    else if (mode == 2 || mode == 4)
     {
+        // Mode 4 reads the same column max; the fill puts the occluded projected-light
+        // count in alpha instead of the lit count.
         // MAX over the visible column, not the single cell at the pixel's own
         // depth. Probing that one cell produced a screen-wide checkerboard on
         // first run (2026-09-13): the cell containing the surface straddles it,

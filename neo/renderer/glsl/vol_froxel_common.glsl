@@ -45,7 +45,7 @@ layout(set = 0, binding = 2, std140) uniform VolFroxelParams {
     vec4  camForwardW;  //  80  xyz = viewaxis[0]
     ivec4 gridDim;      //  96  xyz = Nx,Ny,Nz   w = unused (std140 pad)
     vec4  depthParams;  // 112  x=dNear y=dFar z=linNum w=linAdd
-    vec4  rangeParams;  // 128  x=logRange=log(dFar/dNear) y=1/logRange z=maxDist w=unused
+    vec4  rangeParams;  // 128  x=logRange=log(dFar/dNear) y=1/logRange z=maxDist w=projected-light emitter shadow bias
     // x = sigma_t, the medium's extinction coefficient — the only density there is.
     // The per-class ones folded into strengths[] as sigma_s * gain.
     vec4  densities;    // 144  x=sigma_t y=albedo(diag) z=unused w=whiteNoiseMix

@@ -65,7 +65,13 @@ static idCVar r_rtVolFroxelDebug("r_rtVolFroxelDebug", "0", CVAR_RENDERER | CVAR
                                  "Froxel grid overlay: 0=off, 1=one Z slice of the scatter grid "
                                  "(r_rtVolFroxelDebugSlice), 2=per-cell light-count heatmap at the pixel's own "
                                  "depth slice, 3=grid-mapping error vs the depth-reconstructed world position "
-                                 "(green=agreement). Requires r_rtVolFroxel 1.");
+                                 "(green=agreement), 4=count of projected-light cone hits blocked by the shadow "
+                                 "ray (same ramp as 2). Requires r_rtVolFroxel 1.");
+
+static idCVar r_rtVolProjEmitterBias("r_rtVolProjEmitterBias", "24", CVAR_RENDERER | CVAR_FLOAT,
+                                     "Projected lights only: the shadow ray stops this many units short of the "
+                                     "emitter, so the lamp housing the light sits inside doesn't occlude its own "
+                                     "beam. 0 = stop at the emitter.");
 
 static idCVar r_rtVolFroxelDebugSlice("r_rtVolFroxelDebugSlice", "32", CVAR_RENDERER | CVAR_INTEGER,
                                       "Which Z slice r_rtVolFroxelDebug 1 displays. r_rtVolFroxelDump prints the "
@@ -492,7 +498,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     ubo.rangeParams[0] = logRange;
     ubo.rangeParams[1] = 1.0f / logRange;
     ubo.rangeParams[2] = maxDist;
-    ubo.rangeParams[3] = 0.0f;
+    ubo.rangeParams[3] = Max(0.0f, r_rtVolProjEmitterBias.GetFloat());
 
     // x = sigma_t, the per-cell extinction the fill writes to alpha and the
     // integrate pass exponentiates.  y/z are free since the per-class densities
@@ -520,7 +526,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     ubo.misc[1] = idMath::ClampInt(1, 128, r_rtVolMaxLights.GetInteger());
     // The fill reads the debug mode too: mode 2 makes it write a light count into
     // alpha instead of extinction.
-    ubo.misc[2] = idMath::ClampInt(0, 3, r_rtVolFroxelDebug.GetInteger());
+    ubo.misc[2] = idMath::ClampInt(0, 4, r_rtVolFroxelDebug.GetInteger());
     ubo.misc[3] = idMath::ClampInt(0, (int)grid.depth - 1, r_rtVolFroxelDebugSlice.GetInteger());
 
     // screen.xy = full res (depth fetch / NDC), screen.zw = the volBuffer the
@@ -1028,7 +1034,7 @@ int VK_RT_VolFroxelDebugMode(void)
         return 0;
     if (vkRT.froxelResolvePipeline == VK_NULL_HANDLE)
         return 0;
-    return idMath::ClampInt(0, 3, r_rtVolFroxelDebug.GetInteger());
+    return idMath::ClampInt(0, 4, r_rtVolFroxelDebug.GetInteger());
 }
 
 // ---------------------------------------------------------------------------

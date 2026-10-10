@@ -102,6 +102,21 @@ static idCVar r_rtTlasDump("r_rtTlasDump", "0", CVAR_RENDERER | CVAR_BOOL,
                            "One-shot: dump the next TLAS build — per-pass instance counts, the pass-2 cull radius "
                            "against each consumer's ray reach, and the pass-2 reject tally by reason.");
 
+static idCVar r_rtTlasFallbackRadius("r_rtTlasFallbackRadius", "0", CVAR_RENDERER | CVAR_FLOAT,
+                                     "Pass-2 radius for adding off-screen static geometry to the TLAS. 0 = auto: "
+                                     "max(2 x r_rtGIRadius, 2 x r_rtVolMaxDist, r_rtReflectionDistance).");
+
+// Pass-2 cull radius: the longest ray reach of any TLAS consumer, so that occlusion
+// does not change with camera yaw.
+static float VK_RT_Pass2CullRadius()
+{
+    const float manual = r_rtTlasFallbackRadius.GetFloat();
+    if (manual > 0.0f)
+        return manual;
+    return Max(Max(2.0f * r_rtGIRadius.GetFloat(), 2.0f * r_rtVolMaxDist.GetFloat()),
+               cvarSystem->GetCVarFloat("r_rtReflectionDistance"));
+}
+
 static const int VK_RT_MAX_TLAS_INSTANCES = 4096;
 
 // ---------------------------------------------------------------------------
@@ -1530,8 +1545,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // reachable geometry.
     if (tr.primaryWorld != NULL)
     {
-        const float giRadius = r_rtGIRadius.GetFloat();
-        const float distCullSq = (2.0f * giRadius) * (2.0f * giRadius);
+        const float pass2Rad = VK_RT_Pass2CullRadius();
+        const float distCullSq = pass2Rad * pass2Rad;
         const idVec3 camPos = viewDef->renderView.vieworg;
 
         const int numEntityDefs = tr.primaryWorld->entityDefs.Num();
@@ -1547,8 +1562,10 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             if (isWorldArea)
                 passStats.worldAreasInMap++;
 
-            // Distance cull — entities beyond 2*giRadius can't be reached by any GI ray.
-            if ((ent->parms.origin - camPos).LengthSqr() > distCullSq)
+            // World areas all sit at origin (0,0,0), so they are culled by bounds distance.
+            const bool outOfRange = isWorldArea ? (VK_RT_EntityBoundsDistance(ent, camPos) > pass2Rad)
+                                                : ((ent->parms.origin - camPos).LengthSqr() > distCullSq);
+            if (outOfRange)
             {
                 passStats.rejDist++;
                 if (isWorldArea && ent->blasFrameCount != tr.frameCount)
@@ -1826,7 +1843,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         r_rtTlasDump.SetBool(false);
 
         const idVec3 camPos = viewDef->renderView.vieworg;
-        const float pass2Radius = 2.0f * r_rtGIRadius.GetFloat();
+        const float pass2Radius = VK_RT_Pass2CullRadius();
 
         common->Printf("=== [r_rtTlasDump] frame=%u frameCount=%d ===\n", vk.currentFrame, tr.frameCount);
         common->Printf("  camera=(%.0f %.0f %.0f)  dist to map origin=%.0f\n", camPos.x, camPos.y, camPos.z,
@@ -1841,8 +1858,9 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         common->Printf("  pass 3  near dynamic       : %5u instances\n", passStats.pass3);
         common->Printf("  world BSP areas: %u in map, %u in TLAS this frame\n", passStats.worldAreasInMap,
                        passStats.pass1World + passStats.pass2World);
-        common->Printf("  pass 2 cull radius = %.0f (2 x r_rtGIRadius=%.0f), measured from parms.origin\n",
-                       pass2Radius, r_rtGIRadius.GetFloat());
+        common->Printf("  pass 2 cull radius = %.0f (r_rtTlasFallbackRadius=%.0f, 0=auto); world areas by bounds, "
+                       "others by parms.origin\n",
+                       pass2Radius, r_rtTlasFallbackRadius.GetFloat());
         common->Printf("  pass 3 cull radius = %.0f (r_rtNearDynRadius)\n", r_rtNearDynRadius.GetFloat());
         // r_rtReflectionDistance is file-static in vk_reflections.cpp; read it by name
         // rather than widen its linkage for a debug line.
