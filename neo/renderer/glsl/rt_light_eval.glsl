@@ -204,7 +204,7 @@ bool rt_LightContribAt(int i, vec3 hitPos, vec3 hitNorm, float contribScale,
 // rt_TraceLightShadow — true if the light is occluded from the hit point.
 // The tMax > 0 guard covers hit points closer to the light centre than the
 // bias — those are treated as unoccluded rather than tracing a negative range.
-// cullMask: 0xFF tests everything; 0xFE drops noSelfShadow instances
+// cullMask: 0xFF tests everything; 0xFD drops the player (rtPlayer) instances
 // (vk_accelstruct.cpp:1205). B1 — the includer decides, this file has no opinion.
 // ---------------------------------------------------------------------------
 bool rt_TraceLightShadow(vec3 hitPos, vec3 hitNorm, vec3 lightDir, float dist, float shadowBias,
@@ -246,7 +246,7 @@ bool rt_TraceLightShadow(vec3 hitPos, vec3 hitNorm, vec3 lightDir, float dist, f
 //                  (0 = hard shadow, same as omitting it; pass rtLightBuf.reflAmbientScale
 //                  from reflect_ray/player_reflect, 0.0 from gi_ray to leave GI untouched)
 //   cullMask     — B1: shadow-ray instance mask. 0xFF everywhere except
-//                  player_reflect.rchit, which passes 0xFE so the player does not
+//                  player_reflect.rchit, which passes 0xFD so the player does not
 //                  self-shadow (matches shadow_ray.rgen:367).
 //
 // G5b splits the sum three ways so probe GI can cache the flicker-normalised

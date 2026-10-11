@@ -166,6 +166,10 @@ typedef struct renderEntity_s
     // dhewm3-rt: in-flight projectile; drawn as a glow in RT reflections (vk_rt_emitters.cpp).
     // Kept last so the offsets of the fields above stay unchanged.
     bool rtGlow;
+
+    // dhewm3-rt: idPlayer body, head and held-weapon world model. Gets its own TLAS instance
+    // mask bit and the player_reflect hit group; noSelfShadow is not specific to the player.
+    bool rtPlayer;
 } renderEntity_t;
 
 typedef struct renderLight_s

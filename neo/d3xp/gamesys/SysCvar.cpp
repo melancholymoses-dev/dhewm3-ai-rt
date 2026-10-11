@@ -428,6 +428,8 @@ idCVar pm_firstPersonBodyMaxPitch("pm_firstPersonBodyMaxPitch", "70", CVAR_GAME 
                                   "max downward view pitch while the first-person body is shown");
 idCVar pm_firstPersonBodyDebug("pm_firstPersonBodyDebug", "0", CVAR_GAME | CVAR_BOOL,
                                "log first-person body create/free and pose diagnostics");
+idCVar pm_ladderLegAnim("pm_ladderLegAnim", "1", CVAR_GAME | CVAR_BOOL | CVAR_ARCHIVE,
+                        "step/hang legs anim on ladders instead of the falling pose");
 idCVar pm_crouchrate("pm_crouchrate", "0.87", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
                      "time it takes for player's view to change from standing to crouching");
 idCVar pm_bboxwidth("pm_bboxwidth", "32", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,

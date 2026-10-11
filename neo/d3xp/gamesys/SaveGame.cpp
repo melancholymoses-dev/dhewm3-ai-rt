@@ -1513,6 +1513,7 @@ void idRestoreGame::ReadRenderEntity(renderEntity_t &renderEntity)
     // dhewm3-rt: not in the savegame format, and some callers (idEntityFx::Restore) read
     // into uninitialised POD storage. idProjectile::Restore re-derives it.
     renderEntity.rtGlow = false;
+    renderEntity.rtPlayer = false; // re-marked each frame by idPlayer / idWeapon
 }
 
 /*

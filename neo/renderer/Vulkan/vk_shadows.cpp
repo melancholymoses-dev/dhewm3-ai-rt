@@ -35,7 +35,7 @@ struct ShadowParamsUBO
     int numSamples;           // offset  84
     uint32_t frameIndex;      // offset  88
     float rayBias;            // offset  92
-    uint32_t rayCullMask;     // 0xFE excludes player     // offset  96
+    uint32_t rayCullMask;     // 0xFD excludes player     // offset  96
     int debugMode;            // 0=normal 1..3=diag        // offset 100
     int32_t scissorOffsetX;   // dispatch rect origin X // offset 104
     int32_t scissorOffsetY;   // dispatch rect origin Y // offset 108
@@ -414,7 +414,7 @@ static void VK_RT_InitShadowPipeline(void)
     // 3 shader groups (rgen, miss, hit) but 5 SBT records.
     //
     // TLAS instances carry a hardcoded instanceShaderBindingTableRecordOffset of
-    // 0 or 2 (2 = noSelfShadow player body/viewmodel, see vk_accelstruct.cpp).
+    // 0 or 2 (2 = rtPlayer body/held weapon, see vk_accelstruct.cpp).
     // That offset is per-instance and shared by every pipeline that traces this
     // TLAS, so the hit region here must be wide enough to contain record 2 or an
     // out-of-range fetch pulls a garbage shader handle. Layout:
@@ -1040,14 +1040,14 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         ubo.shadowLayer = (int32_t)idMath::ClampInt(0, VK_RT_SHADOW_LAYERS - 1, layer);
 
         // Exclude player body from shadow rays when player is very close to the light.
-        // Player body TLAS instances use mask 0x01; world geometry uses 0xFF.
-        // Using 0xFE excludes only the player body bit.
+        // Player TLAS instances use mask 0x02; everything else 0x01.
+        // 0xFD excludes only the player bit.
         const float playerExcludeDist = r_rtShadowPlayerExcludeDist.GetFloat();
         if (playerExcludeDist > 0.0f)
         {
             const idVec3 &camPos = viewDef->renderView.vieworg;
             const float distToLight = (shadowOrigin - camPos).Length();
-            ubo.rayCullMask = (distToLight < playerExcludeDist) ? 0xFEu : 0xFFu;
+            ubo.rayCullMask = (distToLight < playerExcludeDist) ? VK_RT_MASK_NO_PLAYER : 0xFFu;
         }
         else
         {

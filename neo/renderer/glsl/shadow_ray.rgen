@@ -37,7 +37,7 @@ layout(set = 0, binding = 3) uniform ShadowParams {
     int   numSamples;           // shadow rays per pixel (1 = hard, 4+ = soft)
     uint  frameIndex;           // for temporal jitter
     float rayBias;              // ray origin bias (world units)
-    uint  rayCullMask;          // instance mask for traceRayEXT (0xFE excludes player body)
+    uint  rayCullMask;          // instance mask for traceRayEXT (0xFD excludes player body)
     int   debugMode;            // 0=normal 1=biasDir.y 2=got-surface-normal 3=dot(biasDir,lightDir)
     ivec2 scissorOffset;        // screen-space origin of this dispatch (light scissor rect offset)
     ivec2 screenSize;           // full framebuffer size (for UV reconstruction)
@@ -298,16 +298,11 @@ void main() {
 
     // A pixel this close to the eye is the first-person body, which stands inside the
     // world body — rays from it hit that duplicate within a couple of units and shadow
-    // it to black.  Drop mask 0x01 for those pixels only, so the world still shadows the
-    // body and the body still shadows the floor.
-    //
-    // 0x01 means noSelfShadow, not "player": glass (BrittleFracture), BFG secondaries and
-    // MP player icons carry it too, so they also stop shadowing near-camera pixels.  Narrow
-    // blast radius (only within the radius) and a pre-existing conflation rather than one
-    // introduced here — see the player-mask-bit note in the plan.
+    // it to black.  Drop the player mask bit (0x02) for those pixels only, so the world
+    // still shadows the body and the body still shadows the floor.
     uint cullMask = params.rayCullMask;
     if ( params.playerExcludeRadius > 0.0 && camDist < params.playerExcludeRadius ) {
-        cullMask = 0xFEu;
+        cullMask = 0xFDu;
     }
 
     // Debug mode 9: the bias budget.  The origin bias is only *visible* (as peter-panning,
@@ -398,7 +393,7 @@ void main() {
         traceRayEXT(
             topLevelAS,
             gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-            cullMask, // 0xFE excludes player body (near lights, or close-to-eye pixels)
+            cullMask, // 0xFD excludes player body (near lights, or close-to-eye pixels)
             0,      // SBT offset
             0,      // SBT stride
             0,      // miss index

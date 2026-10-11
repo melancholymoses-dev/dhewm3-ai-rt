@@ -196,6 +196,7 @@ extern idCVar pm_showFirstPersonBody;
 extern idCVar pm_firstPersonBodyOffset;
 extern idCVar pm_firstPersonBodyMaxPitch;
 extern idCVar pm_firstPersonBodyDebug;
+extern idCVar pm_ladderLegAnim;
 extern idCVar pm_crouchrate;
 extern idCVar pm_bboxwidth;
 extern idCVar pm_crouchbob;

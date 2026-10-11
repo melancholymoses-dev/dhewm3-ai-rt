@@ -1124,7 +1124,7 @@ static void VK_RT_InitGIPipeline(void)
     //
     // The hit region is 3 records wide, not 1, because TLAS instances carry a
     // hardcoded instanceShaderBindingTableRecordOffset of 0 or 2 (2 =
-    // noSelfShadow player body/viewmodel, see vk_accelstruct.cpp). That offset is
+    // rtPlayer body/held weapon, see vk_accelstruct.cpp). That offset is
     // per-instance and shared by every pipeline that traces this TLAS, so the hit
     // region must contain record 2 or an out-of-range fetch pulls a garbage
     // shader handle. Record 1 of the region is unused padding — nothing traces

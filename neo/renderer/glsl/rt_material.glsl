@@ -42,7 +42,7 @@ struct MaterialEntry {
 #define MAT_FLAG_ALPHA_TESTED  0x01u
 #define MAT_FLAG_TWO_SIDED     0x02u
 #define MAT_FLAG_GLASS         0x04u  // MC_TRANSLUCENT — thin glass, F0=0.04
-#define MAT_FLAG_PLAYER_BODY   0x08u  // noSelfShadow entity — player/weapon model
+#define MAT_FLAG_PLAYER_BODY   0x08u  // rtPlayer entity — player/head/held weapon
 #define MAT_FLAG_EMISSIVE      0x10u  // SL_AMBIENT stage present — surface emits its own light
 #define MAT_FLAG_GUI_EMISSIVE  0x20u  // guiSurf/entity GUI surface — emissive boost path
 // R4: MC_TRANSLUCENT *and* SURFTYPE_GLASS. MAT_FLAG_GLASS alone is every translucent

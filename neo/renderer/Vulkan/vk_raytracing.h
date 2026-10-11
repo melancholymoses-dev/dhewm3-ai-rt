@@ -53,11 +53,17 @@ extern PFN_vkGetBufferDeviceAddressKHR pfn_vkGetBufferDeviceAddressKHR;
 static const uint32_t VK_MAT_MAX_TEXTURES = 4096; // max bindless texture slots
 static const uint32_t VK_MAT_MAX_GEOMS = 16384;   // max total geometry slots across all BLAS instances
 
+// TLAS instance mask bits. A ray cull mask of VK_RT_MASK_NO_PLAYER (0xFD) skips the player
+// (body, head, held weapon) only; 0xFF sees everything. GLSL mirrors the literal 0xFD.
+#define VK_RT_MASK_WORLD 0x01u
+#define VK_RT_MASK_PLAYER 0x02u
+#define VK_RT_MASK_NO_PLAYER 0xFDu
+
 // Per-material-entry flags (must match GLSL definition in rt_material.glsl)
 #define VK_MAT_FLAG_ALPHA_TESTED 0x01u // MC_PERFORATED — alpha discard in any-hit
 #define VK_MAT_FLAG_TWO_SIDED 0x02u    // CT_TWO_SIDED — no back-face cull
 #define VK_MAT_FLAG_GLASS 0x04u        // MC_TRANSLUCENT — thin glass, flat F0=0.04 reflectance
-#define VK_MAT_FLAG_PLAYER_BODY 0x08u  // noSelfShadow entity — routed to player_reflect hit group
+#define VK_MAT_FLAG_PLAYER_BODY 0x08u  // renderEntity_t::rtPlayer — routed to player_reflect hit group
 #define VK_MAT_FLAG_EMISSIVE 0x10u     // SL_AMBIENT stage present — surface emits its own light
 #define VK_MAT_FLAG_GUI_EMISSIVE 0x20u // guiSurf/entity GUI surface — boost emissive in RT GI/refs
 // R4: MC_TRANSLUCENT *and* SURFTYPE_GLASS. VK_MAT_FLAG_GLASS alone is every translucent

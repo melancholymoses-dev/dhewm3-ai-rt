@@ -1,6 +1,6 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-10-07 · **Next work: First Person Model**
+**Status reviewed:** 2026-10-10 · **Arcs 6 (player body) and 7 (vol_fix) closed; pick next arc**
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
 designs live in the linked docs. Prior cycle: `completed/202609_ROADMAP.md`.
@@ -37,8 +37,8 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 3b | **AO / GI refinement** — AO distance falloff; AO moved from direct light onto GI | `completed/20260930_AO_GI_refine.md` | ✅ Closed 2026-10-02. Two open checks not run (viewmodel AO in debug mode 2, AO cost) |
 | 4 | **Reflection Emitters** - Show emitted particles in reflections | `completed/20261002_reflection_emitters.md | Completed 2026-10-6 | 
 | 5 | **Bloom** - Add lighting bloom around emissive sources| `completed/20260906_bloom_plan.md` | Completed 2026-10-7. |
-| 6 | **Player Body** - Add visible body from first person | `20261001_see_first_person_player_model.md` | In game 2026-10-7. Lit, animating, RT-excluded |
-| 7 | **TLAS build defects** — (a) pass-2 distance cull holds only the view-visible set, so vol shadow rays miss off-screen occluders and in-scatter flips on a pure yaw; (b) instance mask/SBT key off `noSelfShadow` not the player, breaking breakable-glass reflections | `20261009_vol_fix.md` | Diagnosed 2026-10-9, not started. Affects GI/refl/shadows too |
+| 6 | **Player Body** - Add visible body from first person | `completed/20261001_see_first_person_player_model.md` | ✅ Closed 2026-10-10. Lit, animating, RT-excluded, `rtPlayer` mask verified; ladder sink fixed (body lift, ladder leg anim, foot-IK void fix). Stairs and slopes still dip slightly, accepted |
+| 7 | **TLAS build defects** — (a) pass-2 distance cull holds only the view-visible set, so vol shadow rays miss off-screen occluders and in-scatter flips on a pure yaw; (b) instance mask/SBT key off `noSelfShadow` not the player, breaking breakable-glass reflections | `completed/20261009_vol_fix.md` | ✅ Closed 2026-10-10. Pass-2 bounds cull (free: TLAS build 0.12 ms), vol gain/falloff, `rtPlayer` mask bit (breakable glass fixed), vertex-cache sub-allocator. 7.4 (per-frame upload wait) conditional |
 
 
 ### Measured RT budget
@@ -51,6 +51,7 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 2026-09-19 (arc 2 closed) | ~1.3 | ~0.8 | 0.29 | 1.9 | — | 0.12 | **~7-8** |
 | 2026-09-23 MC2, scale 1.00 | 1.29 | ~0 | 0.52 | 1.27 | 1.80 | 0.17 | **5.05** |
 | 2026-09-23 MC2, scale 0.67 | 0.54 | ~0 | 0.37 | 0.49 | 0.68 | 0.14 | **2.22** |
+| 2026-10-10 MC 1440p, scale 1.00, vol_fix 1-4,6 (76 samples, `r_rtTlasFallbackRadius 0`) | 1.72 | ~0 (p90 1.8 with glass) | 0.82 | 2.05 | 2.93 | 0.46 (0.12 TLAS + 0.34 BLAS) | **~8.0** RT |
 
 Shadows and AO are the two largest costs. **Not every remaining pass is
 screen-resolution** — arc 2 left a ~0.73 ms floor (TLAS, probe trace/blend, froxel
@@ -106,7 +107,6 @@ while new lighting techniques enhance without fighting too much.
 
 | Doc | Owns |
 |---|---|
-| `20261001_see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. |
 | `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine. Load it before chasing any AMD-vs-NVIDIA or device-lost bug. |
 
 ---
@@ -117,6 +117,8 @@ All in `completed/`.
 
 | Doc | Owns |
 |---|---|
+| `20261001_see_first_person_player_model.md` | **Arc 6.** First-person player body: trimmed mesh, `rtPlayer` RT exclusion, ladder and foot-IK fixes. Cvars `pm_showFirstPersonBody`, `pm_firstPersonBodyOffset`, `pm_ladderLegAnim` |
+| `20261009_vol_fix.md` | **Arc 7.** TLAS pass-2 bounds cull, projected-vol gain/falloff, `rtPlayer` mask bit, vertex-cache sub-allocator + staging ring. 7.4 conditional |
 | `20260906_bloom_plan.md` | Bloom: emissive-sourced, composited after FSR and before the HUD. |
 | `20261002_reflection_emitters.md` | Projectile and smoke-particle glows in glass reflections via an analytic emitter list. |
 | `20260930_AO_GI_refine.md` | **Arc 3b.** AO distance falloff, AO on GI instead of direct light, `r_rtAODebug`, spectrum lights out of GI/vol, projected range from `light_end` |

@@ -446,7 +446,7 @@ static void VK_RT_InitAOPipeline(void)
     // 3 shader groups (rgen, miss, hit) but 5 SBT records.
     //
     // TLAS instances carry a hardcoded instanceShaderBindingTableRecordOffset of
-    // 0 or 2 (2 = noSelfShadow player body/viewmodel, see vk_accelstruct.cpp).
+    // 0 or 2 (2 = rtPlayer body/held weapon, see vk_accelstruct.cpp).
     // That offset is per-instance and shared by every pipeline that traces this
     // TLAS, so the hit region here must be wide enough to contain record 2 or an
     // out-of-range fetch pulls a garbage shader handle. Layout:

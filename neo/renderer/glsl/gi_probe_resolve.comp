@@ -357,7 +357,7 @@ bool gip_ProbeOccluded(vec3 from, vec3 to)
 
     rayQueryEXT rq;
     rayQueryInitializeEXT(rq, tlas, gl_RayFlagsTerminateOnFirstHitEXT,
-                          0xFEu, // skip the player body/hands, same mask the vol passes use
+                          0xFDu, // skip the player body/hands, same mask the vol passes use
                           from, 0.01, d / len, len - 0.01);
 
     while (rayQueryProceedEXT(rq))

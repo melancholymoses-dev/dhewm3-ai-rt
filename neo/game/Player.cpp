@@ -1266,6 +1266,7 @@ idPlayer::idPlayer()
     memset(&fpBodyRenderEnt, 0, sizeof(fpBodyRenderEnt));
     fpBodyHandle = -1;
     fpBodyJointsWarned = false;
+    fpBodyLift = 0.0f;
 
     selfSmooth = false;
 }
@@ -7525,6 +7526,20 @@ void idPlayer::Move(void)
         }
     }
 
+    // dhewm3-rt: Doom 3 has no ladder anim, so the script leaves the legs in "fall".  While
+    // airborne on a ladder, step with "walk" when moving vertically and hang in "idle" otherwise.
+    // On the ground the script owns the legs channel.
+    if (pm_ladderLegAnim.GetBool() && AI_ONLADDER && !AI_ONGROUND)
+    {
+        const bool climbing = idMath::Fabs(physicsObj.GetLinearVelocity() * physicsObj.GetGravityNormal()) > 10.0f;
+        const int legAnim = animator.GetAnim(climbing ? "walk" : "idle");
+        idAnimBlend *curLegs = animator.CurrentAnim(ANIMCHANNEL_LEGS);
+        if (legAnim && (!curLegs || curLegs->AnimNum() != legAnim))
+        {
+            animator.CycleAnim(ANIMCHANNEL_LEGS, legAnim, gameLocal.time, 100);
+        }
+    }
+
     BobCycle(pushVelocity);
     CrashLand(oldOrigin, oldVelocity);
 }
@@ -7724,6 +7739,27 @@ void idPlayer::FreeFirstPersonBody(void)
 
 /*
 ==============
+idPlayer::MarkRTPlayerEntities
+
+Tags the body and head as the RT "player" class (own TLAS mask bit, player_reflect hit
+group). Done every frame because the flag is not in the savegame format; a change
+only reaches the renderer through the owning entity's next Present().
+==============
+*/
+void idPlayer::MarkRTPlayerEntities(void)
+{
+    renderEntity.rtPlayer = true;
+
+    idAFAttachment *headEnt = head.GetEntity();
+    if (headEnt && !headEnt->GetRenderEntity()->rtPlayer)
+    {
+        headEnt->GetRenderEntity()->rtPlayer = true;
+        headEnt->UpdateVisuals();
+    }
+}
+
+/*
+==============
 idPlayer::UpdateFirstPersonBody
 
 Local-only torso/legs shown when looking down in first person.  The world body stays
@@ -7738,6 +7774,8 @@ Must be called after Present() so renderEntity.origin/axis/bounds are current.
 */
 void idPlayer::UpdateFirstPersonBody(void)
 {
+    MarkRTPlayerEntities();
+
     // Only the local client has a first-person view to show this in.  The viewID gate
     // below would hide it for everyone else anyway, but there is no point building it.
     if (!pm_showFirstPersonBody.GetBool() || fl.hidden || spectating || !animator.ModelHandle() ||
@@ -7780,10 +7818,69 @@ void idPlayer::UpdateFirstPersonBody(void)
         return;
     }
 
+    // Diagnostic, every state: neck-to-camera gap, logged every 250 ms and on any ground, ladder or
+    // crouch change.  view is the real camera (GetViewPos: bob, step-up smoothing and the nodal
+    // offset, which depends on pitch); eye is the physics eye.  Standing, view-neck should be ~0.
+    if (pm_firstPersonBodyDebug.GetBool())
+    {
+        static int s_lastGapLog = 0;
+        static int s_lastGapState = -1;
+        const int gapState = (physicsObj.HasGroundContacts() ? 1 : 0) | (physicsObj.OnLadder() ? 2 : 0) |
+                             (physicsObj.IsCrouching() ? 4 : 0);
+        if (gameLocal.time - s_lastGapLog >= 250 || gapState != s_lastGapState)
+        {
+            s_lastGapLog = gameLocal.time;
+            s_lastGapState = gapState;
+            idVec3 neck, hips, viewOrg;
+            idMat3 jAxis, viewAxis;
+            animator.GetJointTransform(animator.GetJointHandle("Loneck"), gameLocal.time, neck, jAxis);
+            animator.GetJointTransform(animator.GetJointHandle("Hips"), gameLocal.time, hips, jAxis);
+            GetViewPos(viewOrg, viewAxis);
+            const float neckZ = (renderEntity.origin + neck * renderEntity.axis).z;
+            const float hipsZ = (renderEntity.origin + hips * renderEntity.axis).z;
+            const float eyeZ = GetEyePosition().z;
+            idAnimBlend *legs = animator.CurrentAnim(ANIMCHANNEL_LEGS);
+            idAnimBlend *torso = animator.CurrentAnim(ANIMCHANNEL_TORSO);
+            gameLocal.Printf("fpBody gap: t=%d state=%s%s%s vz=%.1f pitch=%.0f phys=%.1f eye=%.1f bob=%.1f "
+                             "stepUp=%.1f view=%.1f neck=%.1f hips=%.1f view-neck=%.1f eye-neck=%.1f lift=%.1f "
+                             "legs=%s torso=%s\n",
+                             gameLocal.time, (gapState & 1) ? "G" : "-", (gapState & 2) ? "L" : "-",
+                             (gapState & 4) ? "C" : "-", physicsObj.GetLinearVelocity().z, viewAngles.pitch,
+                             physicsObj.GetOrigin().z, eyeZ, viewBob.z, stepUpDelta, viewOrg.z, neckZ, hipsZ,
+                             viewOrg.z - neckZ, eyeZ - neckZ, fpBodyLift, legs ? legs->AnimFullName() : "-",
+                             torso ? torso->AnimFullName() : "-");
+
+            // Placement vs pose: a rigid drop shows up in roMinusPhys or originJointZ, a pose
+            // change in the model-space joint heights.  Stacks list every active anim and weight.
+            idVec3 originJoint;
+            animator.GetJointTransform(animator.GetJointHandle("origin"), gameLocal.time, originJoint, jAxis);
+            idStr stacks;
+            for (int ch = ANIMCHANNEL_ALL; ch <= ANIMCHANNEL_LEGS; ch++)
+            {
+                idAnimBlend *blend = animator.CurrentAnim(ch);
+                stacks += va(" ch%d[", ch);
+                for (int i = 0; i < ANIM_MaxAnimsPerChannel; i++)
+                {
+                    const char *animName = blend[i].AnimFullName();
+                    if (animName && animName[0])
+                    {
+                        stacks += va("%s:%.2f ", animName, blend[i].GetWeight(gameLocal.time));
+                    }
+                }
+                stacks += "]";
+            }
+            gameLocal.Printf("fpBody gap2: t=%d roMinusPhys=%.1f modelOffsetZ=%.1f originJointZ=%.1f "
+                             "neckLocalZ=%.1f hipsLocalZ=%.1f%s\n",
+                             gameLocal.time, renderEntity.origin.z - physicsObj.GetOrigin().z, modelOffset.z,
+                             originJoint.z, neck.z, hips.z, stacks.c_str());
+        }
+    }
+
     const bool firstBuild = (fpBodyHandle == -1);
     if (firstBuild)
     {
         memset(&fpBodyRenderEnt, 0, sizeof(fpBodyRenderEnt));
+        fpBodyLift = 0.0f; // stale after the body was freed on a ladder or in the air
         fpBodyRenderEnt.hModel = model;
         fpBodyRenderEnt.entityNum = entityNumber;
         // No callback: the pose is pushed from here, and ModelCallback would resolve
@@ -7809,6 +7906,20 @@ void idPlayer::UpdateFirstPersonBody(void)
     {
         fpBodyRenderEnt.origin += renderEntity.axis[0] * fpOffset;
     }
+    // Airborne or on a ladder the legs channel plays "fall", which sinks the pose 8-14 units
+    // below the camera.  Raise the body so its neck stays at the eye; eased so it doesn't pop.
+    float liftTarget = 0.0f;
+    if (physicsObj.OnLadder() || !physicsObj.HasGroundContacts())
+    {
+        idVec3 neck;
+        idMat3 neckAxis;
+        animator.GetJointTransform(animator.GetJointHandle("Loneck"), gameLocal.time, neck, neckAxis);
+        const float neckZ = (renderEntity.origin + neck * renderEntity.axis).z;
+        liftTarget = idMath::ClampFloat(0.0f, 20.0f, GetEyePosition().z - neckZ);
+    }
+    const float liftStep = 300.0f * MS2SEC(gameLocal.msec);
+    fpBodyLift += idMath::ClampFloat(-liftStep, liftStep, liftTarget - fpBodyLift);
+    fpBodyRenderEnt.origin += physicsObj.GetGravityNormal() * -fpBodyLift;
     // World-body bounds are a superset of the trimmed mesh, so culling stays conservative.
     fpBodyRenderEnt.bounds = renderEntity.bounds;
     // Track the world body's skin/parms so influence and powerup effects match.
