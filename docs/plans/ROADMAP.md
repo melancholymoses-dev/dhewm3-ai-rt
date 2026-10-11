@@ -37,7 +37,8 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 3b | **AO / GI refinement** — AO distance falloff; AO moved from direct light onto GI | `completed/20260930_AO_GI_refine.md` | ✅ Closed 2026-10-02. Two open checks not run (viewmodel AO in debug mode 2, AO cost) |
 | 4 | **Reflection Emitters** - Show emitted particles in reflections | `completed/20261002_reflection_emitters.md | Completed 2026-10-6 | 
 | 5 | **Bloom** - Add lighting bloom around emissive sources| `completed/20260906_bloom_plan.md` | Completed 2026-10-7. |
-| 6 | **Player Body** - Add visible body from first person | `20261001_see_first_person_player.md` | Started 2026-10-7|
+| 6 | **Player Body** - Add visible body from first person | `20261001_see_first_person_player_model.md` | In game 2026-10-7. Lit, animating, RT-excluded |
+| 7 | **TLAS build defects** — (a) pass-2 distance cull holds only the view-visible set, so vol shadow rays miss off-screen occluders and in-scatter flips on a pure yaw; (b) instance mask/SBT key off `noSelfShadow` not the player, breaking breakable-glass reflections | `20261009_vol_fix.md` | Diagnosed 2026-10-9, not started. Affects GI/refl/shadows too |
 
 
 ### Measured RT budget

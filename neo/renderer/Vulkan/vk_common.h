@@ -286,6 +286,11 @@ void VK_DeferStagingFree(VkBuffer buf, VkDeviceMemory mem);
 void VK_FlushPendingUploads(void);
 void VK_ShutdownUploadBatch(void);
 
+// Shared staging ring for vertex-cache uploads (vk_buffer.cpp). Reset after each flush,
+// destroyed with the upload batch.
+void VK_StagingRing_Reset(void);
+void VK_StagingRing_Shutdown(void);
+
 // ---------------------------------------------------------------------------
 // Image layout transition helper
 // ---------------------------------------------------------------------------

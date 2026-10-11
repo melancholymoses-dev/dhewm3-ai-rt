@@ -2545,6 +2545,8 @@ void idRenderSystemLocal::Clear(void)
     frameCount = 0;
     viewCount = 0;
     staticAllocCount = 0;
+    vcSite = VCS_UNKNOWN;
+    vcModelKind = VCK_OTHER;
     frameShaderTime = 0.0f;
     viewportOffset[0] = 0;
     viewportOffset[1] = 0;
@@ -2710,6 +2712,11 @@ idRenderSystemLocal::EndLevelLoad
 */
 void idRenderSystemLocal::EndLevelLoad(void)
 {
+    if (glConfig.isVulkan)
+    {
+        extern void VK_VertexCache_RequestTrim(void);
+        VK_VertexCache_RequestTrim();
+    }
     renderModelManager->EndLevelLoad();
     globalImages->EndLevelLoad();
     if (r_forceLoadImages.GetBool())

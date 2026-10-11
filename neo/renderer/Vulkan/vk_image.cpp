@@ -852,6 +852,10 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
     viewInfo.image = vkd->image;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = format;
+    // GL copies the framebuffer into these as GL_RGB8 (alpha 1).  Our blit carries the HDR
+    // scene's alpha, which made 2D draws of _scratch see-through.
+    if (img->imgName == "_scratch" || img->imgName == "_scratch2" || img->imgName == "_currentRender")
+        viewInfo.components.a = VK_COMPONENT_SWIZZLE_ONE;
     viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     viewInfo.subresourceRange.baseMipLevel = 0;
     viewInfo.subresourceRange.levelCount = mipLevels;

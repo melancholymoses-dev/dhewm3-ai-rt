@@ -1339,6 +1339,7 @@ void idInteraction::AddActiveInteraction(void)
 
                     if (!lightTris->indexCache && r_useIndexBuffers.GetBool())
                     {
+                        tr.vcSite = VCS_INDEX_LIGHT;
                         activeBackend->VertexCache_Alloc(&lightTris->indexCache, lightTris->indexes,
                                                          lightTris->numIndexes * sizeof(lightTris->indexes[0]), true);
                     }
@@ -1441,6 +1442,7 @@ void idInteraction::AddActiveInteraction(void)
 
             if (!shadowTris->indexCache && r_useIndexBuffers.GetBool())
             {
+                tr.vcSite = VCS_INDEX_SHADOW;
                 activeBackend->VertexCache_Alloc(&shadowTris->indexCache, shadowTris->indexes,
                                                  shadowTris->numIndexes * sizeof(shadowTris->indexes[0]), true);
                 vertexCache.Touch(shadowTris->indexCache);

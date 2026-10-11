@@ -148,7 +148,7 @@ idCVar r_rtVolDump("r_rtVolDump", "0", CVAR_RENDERER | CVAR_BOOL,
 bool vkRT_volDumpPending = false;
 
 // Scene directed/spot lights (lightType 1) — separate from the player's flashlight.
-idCVar r_rtVolDirectedGain("r_rtVolDirectedGain", "60.0", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolDirectedGain("r_rtVolDirectedGain", "70.0", CVAR_RENDERER | CVAR_FLOAT,
                            "Radiance gain for scene directed/spot in-scatter.  Brightness only.");
 idCVar r_rtVolDirectedAnisotropy("r_rtVolDirectedAnisotropy", "0.6", CVAR_RENDERER | CVAR_FLOAT,
                                  "Henyey-Greenstein g for scene spot lights (0=iso, 1=full forward).");

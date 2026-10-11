@@ -548,6 +548,7 @@ static void VK_ReleasePendingStagingUploads(void)
             vkFreeMemory(vk.device, s_pendingStaging[i].mem, NULL);
     }
     s_pendingStagingCount = 0;
+    VK_StagingRing_Reset(); // every flush path ends here, so the ring is reusable once the batch is done
 }
 
 static void VK_DiscardUploadBatchCmdBuf(void)
@@ -694,6 +695,7 @@ void VK_ShutdownUploadBatch(void)
         s_uploadFence = VK_NULL_HANDLE;
     }
 
+    VK_StagingRing_Shutdown();
     s_uploadBatchPoisoned = false;
 }
 
@@ -799,6 +801,8 @@ void VKimp_Shutdown(void)
     VK_Image_DrainAllGarbage();
     extern void VK_Buffer_DrainAllGarbage(void);
     VK_Buffer_DrainAllGarbage();
+    extern void VK_VertexCache_Shutdown(void);
+    VK_VertexCache_Shutdown();
     extern void VK_CleanupReadback(void);
     VK_CleanupReadback();
 

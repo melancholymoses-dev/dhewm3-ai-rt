@@ -100,9 +100,76 @@ bool VK_CreateBufferPreferred(VkDeviceSize size, VkBufferUsageFlags usage, VkMem
 // VK_UploadBuffer - copy data into a device-local buffer via a staging buffer
 // ---------------------------------------------------------------------------
 
-void VK_UploadBuffer(VkBuffer dstBuffer, const void *data, VkDeviceSize size)
+// Staging ring: one persistently mapped host-visible buffer shared by every upload in the
+// open batch, replacing a create/alloc/map/free staging buffer per call. Reset once the
+// batch has been submitted and waited on (VK_FlushPendingUploads via VK_StagingRing_Reset).
+static const VkDeviceSize VK_STAGING_RING_SIZE = 16u * 1024u * 1024u;
+static const VkDeviceSize VK_STAGING_ALIGN = 16;
+static VkBuffer s_stagingRingBuf = VK_NULL_HANDLE;
+static VkDeviceMemory s_stagingRingMem = VK_NULL_HANDLE;
+static byte *s_stagingRingPtr = NULL;
+static VkDeviceSize s_stagingRingOffset = 0;
+
+void VK_StagingRing_Reset(void)
 {
-    // Create staging buffer (host visible)
+    s_stagingRingOffset = 0;
+}
+
+void VK_StagingRing_Shutdown(void)
+{
+    if (s_stagingRingPtr)
+        vkUnmapMemory(vk.device, s_stagingRingMem);
+    if (s_stagingRingBuf != VK_NULL_HANDLE)
+        vkDestroyBuffer(vk.device, s_stagingRingBuf, NULL);
+    if (s_stagingRingMem != VK_NULL_HANDLE)
+        vkFreeMemory(vk.device, s_stagingRingMem, NULL);
+    s_stagingRingBuf = VK_NULL_HANDLE;
+    s_stagingRingMem = VK_NULL_HANDLE;
+    s_stagingRingPtr = NULL;
+    s_stagingRingOffset = 0;
+}
+
+// Returns false when the request can't use the ring (larger than the ring itself).
+static bool VK_UploadBufferRing(VkBuffer dstBuffer, VkDeviceSize dstOffset, const void *data, VkDeviceSize size)
+{
+    if (size > VK_STAGING_RING_SIZE)
+        return false;
+
+    if (s_stagingRingBuf == VK_NULL_HANDLE)
+    {
+        VK_CreateBuffer(VK_STAGING_RING_SIZE, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &s_stagingRingBuf,
+                        &s_stagingRingMem);
+        void *mapped = NULL;
+        VK_CHECK(vkMapMemory(vk.device, s_stagingRingMem, 0, VK_STAGING_RING_SIZE, 0, &mapped));
+        s_stagingRingPtr = (byte *)mapped;
+        s_stagingRingOffset = 0;
+    }
+
+    VkDeviceSize start = (s_stagingRingOffset + VK_STAGING_ALIGN - 1) & ~(VK_STAGING_ALIGN - 1);
+    if (start + size > VK_STAGING_RING_SIZE)
+    {
+        // Ring full: submit and wait on what is recorded so far, which also resets the ring.
+        VK_FlushPendingUploads();
+        start = 0;
+    }
+
+    memcpy(s_stagingRingPtr + start, data, (size_t)size);
+    s_stagingRingOffset = start + size;
+
+    VkCommandBuffer cmd = VK_BeginSingleTimeCommands();
+    VkBufferCopy region = {start, dstOffset, size};
+    vkCmdCopyBuffer(cmd, s_stagingRingBuf, dstBuffer, 1, &region);
+    VK_EndSingleTimeCommands(cmd);
+    return true;
+}
+
+static void VK_UploadBufferAt(VkBuffer dstBuffer, VkDeviceSize dstOffset, const void *data, VkDeviceSize size)
+{
+    if (VK_UploadBufferRing(dstBuffer, dstOffset, data, size))
+        return;
+
+    // Oversize request: dedicated staging buffer, freed at the next flush.
     VkBuffer staging;
     VkDeviceMemory stagingMem;
     VK_CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -117,7 +184,7 @@ void VK_UploadBuffer(VkBuffer dstBuffer, const void *data, VkDeviceSize size)
     // Copy staging -> device-local
     VkCommandBuffer cmd = VK_BeginSingleTimeCommands();
 
-    VkBufferCopy region = {0, 0, size};
+    VkBufferCopy region = {0, dstOffset, size};
     vkCmdCopyBuffer(cmd, staging, dstBuffer, 1, &region);
 
     VK_EndSingleTimeCommands(cmd);
@@ -147,12 +214,230 @@ void VK_UnmapBuffer(VkDeviceMemory memory)
 // Vertex cache Vulkan buffer management
 // ---------------------------------------------------------------------------
 
-struct vkBufferData_t
+// Device-local chunk sub-allocator. A block is a range inside a shared chunk buffer, so
+// Alloc/Free cost a free-list edit instead of vkCreateBuffer + vkAllocateMemory.
+// Ranges return to the free list only from the garbage drain (after the slot fence).
+static const VkDeviceSize VK_VC_CHUNK_SIZE = 32u * 1024u * 1024u;
+static const VkDeviceSize VK_VC_ALIGN = 64;
+
+struct vkVcRange_t
+{
+    VkDeviceSize offset;
+    VkDeviceSize size;
+};
+
+struct vkVcChunk_t
 {
     VkBuffer buf;
     VkDeviceMemory mem;
     VkDeviceSize size;
+    idList<vkVcRange_t> freeRanges; // sorted by offset, coalesced
 };
+
+static idList<vkVcChunk_t *> s_vcChunks;
+static int s_vcGeneration = 0; // bumped at shutdown so blocks from a dead device are not returned to new chunks
+
+struct vkBufferData_t
+{
+    VkBuffer buf; // chunk buffer
+    int chunk;
+    VkDeviceSize offset;
+    VkDeviceSize size;       // requested bytes
+    VkDeviceSize allocSize; // aligned range length
+    int generation;
+};
+
+static idCVar r_vkVcCheck("r_vkVcCheck", "0", CVAR_RENDERER | CVAR_BOOL,
+                          "validate vertex-cache block range/alignment in VK_VertexCache_GetBuffer");
+
+// Nonfatal: returns NULL when the buffer or its memory cannot be created, so the caller can
+// retry with a smaller chunk instead of aborting.
+static vkVcChunk_t *VK_VcCreateChunk(VkDeviceSize size)
+{
+    const VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+                                     VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+                                     VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+                                     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+
+    VkBufferCreateInfo bufInfo = {};
+    bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufInfo.size = size;
+    bufInfo.usage = usage;
+    bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer buf = VK_NULL_HANDLE;
+    if (vkCreateBuffer(vk.device, &bufInfo, NULL, &buf) != VK_SUCCESS)
+        return NULL;
+
+    VkMemoryRequirements memReqs;
+    vkGetBufferMemoryRequirements(vk.device, buf, &memReqs);
+
+    VkMemoryAllocateFlagsInfo flagsInfo = {};
+    flagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    flagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    VkMemoryAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.pNext = &flagsInfo;
+    allocInfo.allocationSize = memReqs.size;
+    allocInfo.memoryTypeIndex = VK_FindMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    VkDeviceMemory mem = VK_NULL_HANDLE;
+    if (vkAllocateMemory(vk.device, &allocInfo, NULL, &mem) != VK_SUCCESS ||
+        vkBindBufferMemory(vk.device, buf, mem, 0) != VK_SUCCESS)
+    {
+        if (mem != VK_NULL_HANDLE)
+            vkFreeMemory(vk.device, mem, NULL);
+        vkDestroyBuffer(vk.device, buf, NULL);
+        return NULL;
+    }
+
+    // Reuse a trimmed slot so chunk indices held by live blocks stay valid.
+    vkVcChunk_t *c = NULL;
+    for (int i = 0; i < s_vcChunks.Num(); i++)
+    {
+        if (s_vcChunks[i]->buf == VK_NULL_HANDLE)
+        {
+            c = s_vcChunks[i];
+            break;
+        }
+    }
+    const bool reused = (c != NULL);
+    if (!c)
+        c = new vkVcChunk_t;
+    c->size = size;
+    c->buf = buf;
+    c->mem = mem;
+    vkVcRange_t all = {0, size};
+    c->freeRanges.Clear();
+    c->freeRanges.Append(all);
+    if (!reused)
+        s_vcChunks.Append(c);
+    return c;
+}
+
+static int VK_VcChunkIndex(const vkVcChunk_t *c)
+{
+    for (int i = 0; i < s_vcChunks.Num(); i++)
+        if (s_vcChunks[i] == c)
+            return i;
+    return -1;
+}
+
+// Best fit across all chunks; creates a chunk when nothing fits.
+static void VK_VcAllocRange(VkDeviceSize allocSize, int *outChunk, VkDeviceSize *outOffset)
+{
+    int bestChunk = -1, bestRange = -1;
+    VkDeviceSize bestSize = ~(VkDeviceSize)0;
+    for (int ci = 0; ci < s_vcChunks.Num(); ci++)
+    {
+        const idList<vkVcRange_t> &fr = s_vcChunks[ci]->freeRanges;
+        for (int ri = 0; ri < fr.Num(); ri++)
+        {
+            if (fr[ri].size >= allocSize && fr[ri].size < bestSize)
+            {
+                bestSize = fr[ri].size;
+                bestChunk = ci;
+                bestRange = ri;
+            }
+        }
+    }
+
+    if (bestChunk < 0)
+    {
+        VkDeviceSize chunkSize = allocSize > VK_VC_CHUNK_SIZE ? allocSize : VK_VC_CHUNK_SIZE;
+        vkVcChunk_t *newChunk = VK_VcCreateChunk(chunkSize);
+        if (!newChunk && chunkSize > allocSize)
+        {
+            // Device memory is tight: fall back to a chunk sized for just this block.
+            common->Warning("VK VC: %d MB chunk failed, retrying with %d KB", (int)(chunkSize >> 20),
+                            (int)(allocSize >> 10));
+            chunkSize = allocSize;
+            newChunk = VK_VcCreateChunk(chunkSize);
+        }
+        if (!newChunk)
+            common->FatalError("VK VC: out of device-local memory allocating %d KB vertex cache block",
+                               (int)(allocSize >> 10));
+        bestChunk = VK_VcChunkIndex(newChunk);
+        bestRange = 0;
+        common->Printf("VK VC: new chunk %d (%d MB)\n", bestChunk, (int)(chunkSize >> 20));
+    }
+
+    vkVcRange_t &r = s_vcChunks[bestChunk]->freeRanges[bestRange];
+    *outChunk = bestChunk;
+    *outOffset = r.offset;
+    r.offset += allocSize;
+    r.size -= allocSize;
+    if (r.size == 0)
+        s_vcChunks[bestChunk]->freeRanges.RemoveIndex(bestRange);
+}
+
+static void VK_VcFreeRange(int chunk, VkDeviceSize offset, VkDeviceSize size)
+{
+    idList<vkVcRange_t> &fr = s_vcChunks[chunk]->freeRanges;
+    int i = 0;
+    while (i < fr.Num() && fr[i].offset < offset)
+        i++;
+
+    const bool mergePrev = (i > 0) && (fr[i - 1].offset + fr[i - 1].size == offset);
+    const bool mergeNext = (i < fr.Num()) && (offset + size == fr[i].offset);
+    if (mergePrev && mergeNext)
+    {
+        fr[i - 1].size += size + fr[i].size;
+        fr.RemoveIndex(i);
+    }
+    else if (mergePrev)
+        fr[i - 1].size += size;
+    else if (mergeNext)
+    {
+        fr[i].offset = offset;
+        fr[i].size += size;
+    }
+    else
+    {
+        vkVcRange_t r = {offset, size};
+        fr.Insert(r, i);
+    }
+}
+
+static int s_vcTrimDrains = 0; // drains left in which to trim after a level load
+
+// Request a trim after a level load; the old level's blocks only return to the free
+// list once their garbage slots drain, so the trim runs over the next few drains.
+void VK_VertexCache_RequestTrim(void)
+{
+    s_vcTrimDrains = VK_MAX_FRAMES_IN_FLIGHT * 2;
+}
+
+static void VK_VcTrimEmptyChunks(void)
+{
+    for (int i = 0; i < s_vcChunks.Num(); i++)
+    {
+        vkVcChunk_t *c = s_vcChunks[i];
+        if (c->buf == VK_NULL_HANDLE || c->freeRanges.Num() != 1 || c->freeRanges[0].size != c->size)
+            continue;
+        common->Printf("VK VC: trimmed chunk %d (%d MB)\n", i, (int)(c->size >> 20));
+        vkDestroyBuffer(vk.device, c->buf, NULL);
+        vkFreeMemory(vk.device, c->mem, NULL);
+        c->buf = VK_NULL_HANDLE;
+        c->mem = VK_NULL_HANDLE;
+        c->size = 0;
+        c->freeRanges.Clear();
+    }
+}
+
+void VK_VertexCache_Shutdown(void)
+{
+    for (int i = 0; i < s_vcChunks.Num(); i++)
+    {
+        vkVcChunk_t *c = s_vcChunks[i];
+        if (c->buf != VK_NULL_HANDLE)
+            vkDestroyBuffer(vk.device, c->buf, NULL);
+        if (c->mem != VK_NULL_HANDLE)
+            vkFreeMemory(vk.device, c->mem, NULL);
+        delete c;
+    }
+    s_vcChunks.Clear();
+    s_vcGeneration++;
+}
 
 // Live vertex-cache buffer accounting. A steadily climbing live count/bytes is a
 // leak; a high drain volume with a flat live count is just churn.
@@ -175,10 +460,8 @@ static idList<vkBufferData_t *> s_bufferGarbageOverflow[VK_MAX_FRAMES_IN_FLIGHT]
 
 static void VK_DestroyBufferData(vkBufferData_t *bd)
 {
-    if (bd->buf != VK_NULL_HANDLE)
-        vkDestroyBuffer(vk.device, bd->buf, NULL);
-    if (bd->mem != VK_NULL_HANDLE)
-        vkFreeMemory(vk.device, bd->mem, NULL);
+    if (bd->generation == s_vcGeneration)
+        VK_VcFreeRange(bd->chunk, bd->offset, bd->allocSize);
     s_bufferLiveCount--;
     s_bufferLiveBytes -= bd->size;
     delete bd;
@@ -208,10 +491,49 @@ void VK_Buffer_DrainGarbage(uint32_t frameIdx)
         s_bufferGarbageOverflowCount[frameIdx] = 0;
     }
 
-    if (r_vkLogBufferGarbage.GetBool() && (ringDrained || overflowDrained))
+    if (s_vcTrimDrains > 0)
     {
-        common->Printf("VK buf drain slot %u: ring %d, overflow %d -> live %d bufs / %d KB\n", frameIdx, ringDrained,
-                       overflowDrained, s_bufferLiveCount, (int)(s_bufferLiveBytes >> 10));
+        s_vcTrimDrains--;
+        VK_VcTrimEmptyChunks();
+    }
+
+    // Accumulate and log once per 30 drains instead of every frame.
+    static int s_logDrains = 0, s_logRing = 0, s_logOverflow = 0;
+    if (r_vkLogBufferGarbage.GetBool())
+    {
+        s_logDrains++;
+        s_logRing += ringDrained;
+        s_logOverflow += overflowDrained;
+    }
+    else
+    {
+        s_logDrains = s_logRing = s_logOverflow = 0;
+    }
+
+    if (r_vkLogBufferGarbage.GetBool() && s_logDrains >= 30)
+    {
+        int chunks = 0;
+        VkDeviceSize totalBytes = 0, freeBytes = 0, largestFree = 0;
+        for (int i = 0; i < s_vcChunks.Num(); i++)
+        {
+            const vkVcChunk_t *c = s_vcChunks[i];
+            if (c->buf == VK_NULL_HANDLE)
+                continue;
+            chunks++;
+            totalBytes += c->size;
+            for (int r = 0; r < c->freeRanges.Num(); r++)
+            {
+                freeBytes += c->freeRanges[r].size;
+                if (c->freeRanges[r].size > largestFree)
+                    largestFree = c->freeRanges[r].size;
+            }
+        }
+        common->Printf("VK buf drain (last %d): freed %d (overflow %d) -> live %d bufs / %d KB | chunks %d / %d MB, "
+                       "free %d MB (largest %d KB)\n",
+                       s_logDrains, s_logRing + s_logOverflow, s_logOverflow, s_bufferLiveCount,
+                       (int)(s_bufferLiveBytes >> 10), chunks, (int)(totalBytes >> 20), (int)(freeBytes >> 20),
+                       (int)(largestFree >> 10));
+        s_logDrains = s_logRing = s_logOverflow = 0;
     }
 }
 
@@ -226,24 +548,16 @@ void VK_VertexCache_Alloc(vertCache_t *block, const void *data, int size, bool i
     if (!vk.isInitialized || !data || size <= 0)
         return;
 
-    VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    if (indexBuffer)
-    {
-        usage |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
-    }
-    else
-    {
-        usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    }
-
-    // Allow use as geometry input for BLAS builds
-    usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
-             VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    // indexBuffer is unused: chunks carry both vertex and index usage.
+    (void)indexBuffer;
 
     vkBufferData_t *bd = new vkBufferData_t;
     bd->size = (VkDeviceSize)size;
-    VK_CreateBuffer((VkDeviceSize)size, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &bd->buf, &bd->mem);
-    VK_UploadBuffer(bd->buf, data, (VkDeviceSize)size);
+    bd->allocSize = ((VkDeviceSize)size + VK_VC_ALIGN - 1) & ~(VK_VC_ALIGN - 1);
+    VK_VcAllocRange(bd->allocSize, &bd->chunk, &bd->offset);
+    bd->buf = s_vcChunks[bd->chunk]->buf;
+    bd->generation = s_vcGeneration;
+    VK_UploadBufferAt(bd->buf, bd->offset, data, (VkDeviceSize)size);
     s_bufferLiveCount++;
     s_bufferLiveBytes += bd->size;
     block->backendData = bd;
@@ -293,9 +607,16 @@ bool VK_VertexCache_GetBuffer(vertCache_t *block, VkBuffer *outBuf, VkDeviceSize
     if (!block)
         return false;
     vkBufferData_t *bd = (vkBufferData_t *)block->backendData;
-    if (!bd || bd->buf == VK_NULL_HANDLE)
+    if (!bd || bd->buf == VK_NULL_HANDLE || bd->generation != s_vcGeneration)
         return false;
+    if (r_vkVcCheck.GetBool() &&
+        (bd->offset % VK_VC_ALIGN != 0 || bd->offset + bd->size > s_vcChunks[bd->chunk]->size))
+    {
+        static int s_warned = 0;
+        if (s_warned++ < 8)
+            common->Warning("VK VC: bad block chunk=%d off=%d size=%d", bd->chunk, (int)bd->offset, (int)bd->size);
+    }
     *outBuf = bd->buf;
-    *outOffset = (VkDeviceSize)block->offset; // always 0 for static blocks
+    *outOffset = bd->offset;
     return true;
 }

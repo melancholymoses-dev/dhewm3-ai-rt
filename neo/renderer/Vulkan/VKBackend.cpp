@@ -103,10 +103,19 @@ void VKBackend::VertexCache_Alloc(vertCache_t **vc, void *data, int size, bool i
     {
         const unsigned long long allocTicks = R_ProfileTicks();
         VK_VertexCache_Alloc(*vc, data, size, indexBuffer);
-        tr.pc.c_vcAllocUsec += R_ProfileUsecSince(allocTicks);
+        const int usec = R_ProfileUsecSince(allocTicks);
+        tr.pc.c_vcAllocUsec += usec;
         tr.pc.c_vcAllocs++;
         tr.pc.c_vcAllocBytes += size;
+
+        const int site = idMath::ClampInt(0, VCS_COUNT - 1, tr.vcSite);
+        const bool viewSite = (site == VCS_AMBIENT || site == VCS_INDEX_VIEW);
+        const int kind = viewSite ? idMath::ClampInt(0, VCK_COUNT - 1, tr.vcModelKind) : VCK_OTHER;
+        tr.pc.c_vcSiteCount[site][kind]++;
+        tr.pc.c_vcSiteBytes[site][kind] += size;
+        tr.pc.c_vcSiteUsec[site][kind] += usec;
     }
+    tr.vcSite = VCS_UNKNOWN; // an uninstrumented caller then shows up as UNKNOWN, not as the previous site
 }
 void VKBackend::VertexCache_Free(vertCache_t *vc)
 {
