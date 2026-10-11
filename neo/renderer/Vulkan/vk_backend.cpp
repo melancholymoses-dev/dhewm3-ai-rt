@@ -1818,6 +1818,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     vkCmdSetScissor(cmd, 0, 1, &s_viewScissor);
 
     static char s_shaderPassStageBuf[128];
+    bool currentRenderCopied = false;
     for (int si = 0; si < backEnd.viewDef->numDrawSurfs; si++)
     {
         const drawSurf_t *surf = backEnd.viewDef->drawSurfs[si];
@@ -1827,6 +1828,23 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         VkRect2D surfScissor = VK_ComputeDrawSurfScissor(surf);
         if (surfScissor.extent.width == 0 || surfScissor.extent.height == 0)
             continue;
+
+        // Post-process materials (pain flash, berserk) sample _currentRender.  GL snapshots the
+        // framebuffer once, before the first such surface; do the same here, 3D views only.
+        if (!currentRenderCopied && surf->material->GetSort() >= SS_POST_PROCESS && backEnd.viewDef->viewEntitys &&
+            !r_skipPostProcess.GetBool())
+        {
+            currentRenderCopied = true;
+            extern void VK_RB_CopyRender(const void *data);
+            copyRenderCommand_t crCmd = {};
+            crCmd.x = backEnd.viewDef->viewport.x1;
+            crCmd.y = backEnd.viewDef->viewport.y1;
+            crCmd.imageWidth = backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1;
+            crCmd.imageHeight = backEnd.viewDef->viewport.y2 - backEnd.viewDef->viewport.y1 + 1;
+            crCmd.image = globalImages->currentRenderImage;
+            VK_RB_CopyRender(&crCmd);
+        }
+
         vkCmdSetScissor(cmd, 0, 1, &surfScissor);
 
         const idMaterial *mat = surf->material;
@@ -5556,10 +5574,14 @@ void VK_RB_DrawView(const void *data)
 // remoteRenderMap stages sample the capture with explicit UVs authored for GL's bottom-up
 // copy (the materials add "scale 1, -1").  TG_SCREEN captures (mirrorRenderMap, xray,
 // _currentRender) instead rely on the backend's flipped T plane, so they stay top-down.
-static bool VK_CopyWantsGLRowOrder(void)
+static bool VK_CopyWantsGLRowOrder(const idImage *dst)
 {
     const viewDef_t *vd = backEnd.viewDef;
-    if (!vd || !vd->isSubview || !vd->subviewSurface || !vd->subviewSurface->material)
+    // Game-side captures (_scratch for double vision/berserk/wipes) are drawn as plain 2D
+    // quads with GL bottom-up UVs; only _currentRender is sampled through the flipped T plane.
+    if (vd && !vd->isSubview)
+        return dst != globalImages->currentRenderImage;
+    if (!vd || !vd->subviewSurface || !vd->subviewSurface->material)
         return false;
     const idMaterial *mat = vd->subviewSurface->material;
     for (int i = 0; i < mat->GetNumStages(); i++)
@@ -5595,15 +5617,16 @@ void VK_RB_CopyRender(const void *data)
         return;
     }
 
-    // Ensure destination image can hold this capture. _currentRender starts tiny
-    // (e.g. 16x16 placeholder) and must be resized to the capture dimensions.
+    // Destination must match the capture's POT size exactly, not just be large enough: GL
+    // sizes the texture to the copy, and callers (double vision, berserk) draw it with UVs
+    // 0..1.  A leftover larger image (e.g. _scratch from the loading screen) would show stale rows.
     const int desiredW = idMath::CeilPowerOfTwo(cmd->imageWidth > 1 ? cmd->imageWidth : 1);
     const int desiredH = idMath::CeilPowerOfTwo(cmd->imageHeight > 1 ? cmd->imageHeight : 1);
     int dstActualW = 0;
     int dstActualH = 0;
     const bool haveDstExtent = VK_Image_GetExtent(cmd->image, &dstActualW, &dstActualH);
     bool resizedDstImage = false;
-    if (!cmd->image->backendData || !haveDstExtent || dstActualW < desiredW || dstActualH < desiredH)
+    if (!cmd->image->backendData || !haveDstExtent || dstActualW != desiredW || dstActualH != desiredH)
     {
         const size_t bytes = (size_t)desiredW * (size_t)desiredH * 4u;
         byte *blank = (byte *)Mem_Alloc(bytes);
@@ -5668,7 +5691,7 @@ void VK_RB_CopyRender(const void *data)
                            copyW, copyH, (unsigned)vk.renderExtent.width, (unsigned)vk.renderExtent.height,
                            backEnd.viewDef ? backEnd.viewDef->isSubview ? 1 : 0 : -1,
                            backEnd.viewDef ? backEnd.viewDef->isMirror ? 1 : 0 : -1,
-                           backEnd.viewDef ? backEnd.viewDef->numClipPlanes : -1, VK_CopyWantsGLRowOrder() ? 1 : 0);
+                           backEnd.viewDef ? backEnd.viewDef->numClipPlanes : -1, VK_CopyWantsGLRowOrder(cmd->image) ? 1 : 0);
         }
     }
 
@@ -5704,7 +5727,7 @@ void VK_RB_CopyRender(const void *data)
     const int rsY2 = idMath::ClampInt(rsY + 1, (int)srcExtent.height, rsY + (int)idMath::Ceil(copyH * scaleY));
     region.srcOffsets[0] = {rsX, rsY, 0};
     region.srcOffsets[1] = {rsX2, rsY2, 1};
-    if (VK_CopyWantsGLRowOrder())
+    if (VK_CopyWantsGLRowOrder(cmd->image))
     {
         // Reversed source rows flip the blit so dst row 0 is the bottom, like glCopyTexImage.
         region.srcOffsets[0].y = rsY2;
