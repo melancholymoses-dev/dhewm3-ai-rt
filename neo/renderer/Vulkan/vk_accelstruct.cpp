@@ -106,14 +106,18 @@ static idCVar r_rtTlasFallbackRadius("r_rtTlasFallbackRadius", "0", CVAR_RENDERE
                                      "Pass-2 radius for adding off-screen static geometry to the TLAS. 0 = auto: "
                                      "max(2 x r_rtGIRadius, 2 x r_rtVolMaxDist, r_rtReflectionDistance).");
 
+extern float g_vkVolMaxLightReach; // vk_gi.cpp — largest reach among vol-admitted lights (previous frame)
+
 // Pass-2 cull radius: the longest ray reach of any TLAS consumer, so that occlusion
-// does not change with camera yaw.
+// does not change with camera yaw.  The vol term is the farthest admitted light from
+// the farthest march sample (volMaxDist + light reach), capped to keep the TLAS bounded.
 static float VK_RT_Pass2CullRadius()
 {
     const float manual = r_rtTlasFallbackRadius.GetFloat();
     if (manual > 0.0f)
         return manual;
-    return Max(Max(2.0f * r_rtGIRadius.GetFloat(), 2.0f * r_rtVolMaxDist.GetFloat()),
+    const float volLightReach = Min(r_rtVolMaxDist.GetFloat() + g_vkVolMaxLightReach, 6000.0f);
+    return Max(Max(Max(2.0f * r_rtGIRadius.GetFloat(), 2.0f * r_rtVolMaxDist.GetFloat()), volLightReach),
                cvarSystem->GetCVarFloat("r_rtReflectionDistance"));
 }
 
@@ -1562,9 +1566,13 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             if (isWorldArea)
                 passStats.worldAreasInMap++;
 
-            // World areas all sit at origin (0,0,0), so they are culled by bounds distance.
-            const bool outOfRange = isWorldArea ? (VK_RT_EntityBoundsDistance(ent, camPos) > pass2Rad)
-                                                : ((ent->parms.origin - camPos).LengthSqr() > distCullSq);
+            // World areas all sit at origin (0,0,0), so they use bounds distance only.  Other
+            // entities take the cheap origin accept first; the 8-corner bounds test runs only
+            // on origin rejects, so large or offset meshes whose origin is far still count.
+            const bool outOfRange =
+                isWorldArea ? (VK_RT_EntityBoundsDistance(ent, camPos) > pass2Rad)
+                            : ((ent->parms.origin - camPos).LengthSqr() > distCullSq &&
+                               VK_RT_EntityBoundsDistance(ent, camPos) > pass2Rad);
             if (outOfRange)
             {
                 passStats.rejDist++;

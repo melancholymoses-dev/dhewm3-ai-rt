@@ -250,8 +250,46 @@ struct vkBufferData_t
 static idCVar r_vkVcCheck("r_vkVcCheck", "0", CVAR_RENDERER | CVAR_BOOL,
                           "validate vertex-cache block range/alignment in VK_VertexCache_GetBuffer");
 
+// Nonfatal: returns NULL when the buffer or its memory cannot be created, so the caller can
+// retry with a smaller chunk instead of aborting.
 static vkVcChunk_t *VK_VcCreateChunk(VkDeviceSize size)
 {
+    const VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+                                     VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+                                     VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+                                     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+
+    VkBufferCreateInfo bufInfo = {};
+    bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufInfo.size = size;
+    bufInfo.usage = usage;
+    bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer buf = VK_NULL_HANDLE;
+    if (vkCreateBuffer(vk.device, &bufInfo, NULL, &buf) != VK_SUCCESS)
+        return NULL;
+
+    VkMemoryRequirements memReqs;
+    vkGetBufferMemoryRequirements(vk.device, buf, &memReqs);
+
+    VkMemoryAllocateFlagsInfo flagsInfo = {};
+    flagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    flagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    VkMemoryAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.pNext = &flagsInfo;
+    allocInfo.allocationSize = memReqs.size;
+    allocInfo.memoryTypeIndex = VK_FindMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    VkDeviceMemory mem = VK_NULL_HANDLE;
+    if (vkAllocateMemory(vk.device, &allocInfo, NULL, &mem) != VK_SUCCESS ||
+        vkBindBufferMemory(vk.device, buf, mem, 0) != VK_SUCCESS)
+    {
+        if (mem != VK_NULL_HANDLE)
+            vkFreeMemory(vk.device, mem, NULL);
+        vkDestroyBuffer(vk.device, buf, NULL);
+        return NULL;
+    }
+
     // Reuse a trimmed slot so chunk indices held by live blocks stay valid.
     vkVcChunk_t *c = NULL;
     for (int i = 0; i < s_vcChunks.Num(); i++)
@@ -266,11 +304,8 @@ static vkVcChunk_t *VK_VcCreateChunk(VkDeviceSize size)
     if (!c)
         c = new vkVcChunk_t;
     c->size = size;
-    const VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-                                     VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-                                     VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
-                                     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-    VK_CreateBuffer(size, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &c->buf, &c->mem);
+    c->buf = buf;
+    c->mem = mem;
     vkVcRange_t all = {0, size};
     c->freeRanges.Clear();
     c->freeRanges.Append(all);
@@ -309,7 +344,19 @@ static void VK_VcAllocRange(VkDeviceSize allocSize, int *outChunk, VkDeviceSize 
     if (bestChunk < 0)
     {
         VkDeviceSize chunkSize = allocSize > VK_VC_CHUNK_SIZE ? allocSize : VK_VC_CHUNK_SIZE;
-        bestChunk = VK_VcChunkIndex(VK_VcCreateChunk(chunkSize));
+        vkVcChunk_t *newChunk = VK_VcCreateChunk(chunkSize);
+        if (!newChunk && chunkSize > allocSize)
+        {
+            // Device memory is tight: fall back to a chunk sized for just this block.
+            common->Warning("VK VC: %d MB chunk failed, retrying with %d KB", (int)(chunkSize >> 20),
+                            (int)(allocSize >> 10));
+            chunkSize = allocSize;
+            newChunk = VK_VcCreateChunk(chunkSize);
+        }
+        if (!newChunk)
+            common->FatalError("VK VC: out of device-local memory allocating %d KB vertex cache block",
+                               (int)(allocSize >> 10));
+        bestChunk = VK_VcChunkIndex(newChunk);
         bestRange = 0;
         common->Printf("VK VC: new chunk %d (%d MB)\n", bestChunk, (int)(chunkSize >> 20));
     }

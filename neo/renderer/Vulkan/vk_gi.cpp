@@ -639,6 +639,7 @@ extern idCVar r_vkLogRT;
 extern idCVar r_rtGbufNormals;   // P9 — defined in vk_gbuffer.cpp
 extern float VK_RT_PlayerExcludeRadius(void); // vk_shadows.cpp — 0 unless the fp body is drawn
 extern idCVar r_rtVolMaxLights;  // defined in vk_vol.cpp — cap for the vol-only selection built below
+float g_vkVolMaxLightReach = 0.0f; // consumed by VK_RT_Pass2CullRadius (vk_accelstruct.cpp)
 extern idCVar r_rtVolMaxDist;    // defined in vk_vol.cpp — vol march reach, used to filter that selection
 extern idCVar r_rtVolDump;       // defined in vk_vol.cpp — one-shot verbatim dump of the vol upload
 extern bool vkRT_volDumpPending; // defined in vk_vol.cpp — handoff so the params half prints too
@@ -2383,6 +2384,7 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     {
         const int volCutoff = idMath::ClampInt(1, VK_GI_MAX_LIGHTS, r_rtVolMaxLights.GetInteger());
         const float volMaxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
+        float maxReach = 0.0f;
         for (int i = 0; i < numSelected && numVolSelected < volCutoff; i++)
         {
             const Candidate *c = s_selected[i];
@@ -2390,7 +2392,9 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             if (c->distSq > reach * reach)
                 continue; // can never reach a march sample — skip, don't burn a vol slot
             s_volSelected[numVolSelected++] = c;
+            maxReach = Max(maxReach, c->entry.posRadius[3]);
         }
+        g_vkVolMaxLightReach = maxReach; // read by the next TLAS build's pass-2 radius
     }
 
     // r_rtGILightDump's per-candidate log above shows *admission* (area/hop); this
