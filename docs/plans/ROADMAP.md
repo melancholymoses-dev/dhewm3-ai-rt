@@ -1,6 +1,6 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-10-10 · **Arc 7 (vol_fix) closed; first-person body polish is the open item**
+**Status reviewed:** 2026-10-10 · **Arcs 6 (player body) and 7 (vol_fix) closed; pick next arc**
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
 designs live in the linked docs. Prior cycle: `completed/202609_ROADMAP.md`.
@@ -37,7 +37,7 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 3b | **AO / GI refinement** — AO distance falloff; AO moved from direct light onto GI | `completed/20260930_AO_GI_refine.md` | ✅ Closed 2026-10-02. Two open checks not run (viewmodel AO in debug mode 2, AO cost) |
 | 4 | **Reflection Emitters** - Show emitted particles in reflections | `completed/20261002_reflection_emitters.md | Completed 2026-10-6 | 
 | 5 | **Bloom** - Add lighting bloom around emissive sources| `completed/20260906_bloom_plan.md` | Completed 2026-10-7. |
-| 6 | **Player Body** - Add visible body from first person | `20261001_see_first_person_player_model.md` | Working in game 2026-10-10: lit, animating, RT-excluded, `rtPlayer` mask verified. Open: run-cycle lean and pelvis polish (issues 2, 4) |
+| 6 | **Player Body** - Add visible body from first person | `completed/20261001_see_first_person_player_model.md` | ✅ Closed 2026-10-10. Lit, animating, RT-excluded, `rtPlayer` mask verified; ladder sink fixed (body lift, ladder leg anim, foot-IK void fix). Stairs and slopes still dip slightly, accepted |
 | 7 | **TLAS build defects** — (a) pass-2 distance cull holds only the view-visible set, so vol shadow rays miss off-screen occluders and in-scatter flips on a pure yaw; (b) instance mask/SBT key off `noSelfShadow` not the player, breaking breakable-glass reflections | `completed/20261009_vol_fix.md` | ✅ Closed 2026-10-10. Pass-2 bounds cull (free: TLAS build 0.12 ms), vol gain/falloff, `rtPlayer` mask bit (breakable glass fixed), vertex-cache sub-allocator. 7.4 (per-frame upload wait) conditional |
 
 
@@ -107,7 +107,6 @@ while new lighting techniques enhance without fighting too much.
 
 | Doc | Owns |
 |---|---|
-| `20261001_see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. Open: issues 2 and 4 (lean, pelvis). |
 | `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine. Load it before chasing any AMD-vs-NVIDIA or device-lost bug. |
 
 ---
@@ -118,6 +117,7 @@ All in `completed/`.
 
 | Doc | Owns |
 |---|---|
+| `20261001_see_first_person_player_model.md` | **Arc 6.** First-person player body: trimmed mesh, `rtPlayer` RT exclusion, ladder and foot-IK fixes. Cvars `pm_showFirstPersonBody`, `pm_firstPersonBodyOffset`, `pm_ladderLegAnim` |
 | `20261009_vol_fix.md` | **Arc 7.** TLAS pass-2 bounds cull, projected-vol gain/falloff, `rtPlayer` mask bit, vertex-cache sub-allocator + staging ring. 7.4 conditional |
 | `20260906_bloom_plan.md` | Bloom: emissive-sourced, composited after FSR and before the HUD. |
 | `20261002_reflection_emitters.md` | Projectile and smoke-particle glows in glass reflections via an analytic emitter list. |

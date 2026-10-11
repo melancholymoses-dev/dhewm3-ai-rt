@@ -1,11 +1,12 @@
 # First-Person Player Body Plan
 
 **Date:** 2026-04-04  
-**Status:** Working in game, lit, animating and out of the TLAS. Stages 2-4 landed, plus
-`pm_firstPersonBodyOffset`/`MaxPitch` and `r_rtPlayerExcludeRadius`. The 2026-10-10 `rtPlayer` mask
+**Status: Complete (2026-10-10).** Working in game, lit, animating and out of the TLAS. Stages 2-4
+landed, plus `pm_firstPersonBodyOffset`/`MaxPitch` and `r_rtPlayerExcludeRadius`. The `rtPlayer` mask
 change made the player exclusions precise and was verified (body under a light, mirrors, glass).
-Open: #2 (run-cycle lean, mesh weights still on `Chest`/`Belly`/`Waist`) and #4 (pelvis/backside)
-need an in-game look before closing.  
+Issues 2 (lean) and 4 (pelvis) are closed; the mesh gained an abs bump. Ladder polish (P1, P1b) is
+done and checked in game. Known and accepted: the foot IK still dips the body a little on stairs and
+slopes, which is rarely visible because you don't look at your feet there.  
 **Scope:** Local first-person body visibility (torso/legs), while keeping normal third-person and mirror rendering behavior.
 
 ---
@@ -96,9 +97,9 @@ Established by inspection, and the basis for keeping the fp body out of RT entir
 
 | Pass | Site | World body included? |
 |---|---|---|
-| TLAS pass 1 (viewEntitys) | [vk_accelstruct.cpp:1164](../../neo/renderer/Vulkan/vk_accelstruct.cpp#L1164) | Yes — `g_showPlayerShadow` defaults to **1**, so `suppressShadowInViewID` is 0 |
-| TLAS pass 2 (cached static) | [vk_accelstruct.cpp:1474](../../neo/renderer/Vulkan/vk_accelstruct.cpp#L1474) | No — skips `dynamicModel` |
-| TLAS pass 3 (nearby dynamic) | [vk_accelstruct.cpp:1570](../../neo/renderer/Vulkan/vk_accelstruct.cpp#L1570) | Yes — only `weaponDepthHack` is excluded |
+| TLAS pass 1 (viewEntitys) | [vk_accelstruct.cpp:1164](../../../neo/renderer/Vulkan/vk_accelstruct.cpp#L1164) | Yes — `g_showPlayerShadow` defaults to **1**, so `suppressShadowInViewID` is 0 |
+| TLAS pass 2 (cached static) | [vk_accelstruct.cpp:1474](../../../neo/renderer/Vulkan/vk_accelstruct.cpp#L1474) | No — skips `dynamicModel` |
+| TLAS pass 3 (nearby dynamic) | [vk_accelstruct.cpp:1570](../../../neo/renderer/Vulkan/vk_accelstruct.cpp#L1570) | Yes — only `weaponDepthHack` is excluded |
 
 Pass 1's `suppressShadowInViewID` skip is a bare `continue` that does **not** set
 `blasFrameCount`, so pass 3 re-adds the body even with `g_showPlayerShadow 0`. That is why
@@ -112,14 +113,14 @@ the body reaches reflections at all, and why the fp body needs excluding in both
 Do not alter third-person, multiplayer, or mirror model paths, or existing suppression rules.
 
 ### 2. Own a bare render entity on idPlayer
-Pattern after [PlayerIcon.cpp:165-185](../../neo/game/PlayerIcon.cpp#L165) — a `renderEntity_t`
+Pattern after [PlayerIcon.cpp:165-185](../../../neo/game/PlayerIcon.cpp#L165) — a `renderEntity_t`
 plus `qhandle_t`, not an `idAnimatedEntity`. A second entity would need a second animator and
 could desync from the world pose.
 
 | Field | Value | Reason |
 |---|---|---|
 | `hModel` | `FindModel("models/sp_player.md5mesh")` | |
-| `allowSurfaceInViewID` | `entityNumber + 1` | local view only; mirrors/subviews use viewID 0. Same trick as [Weapon.cpp:2148](../../neo/game/Weapon.cpp#L2148) |
+| `allowSurfaceInViewID` | `entityNumber + 1` | local view only; mirrors/subviews use viewID 0. Same trick as [Weapon.cpp:2148](../../../neo/game/Weapon.cpp#L2148) |
 | `origin` / `axis` | copied from `renderEntity` after `Present()` | inherits the `offset ( 0 0 1 )` from `model_sp_marine` without re-deriving it |
 | `callback` | `NULL` | see stage 3 |
 | `noShadow`, `noSelfShadow` | `true` | keep out of the stencil path |
@@ -133,7 +134,7 @@ destructor / `pm_showFirstPersonBody 0`. Do not save the handle — recreate it 
 directly usable: no second animation evaluation, and pose desync is impossible by construction.
 
 In `idPlayer::Think`, after the existing `UpdateAnimation(); Present();`
-([Player.cpp:7919](../../neo/game/Player.cpp#L7919)):
+([Player.cpp:7919](../../../neo/game/Player.cpp#L7919)):
 
 ```
 animator.CreateFrame( gameLocal.time, false );            // no-op if already current
@@ -144,18 +145,18 @@ gameRenderWorld->UpdateEntityDef( fpBodyHandle, &fpBody );
 ```
 
 `CreateFrame` must be explicit. The world body is dropped from `viewEntitys` by
-`suppressSurfaceInViewID` ([RenderWorld_portals.cpp:682](../../neo/renderer/RenderWorld_portals.cpp#L682)),
+`suppressSurfaceInViewID` ([RenderWorld_portals.cpp:682](../../../neo/renderer/RenderWorld_portals.cpp#L682)),
 so its `ModelCallback` never fires in the local view and the joint array would otherwise go
 stale. Leaving `fpBody.callback` NULL avoids `ModelCallback`'s `renderEntity->entityNum`
 lookup, which would resolve to the world entity on a game-unowned render entity.
 
-If `numJoints != 75`, [Model_md5.cpp:836](../../neo/renderer/Model_md5.cpp#L836) prints a
+If `numJoints != 75`, [Model_md5.cpp:836](../../../neo/renderer/Model_md5.cpp#L836) prints a
 joint-count mismatch and returns no model — that is the first thing to check if nothing draws.
 
 ### Stages 2-3: landed
 
 Stages 2 and 3 are one chunk — stage 2 alone cannot be tested, because an MD5 render entity
-with NULL joints is rejected at [Model_md5.cpp:828](../../neo/renderer/Model_md5.cpp#L828).
+with NULL joints is rejected at [Model_md5.cpp:828](../../../neo/renderer/Model_md5.cpp#L828).
 
 | File | Change |
 |---|---|
@@ -179,7 +180,7 @@ Not saved to the def: no `model` block was added, per the Asset Touchpoints note
 ### 4. Exclude from the TLAS — landed
 
 `if ( ent->parms.allowSurfaceInViewID ) continue;` added to all three passes in
-[vk_accelstruct.cpp](../../neo/renderer/Vulkan/vk_accelstruct.cpp) — lines 1178, 1488, 1611.
+[vk_accelstruct.cpp](../../../neo/renderer/Vulkan/vk_accelstruct.cpp) — lines 1178, 1488, 1611.
 Pass 1 also stamps `ent->blasFrameCount = tr.frameCount`, matching the `weaponDepthHack`
 branch above it, so pass 3's dedup check skips the entity as well.
 
@@ -205,12 +206,12 @@ and offset tuning as a fallback if crouch still clips.
 
 | Symptom | Check first | Fix |
 |---|---|---|
-| Nothing draws | Console for `renderEntity has different number of joints` ([Model_md5.cpp:836](../../neo/renderer/Model_md5.cpp#L836)) | `numJoints` must be 75; re-fetch from `animator.GetJoints` each frame, don't cache the pointer |
+| Nothing draws | Console for `renderEntity has different number of joints` ([Model_md5.cpp:836](../../../neo/renderer/Model_md5.cpp#L836)) | `numJoints` must be 75; re-fetch from `animator.GetJoints` each frame, don't cache the pointer |
 | Nothing draws, no console output | `r_skipSuppress 1` — if the body appears, gating is the cause | `allowSurfaceInViewID` must equal `renderView.viewID`, i.e. `entityNumber + 1` |
 | Body frozen in bind pose | Is `animator.CreateFrame` called explicitly in `Think`? | See stage 3 — the world body's callback does not fire in the local view |
 | Body one frame behind | `UpdateEntityDef` ordering vs `Present()` | Update after `Present()`, so `renderEntity.origin`/`axis` are current |
 | Torso solid black, world shadows correct | `r_rtShadowDebugMode` | Risk 3 — `r_rtShadowPlayerExcludeDist` / `rayCullMask` |
-| Body visible in a mirror | `allowSurfaceInViewID` is non-zero and mirror `viewID` is 0 | If it still leaks, the subview is not resetting `viewID`; check [Player.cpp:8917](../../neo/game/Player.cpp#L8917) |
+| Body visible in a mirror | `allowSurfaceInViewID` is non-zero and mirror `viewID` is 0 | If it still leaks, the subview is not resetting `viewID`; check [Player.cpp:8917](../../../neo/game/Player.cpp#L8917) |
 | TLAS instance count rises when cvar toggles on | Stage 4 predicate present in **both** pass 1 and pass 3? | Pass 1 must also stamp `blasFrameCount` |
 | Body lit flat, detached from the floor | Risk 5 — it should receive screen-space GI | Exclusion is TLAS-only; it must stay in the G-buffer |
 
@@ -294,7 +295,7 @@ offset can cancel. See the torso-channel note under Open Issues.
    writes depth in the local view, and the world body sits in the TLAS at the same place.
    Shadow rays traced from fp-body pixels hit the world body's chest almost immediately.
 - Mitigation: the knob already exists — `r_rtShadowPlayerExcludeDist`
-  ([vk_shadows.cpp:1007](../../neo/renderer/Vulkan/vk_shadows.cpp#L1007)) forces
+  ([vk_shadows.cpp:1007](../../../neo/renderer/Vulkan/vk_shadows.cpp#L1007)) forces
   `rayCullMask = 0xFD`, dropping player instances (`inst.mask = 0x02`). Currently applied only
   when the light is nearer than that distance; may need to key off the fp-body pixel instead.
 
@@ -314,37 +315,32 @@ offset can cancel. See the torso-channel note under Open Issues.
 | # | Finding | Status |
 |---|---|---|
 | 1 | Capped shoulder rim rendered black and occluded everything below it | Fixed — cap deleted, mesh re-exported (2042 tris) |
-| 2 | Run cycle leans the torso into view; you see your own back | Fix by cutting the mesh to the hip line (Z≈47-48) — see below |
+| 2 | Run cycle leans the torso into view; you see your own back | Closed — not present or noticeable with the current mesh |
 | 3 | Body renders **pitch black** under a light, not merely shadowed | Fixed — `r_rtPlayerExcludeRadius`, see below. Verified in game 2026-10-10 (after the `rtPlayer` mask change) |
 | 6 | Pitch to 89° shows the backs of your own legs | Fixed — `pm_firstPersonBodyMaxPitch` 70 |
-| 4 | Pelvis visible when looking down ("seeing your own backside") | Prefer trimming the mesh's rear over offsetting — see below |
+| 4 | Pelvis visible when looking down ("seeing your own backside") | Closed — `pm_firstPersonBodyOffset` is enough, no mesh trim |
 | 5 | Offset body cast a second, displaced shadow | Fixed — stage 4 landed, fp body out of the TLAS |
 
-**On #4 — trim the backside rather than shift the body.** `pm_firstPersonBodyOffset` works but
-costs alignment: the world body stays at the true position, so its shadow sits ahead of the fp
-body's feet. Shifting the world body to match is not an option — one `renderEntity.origin`
-serves every view, so it would displace the body in mirrors, in RT reflections (which pass 3
-includes during first-person play) and for other clients in multiplayer.
+**#4 — closed, offset kept.** `pm_firstPersonBodyOffset` (default -4) hides the pelvis well enough, so
+the backside trim is not needed. The cost is known: the world body stays at the true position, so
+its shadow sits slightly ahead of the fp body's feet. Shifting the world body is not an option, since
+one `renderEntity.origin` serves mirrors, RT reflections and other clients.
 
-Deleting the rear of the pelvis from the fp mesh keeps the body at its true position, so the
-shadow, reflections and collision hull all stay correct, and the offset can return to 0. The
-fp mesh is only ever viewed by its own player from above; the backside has no job. Do it in
-the same Blender pass as the hip-line cut.
+**#2 — closed, not an issue.** The run-cycle lean is not present or noticeable with the current mesh.
+For reference, the lean lives in the `player.def` torso channel (`*Waist`); the mesh still carries
+`Chest` 42 / `Belly` 60 / `Waist` 170 weights (965 verts / 1744 tris, 2026-10-10). If it ever
+shows, cut below `Waist` (Z=45.7).
 
-**On #2 — the asset fix replaces the code fix.** `player.def` splits the rig
-`channel torso ( *Waist )` / `channel legs ( *origin -*Waist ... )`, and the entire lean lives
-in the torso channel. Cutting below `Waist` (Z=45.7) leaves only `Hips`- and leg-driven
-geometry, making the lean structurally impossible rather than merely suppressed. This cancels
-the planned torso-channel joint lock, which would have required the fp entity to own a copy of
-the joint array instead of sharing the animator's pointer.
+**Abs bump (2026-10-10).** The fp mesh gained a bump to show the abs better when looking down.
+Judge it in game across lighting; it is part of the mesh, no code involved.
 
-Joint heights for the cut: `Chest` 54.1, `Belly` 47.4, `Waist`/`SPINNER` 45.7, `Hips` 45.0
-(legs channel), `Lupleg`/`Rupleg` 43.2. Pass criterion: `Chest` and `Belly` drive zero
-vertices, `Waist` near zero.
+## Polish (2026-10-10)
 
-Current mesh (965 verts / 1744 tris, re-measured 2026-10-10) does **not** meet it — `Chest` 42,
-`Belly` 60, `Waist` 170 weights remain (`Hips` 154). The cut is still at the waist, not below it,
-so the lean is reduced but not structurally gone. Cut below Z=45.7 if the run cycle still shows it.
+| # | Item | State |
+|---|---|---|
+| P1 | Ladders: body sinks below the camera on mount | Done, verified in game. The log showed the legs channel plays `fall` on ladders, dropping the neck 8-14 units below the eye (`cam-neck` 4 → 9 over ~200 ms at mount, ~13 climbing up, 2-4 climbing down). `UpdateFirstPersonBody` now raises the body by `eye Z - Loneck Z` (0-20, eased at 300 u/s) while `OnLadder()`. Check: top of a ladder, look down while mounting, no body rim visible; with `pm_firstPersonBodyDebug 1`, `lift=` tracks `cam-neck`. Doom 3 has no ladder anim (`upladder` is exported in `player.def` but never bound, and the script has no ladder state), so the legs stay in `fall`. `idPlayer::Move` plays `walk` while moving vertically and `idle` otherwise, only when on a ladder and airborne (the script owns the channel on the ground). `pm_ladderLegAnim 0` restores `fall`. Fallback: hide the body on ladders |
+| P1b | Body sinks 30-40 units at a ladder edge | Cause confirmed with `ik_enable 0`: the player's foot IK (`idIK_Walk`) treats a foot trace that finds no floor as a floor `footDownTrace` (32) below and drops the waist. Done, verified in game: in `IK.cpp` (game and d3xp) a missed trace for the player gives that foot no shift; AI unchanged. Stairs and real step-downs still dip, accepted. The `fpBody gap:`/`gap2:` logging stays behind `pm_firstPersonBodyDebug` |
+| P2 | Mesh shape / abs | Closed. The abs bump is in the mesh; no further body work planned |
 
 **On #3 — direct *and* indirect are killed by the same occluder.** The fp body sits inside the
 world body, which must stay in the TLAS because it carries the RT lighting. Every ray leaving
@@ -352,9 +348,9 @@ an fp-body surface hits the world body within a couple of units:
 
 | Ray | Cull mask | Player instances (`mask 0x02`) |
 |---|---|---|
-| Shadow ([vk_shadows.cpp:1012](../../neo/renderer/Vulkan/vk_shadows.cpp#L1012)) | `0xFD` only when light-to-camera < `r_rtShadowPlayerExcludeDist` | usually **included** |
-| GI ([gi_ray.rgen:164](../../neo/renderer/glsl/gi_ray.rgen#L164)) | `0xFF` | **included** |
-| Probe GI ([gi_probe_trace.rgen:97](../../neo/renderer/glsl/gi_probe_trace.rgen#L97)) | `0xFF` | **included** |
+| Shadow ([vk_shadows.cpp:1012](../../../neo/renderer/Vulkan/vk_shadows.cpp#L1012)) | `0xFD` only when light-to-camera < `r_rtShadowPlayerExcludeDist` | usually **included** |
+| GI ([gi_ray.rgen:164](../../../neo/renderer/glsl/gi_ray.rgen#L164)) | `0xFF` | **included** |
+| Probe GI ([gi_probe_trace.rgen:97](../../../neo/renderer/glsl/gi_probe_trace.rgen#L97)) | `0xFF` | **included** |
 
 So direct light is shadowed to zero and the bounce that would otherwise lift it is occluded
 too. That is why it reads pitch black rather than dim — it is not tonemapping, and the body
@@ -375,9 +371,9 @@ the player's own body* — a property of the ray origin, which every rgen alread
 
 | Shader | Change |
 |---|---|
-| [shadow_ray.rgen](../../neo/renderer/glsl/shadow_ray.rgen#L303) | per-pixel `cullMask`; reuses the existing `camDist` |
-| [gi_ray.rgen](../../neo/renderer/glsl/gi_ray.rgen#L130) | per-pixel `giCullMask`; reuses the existing `camPos` |
-| [gi_probe_trace.rgen](../../neo/renderer/glsl/gi_probe_trace.rgen#L100) | `0xFD` **unconditionally** |
+| [shadow_ray.rgen](../../../neo/renderer/glsl/shadow_ray.rgen#L303) | per-pixel `cullMask`; reuses the existing `camDist` |
+| [gi_ray.rgen](../../../neo/renderer/glsl/gi_ray.rgen#L130) | per-pixel `giCullMask`; reuses the existing `camPos` |
+| [gi_probe_trace.rgen](../../../neo/renderer/glsl/gi_probe_trace.rgen#L100) | `0xFD` **unconditionally** |
 
 Neither rgen needed a new camera-position uniform — both already derive `camPos` from
 `invViewProj`. `ShadowParamsUBO` absorbed the radius into `_pad1[0]` (still 192 bytes);

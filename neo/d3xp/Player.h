@@ -810,6 +810,7 @@ class idPlayer : public idActor
     renderEntity_t fpBodyRenderEnt;
     qhandle_t fpBodyHandle;
     bool fpBodyJointsWarned;
+    float fpBodyLift; // dhewm3-rt: ladder neck-to-eye correction, eased
 
     bool selfSmooth;
 

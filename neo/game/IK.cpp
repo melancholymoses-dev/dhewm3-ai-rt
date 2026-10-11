@@ -34,6 +34,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 #include "gamesys/SysCvar.h"
 #include "Mover.h"
+#include "Player.h"
 
 #include "IK.h"
 
@@ -614,6 +615,7 @@ void idIK_Walk::Evaluate(void)
 {
     int i, newPivotFoot = 0;
     float modelHeight, jointHeight, lowestHeight, floorHeights[MAX_LEGS];
+    bool floorMissed[MAX_LEGS] = {false};
     float shift, smallestShift, newHeight, step, newPivotYaw, height, largestAnkleHeight;
     idVec3 modelOrigin, normal, hipDir, kneeDir, start, end, jointOrigins[MAX_LEGS];
     idVec3 footOrigin, ankleOrigin, kneeOrigin, hipOrigin, waistOrigin;
@@ -689,6 +691,11 @@ void idIK_Walk::Evaluate(void)
                                    self);
         floorHeights[i] = results.endpos * normal;
 
+        // dhewm3-rt: a trace that finds no floor returns its end point, which would read as a floor
+        // footDownTrace below and drop the waist.  At a ledge that sinks the player body; the first-
+        // person view shows it.  Player only, so AI keeps its tuned behaviour.
+        floorMissed[i] = (results.fraction >= 1.0f) && self->IsType(idPlayer::Type);
+
         if (ik_debug.GetBool() && footModel)
         {
             idFixedWinding w;
@@ -723,7 +730,7 @@ void idIK_Walk::Evaluate(void)
     for (i = 0; i < numLegs; i++)
     {
 
-        if (onGround && (enabledLegs & (1 << i)))
+        if (onGround && (enabledLegs & (1 << i)) && !floorMissed[i])
         {
             shift = floorHeights[i] - modelHeight + footShift;
         }
