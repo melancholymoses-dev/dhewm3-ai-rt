@@ -1357,15 +1357,13 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
         // instanceCustomIndex is patched after static/dynamic merge.
         inst.instanceCustomIndex = 0;
-        // Player body entities get mask bit 0x01 so shadow rays can optionally
-        // exclude them (e.g. when the player is directly under a light).
-        // World geometry gets every other bit (0xFE), not 0xFF: bit 0 must stay
-        // clear so a cullMask of 0x01 isolates player geometry only (used by the
-        // vol_march.comp self-shadow debug view).
-        inst.mask = ent->parms.noSelfShadow ? 0x01 : 0xFE;
+        // Player geometry (renderEntity_t::rtPlayer) gets its own mask bit so rays can
+        // exclude it with 0xFD. Everything else is bit 0, so a cullMask of 0x02 isolates
+        // the player (vol_march.comp self-shadow debug view).
+        inst.mask = ent->parms.rtPlayer ? VK_RT_MASK_PLAYER : VK_RT_MASK_WORLD;
         // Player body uses SBT offset 2 → player_reflect.rchit (main) and placeholder (probe, never fires).
         // World geometry uses offset 0 → reflect_ray.rchit (main) and glass_probe.rchit (probe).
-        inst.instanceShaderBindingTableRecordOffset = ent->parms.noSelfShadow ? 2 : 0;
+        inst.instanceShaderBindingTableRecordOffset = ent->parms.rtPlayer ? 2 : 0;
         inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
         // Per-surface opaque flags are encoded in the BLAS geometry entries; no instance-level override needed.
         inst.accelerationStructureReference = ent->blas->deviceAddress;
@@ -1406,7 +1404,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                         VkMaterialEntry matEntry = VK_RT_MakeMaterialEntry(surfShader, ent->blas, base + g,
                                                                            s_dynGeomVtxAddrs, s_dynGeomIdxAddrs);
                         matEntry.baseGeomIdx = base + g;
-                        if (ent->parms.noSelfShadow)
+                        if (ent->parms.rtPlayer)
                             matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
                         // Bounds check: max valid vertex index for rt_InterpolateUV.
                         if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
@@ -1497,7 +1495,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                         // baseGeomIdx in each entry is the absolute slot for THIS geometry only.
                         matEntry.baseGeomIdx = base + g;
                         // Tag player/weapon geometry so glass_probe.rahit can skip it.
-                        if (ent->parms.noSelfShadow)
+                        if (ent->parms.rtPlayer)
                             matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
                         // Bounds check: max valid vertex index for rt_InterpolateUV.
                         if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
@@ -1663,7 +1661,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             inst.transform.matrix[2][3] = m[14];
 
             inst.instanceCustomIndex = 0; // patched below
-            inst.mask = 0xFE;             // bit 0 reserved for player geometry, see the dynamic-instance mask above
+            inst.mask = VK_RT_MASK_WORLD;
             inst.instanceShaderBindingTableRecordOffset = 0;
             inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
             inst.accelerationStructureReference = cached->deviceAddress;
@@ -1802,8 +1800,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             inst.transform.matrix[2][3] = m[14];
 
             inst.instanceCustomIndex = 0; // patched below
-            inst.mask = ent->parms.noSelfShadow ? 0x01 : 0xFE;
-            inst.instanceShaderBindingTableRecordOffset = ent->parms.noSelfShadow ? 2 : 0;
+            inst.mask = ent->parms.rtPlayer ? VK_RT_MASK_PLAYER : VK_RT_MASK_WORLD;
+            inst.instanceShaderBindingTableRecordOffset = ent->parms.rtPlayer ? 2 : 0;
             inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
             inst.accelerationStructureReference = ent->blas->deviceAddress;
 
@@ -1819,7 +1817,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                 VkMaterialEntry matEntry =
                     VK_RT_MakeMaterialEntry(surfShader, ent->blas, base + g, s_dynGeomVtxAddrs, s_dynGeomIdxAddrs);
                 matEntry.baseGeomIdx = base + g;
-                if (ent->parms.noSelfShadow)
+                if (ent->parms.rtPlayer)
                     matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
                 if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
                     matEntry.maxVertex = (uint32_t)(ent->blas->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;

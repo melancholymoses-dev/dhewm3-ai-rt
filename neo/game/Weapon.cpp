@@ -2096,6 +2096,14 @@ idWeapon::PresentWeapon
 */
 void idWeapon::PresentWeapon(bool showViewModel)
 {
+    // dhewm3-rt: the flag is not saved; re-mark the held world model as RT player geometry.
+    idAnimatedEntity *worldEnt = worldModel.GetEntity();
+    if (worldEnt && !worldEnt->GetRenderEntity()->rtPlayer)
+    {
+        worldEnt->GetRenderEntity()->rtPlayer = true;
+        worldEnt->UpdateVisuals();
+    }
+
     playerViewOrigin = owner->firstPersonViewOrigin;
     playerViewAxis = owner->firstPersonViewAxis;
 

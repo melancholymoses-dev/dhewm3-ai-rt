@@ -219,7 +219,7 @@ void main()
         rayQueryInitializeEXT(
             rq, tlas,
             gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT,
-            0xFEu, // skip player body/hands (mask 0x01)
+            0xFDu, // skip player body/hands (mask 0x02)
             cellPos, 0.01, lightDir, tShadow);
 
         while (rayQueryProceedEXT(rq))

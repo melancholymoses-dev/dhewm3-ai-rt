@@ -7724,6 +7724,27 @@ void idPlayer::FreeFirstPersonBody(void)
 
 /*
 ==============
+idPlayer::MarkRTPlayerEntities
+
+Tags the body and head as the RT "player" class (own TLAS mask bit, player_reflect hit
+group). Done every frame because the flag is not in the savegame format; a change
+only reaches the renderer through the owning entity's next Present().
+==============
+*/
+void idPlayer::MarkRTPlayerEntities(void)
+{
+    renderEntity.rtPlayer = true;
+
+    idAFAttachment *headEnt = head.GetEntity();
+    if (headEnt && !headEnt->GetRenderEntity()->rtPlayer)
+    {
+        headEnt->GetRenderEntity()->rtPlayer = true;
+        headEnt->UpdateVisuals();
+    }
+}
+
+/*
+==============
 idPlayer::UpdateFirstPersonBody
 
 Local-only torso/legs shown when looking down in first person.  The world body stays
@@ -7738,6 +7759,8 @@ Must be called after Present() so renderEntity.origin/axis/bounds are current.
 */
 void idPlayer::UpdateFirstPersonBody(void)
 {
+    MarkRTPlayerEntities();
+
     // Only the local client has a first-person view to show this in.  The viewID gate
     // below would hide it for everyone else anyway, but there is no point building it.
     if (!pm_showFirstPersonBody.GetBool() || fl.hidden || spectating || !animator.ModelHandle() ||

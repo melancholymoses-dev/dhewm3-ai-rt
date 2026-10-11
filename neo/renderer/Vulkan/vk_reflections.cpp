@@ -680,9 +680,9 @@ static void VK_RT_InitReflPipeline(void)
     //     + sbtHitOffset 0 → hit slot 0 → Group 4: world main hit
     //     + sbtHitOffset 1 → hit slot 1 → Group 5: world glass probe hit
     //
-    //   instanceSBTOffset=2 (player body, noSelfShadow):
+    //   instanceSBTOffset=2 (player body, rtPlayer):
     //     + sbtHitOffset 0 → hit slot 2 → Group 6: player main hit
-    //     + sbtHitOffset 1 → hit slot 3 → Group 7: player glass probe hit (never fires — mask 0xFE excludes player)
+    //     + sbtHitOffset 1 → hit slot 3 → Group 7: player glass probe hit (never fires — mask 0xFD excludes player)
     //
     // SBT memory layout:
     //   [0]=rgen  [1]=main_miss  [2]=probe_miss  [3]=shadow_miss  [4]=world_main  [5]=world_probe  [6]=player_main
@@ -734,7 +734,7 @@ static void VK_RT_InitReflPipeline(void)
     // Group 5: world glass probe hit — glass_probe.rchit (stage 5) + glass_probe.rahit (stage 7).
     // glass_probe.rahit adds MAT_FLAG_PLAYER_BODY skip on top of alpha-test logic so non-opaque
     // player surfaces (perforated arm/weapon textures) are ignored by the probe.  Combined with
-    // the 0xFE cullMask in rgen this gives two layers of player exclusion.
+    // the 0xFD cullMask in rgen this gives two layers of player exclusion.
     groups[5].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     groups[5].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     groups[5].generalShader = VK_SHADER_UNUSED_KHR;
@@ -752,7 +752,7 @@ static void VK_RT_InitReflPipeline(void)
     groups[6].intersectionShader = VK_SHADER_UNUSED_KHR;
 
     // Group 7: player glass probe hit — placeholder, never invoked.
-    // Glass probe uses mask 0xFE which excludes player instances (mask 0x01).
+    // Glass probe uses mask 0xFD which excludes player instances (mask 0x02).
     // This slot must exist in the SBT so the indexing arithmetic stays valid.
     // Reuse glass_probe.rchit + main rahit as safe defaults.
     groups[7].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;

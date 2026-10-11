@@ -773,6 +773,7 @@ void idRenderWorldLocal::ReadRenderEntity()
     session->readDemo->ReadBool(ent.weaponDepthHack);
     session->readDemo->ReadInt(ent.forceUpdate);
     ent.rtGlow = false; // dhewm3-rt: not in the demo format
+    ent.rtPlayer = ent.noSelfShadow; // dhewm3-rt: not in the demo format; old behaviour
     ent.callback = NULL;
     if (customShader)
         ent.customShader = declManager->FindMaterial(session->readDemo->ReadHashString());

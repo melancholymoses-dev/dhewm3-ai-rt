@@ -841,6 +841,7 @@ class idPlayer : public idActor
     void UpdateDeathSkin(bool state_hitch);
     void UpdateFirstPersonBody(void); // dhewm3-rt
     void FreeFirstPersonBody(void);   // dhewm3-rt
+    void MarkRTPlayerEntities(void);  // dhewm3-rt
     void ClearPowerup(int i);
     void SetSpectateOrigin(void);
 

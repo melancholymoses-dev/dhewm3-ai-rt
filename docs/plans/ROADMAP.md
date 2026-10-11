@@ -1,6 +1,6 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-10-07 · **Next work: First Person Model**
+**Status reviewed:** 2026-10-10 · **Next work: TLAS defects stages 5-6 (`20261009_vol_fix.md`)**
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
 designs live in the linked docs. Prior cycle: `completed/202609_ROADMAP.md`.
@@ -38,7 +38,7 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 4 | **Reflection Emitters** - Show emitted particles in reflections | `completed/20261002_reflection_emitters.md | Completed 2026-10-6 | 
 | 5 | **Bloom** - Add lighting bloom around emissive sources| `completed/20260906_bloom_plan.md` | Completed 2026-10-7. |
 | 6 | **Player Body** - Add visible body from first person | `20261001_see_first_person_player_model.md` | In game 2026-10-7. Lit, animating, RT-excluded |
-| 7 | **TLAS build defects** — (a) pass-2 distance cull holds only the view-visible set, so vol shadow rays miss off-screen occluders and in-scatter flips on a pure yaw; (b) instance mask/SBT key off `noSelfShadow` not the player, breaking breakable-glass reflections | `20261009_vol_fix.md` | Diagnosed 2026-10-9, not started. Affects GI/refl/shadows too |
+| 7 | **TLAS build defects** — (a) pass-2 distance cull holds only the view-visible set, so vol shadow rays miss off-screen occluders and in-scatter flips on a pure yaw; (b) instance mask/SBT key off `noSelfShadow` not the player, breaking breakable-glass reflections | `20261009_vol_fix.md` | Stages 1-4 done 2026-10-10 (pass-2 bounds cull, vol gain/falloff), plus 7.1-7.3 vertex-cache allocator perf. **6 landed, untested** (player mask bit, breakable-glass reflections); **left: 5** (re-check GI/refl/shadow consumers) |
 
 
 ### Measured RT budget
@@ -107,6 +107,7 @@ while new lighting techniques enhance without fighting too much.
 | Doc | Owns |
 |---|---|
 | `20261001_see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. |
+| `20261009_vol_fix.md` | TLAS build defects, vol falloff/gain, vertex-cache allocator. Stages 5-6 open. |
 | `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine. Load it before chasing any AMD-vs-NVIDIA or device-lost bug. |
 
 ---

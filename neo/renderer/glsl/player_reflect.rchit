@@ -4,7 +4,7 @@
 dhewm3-rt Vulkan — player_reflect.rchit — closest-hit shader for player body
 reflection rays.
 
-Player body instances (noSelfShadow entities) are routed to this hit group via
+Player instances (renderEntity_t::rtPlayer) are routed to this hit group via
 instanceShaderBindingTableRecordOffset = 2 in the TLAS.  The world hit group
 (offset 0) is kept clean and never sees player geometry.
 
@@ -55,10 +55,10 @@ hitAttributeEXT vec2 baryCoord;
 #define REFL_SHADOW_MIN_LUM    0.02
 #define REFL_AMBIENT           0.01
 
-// B1: drop noSelfShadow instances (mask bit set in vk_accelstruct.cpp:1205) from this
+// B1: drop player instances (mask 0x02, set in vk_accelstruct.cpp) from this
 // surface's shadow rays — same value shadow_ray.rgen:367 uses for the primary view.
-// Doom 3 marks the player noSelfShadow; without this the model shadows itself here only.
-#define REFL_SELF_SHADOW_MASK  0xFEu
+// Without this the model shadows itself here only.
+#define REFL_SELF_SHADOW_MASK  0xFDu
 
 void main()
 {
