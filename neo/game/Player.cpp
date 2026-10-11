@@ -7880,6 +7880,7 @@ void idPlayer::UpdateFirstPersonBody(void)
     if (firstBuild)
     {
         memset(&fpBodyRenderEnt, 0, sizeof(fpBodyRenderEnt));
+        fpBodyLift = 0.0f; // stale after the body was freed on a ladder or in the air
         fpBodyRenderEnt.hModel = model;
         fpBodyRenderEnt.entityNum = entityNumber;
         // No callback: the pose is pushed from here, and ModelCallback would resolve

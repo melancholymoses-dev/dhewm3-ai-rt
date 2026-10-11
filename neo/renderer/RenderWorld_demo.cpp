@@ -773,7 +773,9 @@ void idRenderWorldLocal::ReadRenderEntity()
     session->readDemo->ReadBool(ent.weaponDepthHack);
     session->readDemo->ReadInt(ent.forceUpdate);
     ent.rtGlow = false; // dhewm3-rt: not in the demo format
-    ent.rtPlayer = ent.noSelfShadow; // dhewm3-rt: not in the demo format; old behaviour
+    // dhewm3-rt: not in the demo format.  Only the player body, head and held weapon set both flags;
+    // glass, BFG secondaries and MP icons set noSelfShadow alone.
+    ent.rtPlayer = ent.noSelfShadow && ent.suppressSurfaceInViewID != 0;
     ent.callback = NULL;
     if (customShader)
         ent.customShader = declManager->FindMaterial(session->readDemo->ReadHashString());
