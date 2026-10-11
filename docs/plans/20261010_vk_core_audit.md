@@ -1,19 +1,21 @@
 # Vulkan Core Audit: buffers, uploads, raster path, RT uploads
 
 Code review only, no telemetry, no edits made. Part 1 (F1-F13, stages A0-A5): `vk_buffer.cpp`, upload batch in `vk_instance.cpp`, `vk_image.cpp`, raster draw path in `vk_backend.cpp`, `VertexCache.cpp`, `Vulkan/VKBackend.cpp`. Part 2 (R1-R10, stages B0-B4): `vk_accelstruct.cpp`, `vk_material_table.cpp` and the buffers RT passes read.
-Feeds Phase 6 of `20261010_cleanup_optimization.md`. Each finding is a code-read claim; Stage A0 turns them into numbers before any fix.
+Feeds Phase 6 of `20261010_cleanup_optimization.md`. Each finding is a code-read claim; Stage 0 and A0/B0 turn them into numbers before any fix.
+
+Gate: no fix stage (A1-A5, B1-B4) starts until Stage 0 shows its finding on a chugging section. A stage whose counter reads near zero is dropped, not deferred.
 
 ## Findings
 
 | # | Sev | Finding | Where | Effect |
 |---|---|---|---|---|
-| F1 | High | Vulkan forces `r_useIndexBuffers 0`, so `geo->indexCache` is always NULL. Every draw `memcpy`s the whole index array into the per-frame data ring. TAG_TEMP vertices (every dynamic entity) are copied per draw too | `VertexCache.cpp` (virtualMemory block), `vk_backend.cpp:1587-1620` (interaction), 11 `VK_AllocDataRing` sites | A skinned mesh lit by 4 lights = 5 vertex + 5 index copies per frame. CPU memcpy + 64 MB x2 host-visible rings. Likely the main steady-state CPU cost |
+| F1 | High | Vulkan forces `r_useIndexBuffers 0`, so `geo->indexCache` is always NULL. Every draw `memcpy`s the whole index array into the per-frame data ring. TAG_TEMP vertices (every dynamic entity) are copied per draw too | `VertexCache.cpp` (virtualMemory block), `vk_backend.cpp:1587-1620` (interaction), 11 `VK_AllocDataRing` sites | A skinned mesh lit by 4 lights = 5 vertex + 5 index copies per frame. CPU memcpy + 64 MB x2 host-visible rings. Cost unmeasured: bounded by data-ring bytes per frame (A0). Main value is unblocking B1 |
 | F2 | High | Upload batch ends in a synchronous submit + `vkWaitForFences`, run at the start of every frame that has pending uploads | `vk_instance.cpp:617-678`, `vk_backend.cpp:4783` | CPU waits for the upload, which queues behind the previous in-flight frame. Any frame with a new static block (moving lights, new interactions) loses CPU/GPU overlap |
 | F3 | High | Lazy image load during command recording: `VK_Image_GetDescriptorInfo` calls `ActuallyLoadImage` (disk + decode) then `VK_FlushPendingUploads()` per image | `vk_image.cpp:1253-1282`, `1296-1325` | One blocking submit+wait per unloaded image, mid-frame. This is the "one-by-one" pattern |
 | F4 | High | Per-image Vulkan objects: one `vkAllocateMemory` for the image, one staging `vkCreateBuffer`+`vkAllocateMemory`, one `VkSampler`. No suballocation, no sampler cache | `vk_image.cpp:692-892`, `936-1081` | Device limits are typically 4096 allocations and ~4000 samplers; a level with thousands of images plus 512 pending staging buffers approaches both. Slow loads. `vkAllocateMemory` is a kernel call |
 | F5 | Med | Static vertex blocks keep a CPU copy forever (`virtMem` from `idVertexCache::Alloc`) after the GPU upload | `VertexCache.cpp:345`, freed only in `VK_VertexCache_Free` | All static geometry resident twice (RAM + VRAM) |
 | F6 | Med | Interaction draw pushes 10 descriptors and sets scissor, depth bias, cull mode every draw with no "same as last" check | `vk_backend.cpp:1556`, 8 push sites | Driver-side CPU per draw; scales with draws x lights |
-| F7 | Med | Shadow draw scans all indexes for the max index, twice, every draw when geometry is CPU-side | `vk_backend.cpp:3598-3650` | O(indexes) per shadow draw per frame |
+| F7 | Low | Shadow draw scans all indexes for the max index when shadow verts are CPU-side (a second scan runs only under `r_vkLogShadowGeom` or a branch change) | `vk_backend.cpp:3601-3642` | O(indexes) per CPU-side shadow draw. Zero with `r_rtShadows 1` (default): shadow volumes are not generated (`Interaction.cpp:1060`) |
 | F8 | Med | Ring overflow is silent in effect: UBO ring clamps to the last slot (wrong data drawn), data ring returns `VK_WHOLE_SIZE` and the draw is skipped. One warning per frame | `vk_backend.cpp:931-943`, `1177-1192` | Visual glitches at high light/surface counts with no high-water mark to size against |
 | F9 | Low | New command buffer allocated and freed on every upload flush | `vk_instance.cpp:563-587`, `554-561` | Driver alloc per frame with uploads |
 | F10 | Low | Image upload does not `VK_CHECK` staging `vkCreateBuffer`/`vkAllocateMemory`/`vkMapMemory`; later failure paths destroy the image after copies were already recorded into the open batch | `vk_image.cpp:728-743`, `864-884` | OOM = null-handle crash, or a poisoned batch |
@@ -23,18 +25,57 @@ Feeds Phase 6 of `20261010_cleanup_optimization.md`. Each finding is a code-read
 
 Already good: chunk sub-allocator with generation guard, garbage rings with overflow lists, 16 MB staging ring for buffers, batched `VK_BeginSingleTimeCommands`.
 
-## Stage A0 — Instrument (no behaviour change)
+## Stage 0 — Triage with existing logging (no code)
 
-| Counter (per frame, in `r_vkRTProfile` output) | Answers |
-|---|---|
-| Draws; index bytes and vertex bytes memcpy'd to the data ring; data ring and UBO ring high-water | F1, F8 |
-| Upload flushes per frame, ms waited, bytes staged, static blocks allocated | F2 |
-| Images loaded lazily during recording (name, ms) | F3 |
-| Live `vkAllocateMemory` count and `VkSampler` count (wrap create/destroy); print `maxMemoryAllocationCount`, `maxSamplerAllocationCount` at startup and level end | F4 |
-| RSS delta across level load; bytes held in `virtMem` | F5 |
-| Pushes and redundant state sets per frame | F6 |
+Capture: `r_vkRTProfile 2` (every frame) through a section that chugs, plus Mars City. Run PresentMon alongside for the frame-time trace.
 
-Check: Mars City baseline written to `notes/20261010_vk_core_baseline.txt`, ranked by measured cost. The order of A1-A5 may change.
+| Reading (`VK FRAME PROFILE` / `VK CPU PROFILE` / `VK RT PROFILE`) | Means | Next |
+|---|---|---|
+| Frame time high and steady, `fenceWait` large | GPU-bound | Feature differential (toggle each RT feature, diff frame ms), render-scale sweep 0.5/0.75/1.0, GPU profiler. Skip A1, A5, B3 |
+| Spikes with `upload=` large on the bad frames | Blocking uploads | A2, F3 part first |
+| `frontend=` or `game=` large | Not the backend | Sampling profiler; out of scope here, see X1-X2 |
+| `backend=` large, sum of per-phase CPU ms small | Unattributed backend time | Sampling profiler on `VK_RB_DrawView`; add spans |
+| TLAS CPU ms large | Gather loop / material table | B3 |
+| Spikes, none of the above | Pipeline create, lazy image load, allocation | A0 hitch counters |
+| `VK VC SITES` shows `shadowVP`, `shadowPriv`, `indexShadow` or `lighting` non-zero with `r_rtShadows 1` | Wasted frontend allocs | X3 |
+| `r_vkSerializeFrames 1` removes shading flicker on skinned meshes | R2 confirmed | B1 |
+
+Check: `notes/20261010_vk_triage.txt` holds the log excerpts and one line per row above (yes / no / value). It names the stages that survive.
+
+## Tooling (Windows, free)
+
+| Tool | GPU | Use | Notes |
+|---|---|---|---|
+| PresentMon | any | Frame-time CSV; separates hitches from sustained low fps; CPU-busy vs GPU-busy | First tool for "it chugs here" |
+| Visual Studio Performance Profiler (Community) or Very Sleepy | any | CPU sampling, per-function time without instrumentation | Needs PDBs; `RelWithDebInfo` is the CMake default |
+| Windows Performance Recorder / Analyzer (Windows ADK) | any | ETW: CPU samples, disk I/O, page faults, time blocked in driver calls | For load time and for hitches the sampler shows as "waiting" |
+| Nsight Graphics, GPU Trace | NVIDIA | Per-pass GPU time including RT dispatches | Needs debug labels (A0) to be readable |
+| Radeon Developer Tool Suite: RGP, RMV, RRA | AMD | RGP per-event GPU time; RMV VRAM by allocation (F4, R4); RRA BLAS/TLAS quality and opaque flags (R3, X6) | RRA is the direct check for B2 |
+| RenderDoc | any | Raster draw inspection, overdraw, state per draw (F6) | Confirm RT capture support in the installed version |
+| Vulkan SDK validation via vkconfig: sync + best-practices | any | Best-practices flags small allocations and redundant work; sync covers GPU-GPU hazards | Sync cannot see CPU writes to mapped memory (R2) |
+
+Tracy (free) only if log spans stop scaling; it adds a dependency.
+
+## Stage A0 — Close logging gaps (no behaviour change)
+
+Already logged under `r_vkRTProfile`: `fenceWait`, `acquire`, `drain`, `upload`, `submit`, `present`; per-phase CPU and GPU ms; `game`/`frontend`/`backend`; vertex-cache allocs by site; BLAS updates/rebuilds.
+
+| Gap | Add | Answers |
+|---|---|---|
+| Log prints every N frames, so hitches are missed; mode 2 floods | `r_vkRTProfileSpikeMs`: print the full line set only for frames over the threshold | all hitches |
+| Backend time outside phase spans | `backend` minus sum of phase CPU ms, printed as `other=` | unattributed CPU |
+| Ring use | Draws; index and vertex bytes copied to the data ring; data and UBO ring high-water | F1, F8 |
+| Upload detail | Flushes per frame, bytes staged, static blocks allocated | F2 |
+| Blocking waits outside the frame fence | One wrapper with a tag for every `vkWaitForFences` / `vkQueueWaitIdle` / flush; count and ms per tag | F2, F3, `vk_backend.cpp:4586`, `5649` |
+| Mid-frame creation | Log name and ms for each lazy image load and each pipeline created after level load | F3, X4 |
+| Object counts | Live `vkAllocateMemory` and `VkSampler` counts by owner; device limits at startup | F4, R4 |
+| Memory | RSS delta across level load; bytes in `virtMem`; VRAM used/budget via `VK_EXT_memory_budget` (not queried today) | F5, F12 |
+| Draw state | Pushes and redundant state sets per frame; draws and triangles per pass | F6, X7 |
+| GPU tool readability | `VK_EXT_debug_utils` labels per pass (none emitted today) | Nsight, RGP, RenderDoc |
+
+New cvars here are debug-only; no settings-menu entry.
+
+Check: Mars City and one chugging section written to `notes/20261010_vk_core_baseline.txt`, ranked by measured cost. The order of A1-A5 may change.
 
 ## Stage A1 — Stop re-copying geometry (F1, F7)
 
@@ -42,12 +83,15 @@ Check: Mars City baseline written to `notes/20261010_vk_core_baseline.txt`, rank
 |---|---|
 | Static index buffers on GPU | Allow `indexCache` under Vulkan: allocate non-TAG_TEMP index blocks via `VK_VertexCache_Alloc(..., true)`; draws bind chunk buffer + offset like vertices |
 | Dynamic geometry once per frame | Cache `(vertCache_t* / indexes ptr) -> ring offset` for the frame; passes and lights reuse it |
-| Shadow max index | Compute once when the shadow tri is built, store on the tri |
+| Shadow geometry | Out of scope: shadow indexes stay on the CPU upload path (`vk_backend.cpp:3679`). Max-index caching only if stencil shadows show up in A0 |
 | Keep CPU fallback | Used only when `GetBuffer` fails |
+| A/B switch | Debug cvar selecting GPU vs ring indexes until screenshots match on all baseline maps |
 
 Check: bytes copied per frame drops to dynamic-geometry size; `VK CPU PROFILE` DrawView ms drops; screenshots identical; validation clean.
 
 ## Stage A2 — Remove blocking uploads (F2, F3, F9)
+
+Do the lazy-load rows first. The async flush only if A0 shows `upload=` above ~0.5 ms in steady state; when GPU-bound the wait only moves time out of the next fence wait.
 
 | Change | Detail |
 |---|---|
@@ -99,12 +143,12 @@ Scope: `vk_accelstruct.cpp` (BLAS/TLAS), `vk_material_table.cpp`, and the host-v
 | # | Sev | Finding | Where | Effect |
 |---|---|---|---|---|
 | R1 | High | The BLAS "zero-copy" path needs both `ambientCache` and `indexCache` on the GPU. `indexCache` never exists under Vulkan (F1), so every BLAS geometry takes the fallback: its own host-visible vertex buffer (full 60-byte `idDrawVert`) and index buffer, 2 `vkAllocateMemory` + `memcpy` per geometry | `vk_accelstruct.cpp:520-523`, `766-769`, `1005-1037` | AS builds and every hit-shader vertex fetch (by device address) read system RAM over PCIe. Per-frame cost for dynamic entities: `vkMapMemory` + full copy + `vkUnmapMemory` per geometry (`876-882`). The `VK RT BLAS SRC gpuPct` log line should read ~0% today |
-| R2 | High (verify) | Dynamic-entity BLAS geometry buffers and the AS itself are single-copy and updated in place every frame, while 2 frames are in flight. Frame N's CPU `memcpy` and `MODE_UPDATE` can overlap frame N-1's trace and hit-shader vertex reads. The TLAS and material tables are per slot, the BLAS is not. No barrier at frame start orders N-1's trace reads before N's AS write | `vk_accelstruct.cpp:847-930`, `1301-1311` | Possible shading tear / AS corruption on skinned entities, only under load. Confirm with sync validation before changing |
-| R3 | Med | Every BLAS is built `ALLOW_UPDATE` and keeps its scratch buffer for life, including static world and model BLASes that never update | `vk_accelstruct.cpp:635`, `1068`, `1099` | Larger, slower-to-trace AS for static geometry; scratch (about the size of the AS) resident forever |
+| R2 | Med (verify) | Dynamic-entity BLAS geometry buffers and the AS itself are single-copy and updated in place every frame, while 2 frames are in flight. Frame N's CPU `memcpy` and `MODE_UPDATE` can overlap frame N-1's trace and hit-shader vertex reads. The TLAS and material tables are per slot, the BLAS is not. No barrier at frame start orders N-1's trace reads before N's AS write | `vk_accelstruct.cpp:847-930`, `1301-1311` | Most likely symptom: one-frame normal/position mismatch on skinned entities under load. Sync validation does not see the CPU `memcpy`; confirm with an `r_vkSerializeFrames 1` A/B |
+| R3 | Med | Every BLAS is built `ALLOW_UPDATE` and keeps its scratch buffer for life, including static world and model BLASes that never update. Dynamic BLASes use `PREFER_FAST_TRACE` and refit in place with no periodic rebuild | `vk_accelstruct.cpp:635`, `908-911`, `1068`, `1099` | Larger, slower-to-trace AS for static geometry; scratch (about the size of the AS) resident forever; slow per-frame updates and degrading refit quality for skinned meshes |
 | R4 | Med | Per BLAS: AS buffer, scratch buffer, plus 2 per geometry in the fallback = at least 4 `vkAllocateMemory`. Same allocation-limit exposure as F4 | `AllocASBuffer`, `vk_accelstruct.cpp:474-499` | Hundreds of cached model BLASes approach the device allocation limit; slow level load |
 | R5 | Med | Every frame, for every static instance and geometry (up to 4096 / 16384), the TLAS loop calls `VK_RT_MakeMaterialEntry` (stage walk plus up to 3 linear scans of the bindless table, up to 4096 slots) and hashes the signature, even when nothing changed | `vk_accelstruct.cpp:1670-1695`, `vk_material_table.cpp:126-154`, `635-726` | Worst case millions of compares per frame, pure CPU. The result is only needed when `rewriteStatic` is true |
 | R6 | Med | Bindless descriptor rebuild rewrites every assigned slot (up to 4096) per frame slot whenever anything is dirty. Dirty is set by any image upload or purge anywhere (`VK_Image_ChangeCounter`) and by any new texture. New slots can also lazy-load an image and flush (F3) | `vk_material_table.cpp:100-236` | Thousands of descriptor writes per event, twice (once per frame slot); stalls during streaming |
-| R7 | Med | Host-written, GPU-read buffers all request `HOST_VISIBLE\|COHERENT`. `VK_TryFindMemoryType` returns the first matching type, normally system RAM, not the device-local BAR type | material/address SSBOs (`vk_material_table.cpp:276-285`), GI/vol light SSBOs (`vk_gi.cpp:655-670`), emitters, SBTs, data ring, UBO ring, TLAS instances, BLAS fallback geometry | Per-hit material fetches and vertex reads cross PCIe. Machines with Resizable BAR get VRAM-speed reads by preferring `DEVICE_LOCAL\|HOST_VISIBLE` |
+| R7 | Med | Host-written, GPU-read buffers all request `HOST_VISIBLE\|COHERENT`. `VK_TryFindMemoryType` returns the first matching type, normally system RAM, not the device-local BAR type | material/address SSBOs (`vk_material_table.cpp:276-285`), GI/vol light SSBOs (`vk_gi.cpp:655-670`), emitters, SBTs, data ring, UBO ring, TLAS instances, BLAS fallback geometry | Per-hit material fetches and vertex reads cross PCIe. Machines with Resizable BAR get VRAM-speed reads by preferring `DEVICE_LOCAL\|HOST_VISIBLE`. Size of the gain unknown; B0 A/B decides. R1's read-cost claim depends on the same result |
 | R8 | Low | TLAS instance buffer, TLAS storage and TLAS scratch are sized exactly to the current count and destroy+recreated (3 allocations) whenever the count grows. Instance buffer is mapped and unmapped every frame | `vk_accelstruct.cpp:1918-1956`, `2187-2227`, `1971`, `2006` | Churn while instance count fluctuates; no headroom |
 | R9 | Low | BLAS garbage queue (1024) falls back to immediate free when full. Retirement is `tr.frameCount + 2`, not a fence | `vk_accelstruct.cpp:1145-1157` | Fine in practice; an immediate free with frames in flight is a device-lost risk after a mass invalidation (RT shadow toggle frees all interactions) |
 | R10 | Low | Models over 512 surfaces are silently truncated for RT | `vk_accelstruct.cpp:706` | Log line only |
@@ -120,7 +164,10 @@ Already good: per-slot TLAS, material table and address tables; static-block sig
 | CPU ms in the TLAS gather loop; `MakeMaterialEntry` calls and texture-slot compares per frame | R5 |
 | Bindless rebuilds per minute, slots written per rebuild, trigger (new slot vs image-counter bump) | R6 |
 | Memory type chosen per buffer (heap, flags) logged once at creation; report whether a `DEVICE_LOCAL\|HOST_VISIBLE` type exists and its heap size | R7 |
-| Run sync validation (`vulkan_debugging.md`) on a map with 12+ skinned characters | R2 |
+| Debug cvar that prefers `DEVICE_LOCAL\|HOST_VISIBLE` for the material and address SSBOs only; compare RT pass GPU ms on both GPUs | R7, R1 read cost |
+| `r_vkSerializeFrames 0` vs `1` on a map with 12+ skinned characters, screenshots and video; sync validation (`vulkan_debugging.md`) as a second pass for the AS write only | R2 |
+| TLAS: entities visited vs accepted per frame; non-opaque geometry count; a debug view tinting non-opaque hits | R5, X5, X6 |
+| Open one capture in RRA (AMD) to read BLAS sizes, update flags and overlap | R3 |
 
 Check: baseline in `notes/20261010_vk_rt_baseline.txt`.
 
@@ -133,13 +180,14 @@ Check: baseline in `notes/20261010_vk_rt_baseline.txt`.
 | Dynamic BLAS per slot | Two AS objects per dynamic entity (or build, never update in place), so frame N never writes what N-1 reads. Alternative: a barrier at frame start (RT read to AS build write) plus per-slot geometry; pick from B0/sync-validation results |
 | Persistent maps | Drop per-call `vkMapMemory`/`vkUnmapMemory` |
 
-Check: `gpuPct` near 100% for static, host-visible BLAS bytes ~0; sync validation clean on the 12-character map; reflection/shadow screenshots identical; BLAS GPU ms (`r_vkRTProfile`) not worse.
+Check: `gpuPct` near 100% for static, host-visible BLAS bytes ~0; serialize-frames A/B shows no difference on the 12-character map; sync validation clean; reflection/shadow screenshots identical; BLAS GPU ms (`r_vkRTProfile`) not worse.
 
 ## Stage B2 — BLAS memory (R3, R4, R10)
 
 | Change | Detail |
 |---|---|
 | Static BLAS flags | No `ALLOW_UPDATE` for BLASes built from static models; free scratch after the build completes (deferred with the BLAS garbage clock) |
+| Dynamic BLAS flags | `PREFER_FAST_BUILD` for per-frame updated BLASes; full rebuild every N updates |
 | Shared transient scratch | One scratch buffer per frame slot sized to the largest build, reused with a barrier between builds, replacing a scratch per BLAS |
 | Pooled AS storage | Suballocate AS storage from large blocks (256-byte AS alignment) instead of one allocation per BLAS |
 | Truncation | Raise `MAX_BLAS_SURFACES` or split the model into several BLASes; keep the log |
@@ -169,22 +217,52 @@ Check: TLAS gather CPU ms (B0 counter) drops; descriptor writes per rebuild drop
 
 Check: per-buffer memory type log shows the BAR type on this machine; RT pass GPU ms on the 4070 Ti Super and the 9070 XT compared against B0; machine without ReBAR still runs (force the fallback with a debug cvar and confirm).
 
+## Not yet audited
+
+Candidates outside the files this audit read. Each needs a Stage 0 / A0 number before it becomes a finding.
+
+| # | Where | Question | Counter |
+|---|---|---|---|
+| X1 | Frontend: md5 skinning, interaction and light-tri building | Share of frame on busy scenes | `frontend=`, `addModels=`, `dynCached=`, `dynContinuous=` (exist) |
+| X2 | `tr_trisurf.cpp:2085-2111` | How often tangents are re-derived because the TLAS is active | count and ms at the site |
+| X3 | Vertex-cache sites with RT shadows on | Do shadow or lighting caches still allocate | `VK VC SITES` (exists) |
+| X4 | `VK_GetOrCreateGuiBlendPipeline`, `VK_GetOrCreateBlendlightPipeline`; no `VkPipelineCache` in the tree | First-use hitches; startup and `vid_restart` time | pipeline-create log (A0) |
+| X5 | Whole-world walks per frame: `vk_accelstruct.cpp:1554`, `1723`; `vk_rt_emitters.cpp:674`; `vk_gi.cpp:1635`; `vk_backend.cpp:4675` | CPU with large entity counts | visited vs accepted (B0); `other=` (A0) |
+| X6 | Non-opaque BLAS geometry (perforated, translucent) | Any-hit cost per ray | count + debug tint (B0), RRA |
+| X7 | Depth prepass, G-buffer, interactions x lights, shader passes | Geometry submitted 3+ times | draws and triangles per pass (A0) |
+| X8 | Level load: single-threaded image decode; CPU `R_MipMap` vs GPU blit mips (`vk_image.cpp:775`); BLAS build per model | Load time | WPR trace of one map load |
+
+## Risky edits
+
+| Stage | Edit | What can break | Guard |
+|---|---|---|---|
+| A1 | Static index buffers on GPU | Index block purged while a BLAS or draw still references it; TAG_TEMP misclassified as static | A/B cvar; shadow indexes excluded; generation guard on `GetBuffer` |
+| A1 | Per-frame dynamic geometry cache | Key reused after the frame-temp pool recycles a pointer | Key includes frame number; clear at ring reset |
+| A2 | Async upload flush | Staging freed before the copy runs; flush-before-drain order (`vk_backend.cpp:4779`); image sampled in the frame that uploads it | Only if A0 justifies it; lazy-load removal ships separately first |
+| A3 | Image memory pools | `bufferImageGranularity`, fragmentation, free-by-range racing the garbage drain | Sampler cache and staging ring first; pools last and only if allocation counts near the limit |
+| A4 | Drop `virtMem` | `vertexCache.Position()` callers, BLAS CPU fallback, shadow CPU path read freed memory | After A1 and B1; debug build poisons instead of freeing for one pass |
+| A5 | Skip redundant state | Tracked state stale across command buffer or render pass boundaries | Reset tracking at every begin; cvar to disable skipping |
+| B1 | Dynamic geometry ring, per-slot BLAS | Address tables pointing at the other slot; TLAS static signature churn (update path relies on a stable device address) | Per-slot address tables verified with the R2 A/B; watch TLAS rebuild count |
+| B2 | Shared scratch | Builds in one command buffer overlap on scratch; updates need scratch too | Offsets within the shared buffer per build, or dynamic BLASes keep their own |
+| B3 | Cached material entries | Stale after skin/material swap or bindless generation bump | Invalidate on generation; `vid_restart` and level-change screenshots |
+| B4 | BAR memory type | ~256 MB heap without Resizable BAR; data rings alone are 128 MB; any CPU read-back from write-combined memory | Fallback on allocation failure; small buffers first, rings last |
+
 ## Order
 
-| Stage | Risk | Expected gain |
+| Stage | Risk | Gate / expected gain |
 |---|---|---|
-| A0 | none | ranks the raster findings |
-| A1 | med | largest steady-state CPU win (F1); prerequisite for B1 |
-| A2 | med | removes frame stalls (F2, F3) |
-| A3 | med | load time, allocation-limit safety |
-| A4 | low | RAM |
-| A5 | low | CPU per draw |
-| B0 | none | ranks the RT findings; sync-validation answer for R2 |
-| B1 | med-high | removes host copies, fixes the dynamic-BLAS race (R2) if confirmed |
-| B2 | med | VRAM, allocation count |
-| B3 | low-med | per-frame CPU in the TLAS loop, streaming stalls |
-| B4 | low | PCIe-bound reads, TLAS churn |
+| 0 | none | Existing logs + PresentMon; decides which stages run |
+| A0 + B0 | none | Close logging gaps; one session covers both; includes the R2 and R7 A/Bs |
+| A2 (lazy-load part) | low-med | Run if lazy image loads appear on hitch frames (F3) |
+| B3 | low-med | Run if TLAS CPU ms is material; per-frame CPU, streaming stalls |
+| A3 (sampler cache, staging) | low-med | Run if object counts are high; load time, limit safety |
+| B2 | med | Run on RRA / allocation evidence; VRAM, update cost |
+| A1 | med | Run if ring bytes are large or B1 is wanted; prerequisite for B1 |
+| B1 | med-high | Run if R2 or R7 confirmed; removes host copies |
+| A5 | low | Run if draw-state counters are high and the frame is CPU-bound |
+| B4 | low | Run if the R7 A/B shows a gain |
+| A2 (async flush), A3 (pools), A4 | med | Only on direct evidence |
 
-B0 can run together with A0 so one profiling session covers both. B1 cannot start before A1 lands the static index buffers.
+B1 cannot start before A1 lands the static index buffers. One change per commit with before/after numbers in the notes file.
 
-Exit: with `r_vkRTProfile 1`, `uploadMs` ~0, data-ring bytes per frame limited to dynamic geometry, BLAS host-visible bytes ~0, and TLAS gather CPU ms below baseline on Mars City; live allocations and samplers under the limits above; sync validation clean with 12+ skinned characters; RSS and VRAM flat across three map reloads.
+Exit: with `r_vkRTProfile 1`, `uploadMs` ~0, data-ring bytes per frame limited to dynamic geometry, BLAS host-visible bytes ~0, and TLAS gather CPU ms below baseline on Mars City; live allocations and samplers under the limits above; no difference between `r_vkSerializeFrames 0` and `1` with 12+ skinned characters; no frame over the spike threshold on the triage sections outside level load; RSS and VRAM flat across three map reloads.
