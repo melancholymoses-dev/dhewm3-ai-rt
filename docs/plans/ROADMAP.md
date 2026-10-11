@@ -39,12 +39,13 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 5 | **Bloom** - Add lighting bloom around emissive sources| `completed/20260906_bloom_plan.md` | Completed 2026-10-7. |
 | 6 | **Player Body** - Add visible body from first person | `completed/20261001_see_first_person_player_model.md` | ✅ Closed 2026-10-10. Lit, animating, RT-excluded, `rtPlayer` mask verified; ladder sink fixed (body lift, ladder leg anim, foot-IK void fix). Stairs and slopes still dip slightly, accepted |
 | 7 | **TLAS build defects** — (a) pass-2 distance cull holds only the view-visible set, so vol shadow rays miss off-screen occluders and in-scatter flips on a pure yaw; (b) instance mask/SBT key off `noSelfShadow` not the player, breaking breakable-glass reflections | `completed/20261009_vol_fix.md` | ✅ Closed 2026-10-10. Pass-2 bounds cull (free: TLAS build 0.12 ms), vol gain/falloff, `rtPlayer` mask bit (breakable glass fixed), vertex-cache sub-allocator. 7.4 (per-frame upload wait) conditional |
+| 8 | **Cleanup + optimization** — debug trim, drop F0/legacy reflection path, screen-space GI and non-froxel vol, presets + reset, Vulkan efficiency pass, comment sweep | `20261010_cleanup_optimization.md` | Planned |
 
 
 ### Measured RT budget
 
-`r_vkRTProfile 1`, Mars City, median GPU ms per phase. **RTX 4070 Ti Super, 2560×1440.**
-
+`r_vkRTProfile 1`, Mars City, median GPU ms per phase. **CPU: Ryzen 9 5950X, GPU: RTX 4070 Ti Super, 2560×1440.**
+**These are all from the fast card.** 
 | | GI | Refl | Vol | AO | Shadows | TLAS | **total** |
 |---|---|---|---|---|---|---|---|
 | 2026-09-11 (pre-arc-1/2) | 4.41 | 3.24 | 1.53 | 1.17 | — | 0.15 | **11.93** |
@@ -62,9 +63,14 @@ See `completed/20260918_fsr_upscaling.md` §12.
 interactions, shader passes, fog lights, upscale, tonemap) plus `VK FRAME PROFILE` / `VK CPU PROFILE`
 lines. The rows above were vsync-locked RT-only runs; re-measure uncapped before quoting a raster share.
 
-**These are all from the fast card.** The 9070 XT runs the same content near 30 fps with
-dips into the teens; nothing above has been re-measured there, and it is the hardware the
-arc exists for.
+Also recorded on a slower CPU Ryzen 5 2600x and AMD 9070XT, which had previously shown worse performance.  It is a weaker RT card, which motivated the upscale work.  
+This is after fixing big CPU drops due to particle uploads.  FPS closer to 60 now. 
+| | GI | Refl | Vol | AO | Shadows | TLAS | **total** |
+|---|---|---|---|---|---|---|---|
+| 2026-10-10 MC 1440p | 1.72 | ~0 (p90 1.8 with glass) | 0.82 | 2.05 | 2.93 | 0.46 (0.12 TLAS + 0.34 BLAS) | **~8.0** RT |
+
+
+
 
 ### Engine-wide rules
 
