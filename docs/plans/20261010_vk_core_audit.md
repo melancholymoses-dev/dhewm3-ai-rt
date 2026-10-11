@@ -217,6 +217,16 @@ Check: TLAS gather CPU ms (B0 counter) drops; descriptor writes per rebuild drop
 
 Check: per-buffer memory type log shows the BAR type on this machine; RT pass GPU ms on the 4070 Ti Super and the 9070 XT compared against B0; machine without ReBAR still runs (force the fallback with a debug cvar and confirm).
 
+## Measured 2026-10-11 (timedemo + live, Mars City 2)
+
+| Result | Numbers | Consequence |
+|---|---|---|
+| Largest GPU cost is RT shadows traced serially and reported as `Interactions` | 14 of 21 shadow lights serial, 31.9 M pixels | Own chunk: `20261010_cleanup_optimization.md` Phase 6a. Runs before A1-B4 |
+| F2 confirmed: every frame flushes and waits; `fenceWait` ~0, `upload` 9-18 ms live on heavy frames | Frame time = GPU + CPU, no overlap | A2 moves up. Cause is 7-27 `ambient.cached` static allocs per frame; first try routing per-frame dynamic geometry to the frame ring |
+| Demo playback rebuilds every dynamic BLAS each frame (live: in-place updates) | `TLAS.BLAS` CPU 3-4.5 ms + `drain` 3-5 ms vs 0.2 / 0.005 | Fix before using timedemo for CPU numbers. A rebuild costs ~3 ms (R4) |
+| Raster CPU is small | 0.4-1.6 ms per frame | F1 and A5 drop in priority |
+| R1 confirmed | `VK RT BLAS SRC gpuPct=0.0` | B1 stands |
+
 ## Not yet audited
 
 Candidates outside the files this audit read. Each needs a Stage 0 / A0 number before it becomes a finding.

@@ -107,6 +107,45 @@ Check: pick each preset, `cvarlist` shows expected values; Reset returns every R
 
 ---
 
+## Phase 6a — RT shadow dispatch (one chunk)
+
+Top GPU item from the 2026-10-11 capture (`r_vkLogRT 1`, Mars City 2 corner, 2560x1440, 25 view lights, 21 shadow-casting).
+
+| Finding | Evidence | Where |
+|---|---|---|
+| Only 7 lights are batched; the rest trace one at a time inside the interaction loop, each with a render-pass break, depth round-trip and its own blur | 7 batched, 14 serial | `vk_backend.cpp:4107`, `vk_shadows.cpp:1248` |
+| Serial shadow time is reported as `Interactions` (raster), so `Shadows` reads near zero when the cost is highest | `Shadows=0.16 Interactions=12.97` | span at `vk_backend.cpp:5419` |
+| Layers go out in list order; the batch got 1.9 M pixels, the serial path 31.9 M (8.6 screens, 128 M rays at 4 samples) | `VK RT TRACE dims=` lines | `VK_RT_ShadowBatchAddLight` |
+| Dispatch rect is the light scissor, full screen when the camera is inside the light volume. Four full-screen lights touch 2-4 surfaces each | lights 20-23 | `VK_ComputeLightScissor` |
+| No per-pixel volume test. The only cull is a sphere of the box diagonal, point lights only, and off by default (`r_rtShadowDistanceCutoff 0`) | every pixel in the rect traces | `shadow_ray.rgen:173`, `vk_shadows.cpp:982` |
+| Stencil is cleared per light although no stencil volumes are drawn with RT shadows | — | `vk_backend.cpp:4126` |
+
+No leftover GI "reach" extension was found in this path; the full-screen rects are stock scissor behaviour plus the missing volume test.
+
+| Step | Change | Check |
+|---|---|---|
+| S0 Measure | In the capture corner: `r_rtShadowSamples 1`, then `r_rtShadowBlurEnable 0`, with `r_vkRTProfile 1` | Notes file records ray cost vs blur cost vs remainder (break overhead) |
+| S1 Label | Close the `Interactions` span around any mid-loop shadow dispatch and open a `Shadows` span for it | `Shadows` + `Interactions` sum unchanged; `Interactions` under ~1.5 ms in the corner |
+| S2 Pixel cull | In `shadow_ray.rgen`, before tracing: point light = test world pos against the light's oriented box; projected = against the frustum planes. Outside stores 1.0 and returns. Replaces `r_rtShadowDistanceCutoff` | Debug mode tinting culled pixels; shadows identical inside volumes; `Shadows` ms drops |
+| S3 Looped batches | Assign shadow lights to batch `k = n / W`. Batch 0 traces where it does today. On reaching the first light of batch k>0: end pass, clear used layers, trace + blur the batch, resume. Lights are additive, so order within the loop is free | 21 lights = 2 breaks at W=8 (was 14); log line per batch |
+| S4 Delete serial path | Remove `VK_RT_DispatchShadowRaysForLight`, `VK_RT_SHADOW_SERIAL_LAYER`, `r_rtShadowBatch`, overflow log; the scratch layer becomes a batch layer (W=8) | `grep -r ShadowBatch\b` clean; settings doc row removed |
+| S5 Rect shrink | Dispatch rect = light scissor ∩ screen rect of (lit surface bounds ∩ light bounds). Blur and interaction scissor use the same rect | Traced pixels per frame logged; corner drops well below 32 M |
+| S6 Stencil clear | Skip the per-light stencil clear when RT shadows are on, after confirming the pass starts with stencil 128 | Screenshots identical; stencil-shadow fallback (`r_rtShadows 0`) unchanged |
+| S7 Layer count (optional) | W=16 only if S0/S3 show break overhead still matters. First share one mask + blur-temp pair across frame slots (mask has no history), which makes 16 layers VRAM-neutral | VRAM logged before/after; no flicker with 2 frames in flight |
+
+Order: S0, S1, S2, S3+S4, S5, S6, S7. One commit each, numbers in `notes/20261011_shadow_dispatch.txt`.
+
+| Risk | Guard |
+|---|---|
+| S2 box test disagrees with the light's falloff texture at the edges, giving a lit rim | Pad the box by a few units; compare against the tinted debug view |
+| S3 layer reused before the previous batch's draws executed | Barrier fragment-read → RT-write at each batch start; sync validation |
+| S5 rect too tight when surface bounds are stale (animated models) | Use the same bounds the frontend culled with; fall back to light scissor when unsure |
+| S7 shared mask across slots | Only after sync validation is clean on S3 |
+
+Exit: corner capture shows `Interactions` ≤ 1.5 ms, total shadow ms at least halved, 60 fps held with default settings.
+
+---
+
 ## Phase 6 — Vulkan efficiency pass
 
 Detailed findings and stages A0-A5: `20261010_vk_core_audit.md`. Run A0 first; the audit's ordering supersedes the generic steps below where they overlap.
@@ -151,6 +190,7 @@ Check: build output byte-identical for touched `.cpp` files if possible (compare
 | 3 Screen-space GI | med | 1 |
 | 4 Non-froxel vol | med | 1 |
 | 5 Presets/reset | low | 2, 3, 4 (final cvar set) |
+| 6a Shadow dispatch | med | 0 (independent of 1-5; can run first) |
 | 6 Efficiency | med | 3, 4 (smaller surface) |
 | 7 Comments | none | 6 |
 
