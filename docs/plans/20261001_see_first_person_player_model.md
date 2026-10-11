@@ -1,8 +1,11 @@
 # First-Person Player Body Plan
 
 **Date:** 2026-04-04  
-**Status:** Visible and animating in-game. Stages 2-3 landed plus `pm_firstPersonBodyOffset`.
-Open issues below; stage 4 (RT exclusion) still pending, so the fp body *is* in the TLAS.  
+**Status:** Working in game, lit, animating and out of the TLAS. Stages 2-4 landed, plus
+`pm_firstPersonBodyOffset`/`MaxPitch` and `r_rtPlayerExcludeRadius`. The 2026-10-10 `rtPlayer` mask
+change made the player exclusions precise and was verified (body under a light, mirrors, glass).
+Open: #2 (run-cycle lean, mesh weights still on `Chest`/`Belly`/`Waist`) and #4 (pelvis/backside)
+need an in-game look before closing.  
 **Scope:** Local first-person body visibility (torso/legs), while keeping normal third-person and mirror rendering behavior.
 
 ---
@@ -292,7 +295,7 @@ offset can cancel. See the torso-channel note under Open Issues.
    Shadow rays traced from fp-body pixels hit the world body's chest almost immediately.
 - Mitigation: the knob already exists — `r_rtShadowPlayerExcludeDist`
   ([vk_shadows.cpp:1007](../../neo/renderer/Vulkan/vk_shadows.cpp#L1007)) forces
-  `rayCullMask = 0xFE`, dropping player instances (`inst.mask = 0x01`). Currently applied only
+  `rayCullMask = 0xFD`, dropping player instances (`inst.mask = 0x02`). Currently applied only
   when the light is nearer than that distance; may need to key off the fp-body pixel instead.
 
 4. Mirror leakage of fp-only body
@@ -312,7 +315,7 @@ offset can cancel. See the torso-channel note under Open Issues.
 |---|---|---|
 | 1 | Capped shoulder rim rendered black and occluded everything below it | Fixed — cap deleted, mesh re-exported (2042 tris) |
 | 2 | Run cycle leans the torso into view; you see your own back | Fix by cutting the mesh to the hip line (Z≈47-48) — see below |
-| 3 | Body renders **pitch black** under a light, not merely shadowed | Fixed — `r_rtPlayerExcludeRadius`, see below. Untested in-game |
+| 3 | Body renders **pitch black** under a light, not merely shadowed | Fixed — `r_rtPlayerExcludeRadius`, see below. Verified in game 2026-10-10 (after the `rtPlayer` mask change) |
 | 6 | Pitch to 89° shows the backs of your own legs | Fixed — `pm_firstPersonBodyMaxPitch` 70 |
 | 4 | Pelvis visible when looking down ("seeing your own backside") | Prefer trimming the mesh's rear over offsetting — see below |
 | 5 | Offset body cast a second, displaced shadow | Fixed — stage 4 landed, fp body out of the TLAS |
@@ -339,18 +342,17 @@ Joint heights for the cut: `Chest` 54.1, `Belly` 47.4, `Waist`/`SPINNER` 45.7, `
 (legs channel), `Lupleg`/`Rupleg` 43.2. Pass criterion: `Chest` and `Belly` drive zero
 vertices, `Waist` near zero.
 
-Current mesh (930 verts / 1762 tris) does **not** meet it — `Chest` 13, `Belly` 20,
-`Waist` 136 weights remain, so the cut landed at the waist rather than below it. The lean is
-roughly 90% reduced (`Chest` was 140) but not structurally gone. Cut below Z=45.7 if the run
-cycle still shows it.
+Current mesh (965 verts / 1744 tris, re-measured 2026-10-10) does **not** meet it — `Chest` 42,
+`Belly` 60, `Waist` 170 weights remain (`Hips` 154). The cut is still at the waist, not below it,
+so the lean is reduced but not structurally gone. Cut below Z=45.7 if the run cycle still shows it.
 
 **On #3 — direct *and* indirect are killed by the same occluder.** The fp body sits inside the
 world body, which must stay in the TLAS because it carries the RT lighting. Every ray leaving
 an fp-body surface hits the world body within a couple of units:
 
-| Ray | Cull mask | Player instances (`mask 0x01`) |
+| Ray | Cull mask | Player instances (`mask 0x02`) |
 |---|---|---|
-| Shadow ([vk_shadows.cpp:1012](../../neo/renderer/Vulkan/vk_shadows.cpp#L1012)) | `0xFE` only when light-to-camera < `r_rtShadowPlayerExcludeDist` | usually **included** |
+| Shadow ([vk_shadows.cpp:1012](../../neo/renderer/Vulkan/vk_shadows.cpp#L1012)) | `0xFD` only when light-to-camera < `r_rtShadowPlayerExcludeDist` | usually **included** |
 | GI ([gi_ray.rgen:164](../../neo/renderer/glsl/gi_ray.rgen#L164)) | `0xFF` | **included** |
 | Probe GI ([gi_probe_trace.rgen:97](../../neo/renderer/glsl/gi_probe_trace.rgen#L97)) | `0xFF` | **included** |
 
@@ -375,7 +377,7 @@ the player's own body* — a property of the ray origin, which every rgen alread
 |---|---|
 | [shadow_ray.rgen](../../neo/renderer/glsl/shadow_ray.rgen#L303) | per-pixel `cullMask`; reuses the existing `camDist` |
 | [gi_ray.rgen](../../neo/renderer/glsl/gi_ray.rgen#L130) | per-pixel `giCullMask`; reuses the existing `camPos` |
-| [gi_probe_trace.rgen](../../neo/renderer/glsl/gi_probe_trace.rgen#L100) | `0xFE` **unconditionally** |
+| [gi_probe_trace.rgen](../../neo/renderer/glsl/gi_probe_trace.rgen#L100) | `0xFD` **unconditionally** |
 
 Neither rgen needed a new camera-position uniform — both already derive `camPos` from
 `invViewProj`. `ShadowParamsUBO` absorbed the radius into `_pad1[0]` (still 192 bytes);
@@ -617,7 +619,7 @@ rejected in favour of keeping world and player shaders separate. Not adopted.
 ### Approach 3: Per-Instance SBT Routing with a Dedicated Player Shader (Adopted)
 
 Route player body TLAS instances to a dedicated closest-hit shader by setting
-`instanceShaderBindingTableRecordOffset = 2` on noSelfShadow entities.
+`instanceShaderBindingTableRecordOffset = 2` on `renderEntity_t::rtPlayer` entities (body, head, held weapon world model).
 
 **SBT layout (7 entries):**
 
@@ -633,19 +635,19 @@ Route player body TLAS instances to a dedicated closest-hit shader by setting
 
 **player_reflect.rchit behaviour (as built, 2026-10-07):**
 - Always opaque: samples the player diffuse texture, applies shadowed irradiance through the
-  shared `rt_light_eval.glsl` loop with self-shadow mask `0xFE`, and sets `transmittance = 0.0`.
+  shared `rt_light_eval.glsl` loop with self-shadow mask `0xFD`, and sets `transmittance = 0.0`.
 - There is **no distance pass-through**. An earlier revision of this section described an
   80-unit threshold; the shader has never contained one. Floor-bounce rays are kept off the
   body by the instance mask instead.
 
 **Glass probe exclusion via instance mask:**
-The glass probe `traceRayEXT` call uses cull mask `0xFE`. Player TLAS instances have
-`inst.mask = 0x01`. Because `0x01 & 0xFE == 0`, the player is invisible to glass probe
+The glass probe `traceRayEXT` call uses cull mask `0xFD`. Player TLAS instances have
+`inst.mask = 0x02`. Because `0x02 & 0xFD == 0`, the player is invisible to glass probe
 rays entirely. Slot 6 (player glass probe) exists only to keep SBT index arithmetic
 valid; it never fires.
 
 **Material flag:**
-`VK_MAT_FLAG_PLAYER_BODY (0x08)` is set in the material table for noSelfShadow entity
+`VK_MAT_FLAG_PLAYER_BODY (0x08)` is set in the material table for `rtPlayer` entity
 geometry. This is readable in shaders but is not needed for the routing to work — the
 routing is purely SBT-based.
 
@@ -653,16 +655,13 @@ routing is purely SBT-based.
 - Cleanest separation: world shaders have no player-specific branches.
 - Extra pipeline size: 7 groups vs 5. Minor cost.
 
-### Known limitation: `noSelfShadow` is not "player"
+### Player classification (resolved 2026-10-10)
 
-The `0xFE` masks used by the shadow/GI exclusions above drop every `noSelfShadow` instance,
-not only the player — glass, BFG secondaries and MP player icons share mask `0x01`. Narrow
-blast radius here (inside `r_rtPlayerExcludeRadius` only), and a pre-existing conflation
-rather than one introduced by this work.
-
-Tracked as its own stage in `20261009_vol_fix.md` — it is a TLAS-build defect with wider
-symptoms than this feature, including broken reflections in breakable glass.
-- Because the body is opaque to the main reflection ray, a *second* co-located player
-  instance (the fp body, before stage 4 lands) is visually indistinguishable from the first.
+`noSelfShadow` used to drive the mask and SBT routing, so breakable glass, BFG secondaries and MP
+icons were treated as the player. `renderEntity_t::rtPlayer` (body, head, held weapon world model;
+set per frame by `idPlayer::MarkRTPlayerEntities` / `idWeapon::PresentWeapon`) now owns it. Player
+instances are mask `0x02`; "exclude player" rays use `0xFD`. Details in
+`completed/20261009_vol_fix.md` stage 6. Verified in game: fp body under a light, mirrors, and the
+Administration glass.
 
 ---
