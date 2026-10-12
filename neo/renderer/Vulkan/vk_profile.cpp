@@ -37,7 +37,8 @@ static idCVar r_vkRTProfile("r_vkRTProfile", "0", CVAR_RENDERER | CVAR_INTEGER,
 static idCVar r_vkRTProfileWindow("r_vkRTProfileWindow", "30", CVAR_RENDERER | CVAR_INTEGER,
                                   "Frames per summary window when r_vkRTProfile=1 (1-256)");
 static idCVar r_vkRTProfileGroups("r_vkRTProfileGroups", "63", CVAR_RENDERER | CVAR_INTEGER,
-                                  "Metric groups: 1=phases 2=frame 4=upload 8=waits 16=memory 32=midframe");
+                                  "Console filter only, every group is always collected and always in the CSV: "
+                                  "1=phases 2=frame 4=upload 8=waits 16=memory 32=midframe");
 static idCVar r_vkRTProfileStats("r_vkRTProfileStats", "29", CVAR_RENDERER | CVAR_INTEGER,
                                  "Summary columns: 1=mean 2=p5 4=p50 8=p95 16=max");
 static idCVar r_vkRTProfileSpikeMs("r_vkRTProfileSpikeMs", "0", CVAR_RENDERER | CVAR_FLOAT,
@@ -271,13 +272,35 @@ void VK_Prof_BeginFrameSlot(int slot)
 {
     VK_Prof_CheckCSV();
 
+    // A partial window from before profiling was switched off describes whatever the
+    // settings were back then.  PushFrame is unreachable while off, so those rows sat
+    // in the ring and the first window after re-enabling blended them with fresh ones
+    // — the 2026-10-12 capture reported a p50 from the old 0.667 render scale in its
+    // first window and the correct 1:1 value in its p95.  Same for a window resize.
+    {
+        static bool s_wasActive = false;
+        static int s_lastWindowSize = -1;
+        const bool active = VK_Prof_Active();
+        const int windowSize = VK_Prof_WindowSize();
+        if (active != s_wasActive || windowSize != s_lastWindowSize)
+        {
+            s_windowCount = 0;
+            s_wasActive = active;
+            s_lastWindowSize = windowSize;
+        }
+    }
+
     if (slot < 0 || slot >= VK_MAX_FRAMES_IN_FLIGHT)
         return;
     memset(s_cur[slot], 0, sizeof(s_cur[slot]));
 
     // Sampled at frame open, not at push: push happens two frames later, so sampling
     // there attributed "now" to a frame that had already been presented.
-    if (VK_Prof_Active() && (r_vkRTProfileGroups.GetInteger() & VKPROF_GRP_MEMORY) != 0)
+    //
+    // Deliberately NOT gated on the memory group bit.  r_vkRTProfileGroups filters
+    // what the console prints; it must not decide what gets collected, or a group the
+    // console happens to hide comes back as a column of zeros in the CSV.
+    if (VK_Prof_Active())
         VK_Prof_SampleMemory(slot);
 }
 

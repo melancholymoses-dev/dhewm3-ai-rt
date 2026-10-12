@@ -55,6 +55,14 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 2026-09-23 MC2, scale 1.00 | 1.29 | ~0 | 0.52 | 1.27 | 1.80 | 0.17 | **5.05** |
 | 2026-09-23 MC2, scale 0.67 | 0.54 | ~0 | 0.37 | 0.49 | 0.68 | 0.14 | **2.22** |
 | 2026-10-10 MC 1440p, scale 1.00, vol_fix 1-4,6 (76 samples, `r_rtTlasFallbackRadius 0`) | 1.72 | ~0 (p90 1.8 with glass) | 0.82 | 2.05 | 2.93 | 0.46 (0.12 TLAS + 0.34 BLAS) | **~8.0** RT |
+| 2026-10-12 MC entrance, 1440p scale 1.00, **A0 window p50** (17 windows x 30 frames) | 0.82 | 0.67 | 0.83 | 1.57 | 0.17 | 0.18 (incl. 0.08 BLAS) | **4.27** RT / **6.07** raster |
+
+The 2026-10-12 row is the first capture from the A0 aggregator, so it is a p50 over 510 frames
+rather than a single sampled frame; p50 held within 0.9% across all 17 windows. **Shadows reads
+0.17 only because the entrance has almost no shadow-casting lights** — it is not comparable to
+the 2.93 from the MC2 corner, and says nothing about arc 8a. Vol (0.83 vs 0.82) is the useful
+cross-check: the froxel grid is a fixed size, so it should not move with location, and it didn't.
+**Raster now exceeds RT** (6.07 vs 4.27), with `Interactions` alone at 5.76.
 
 Shadows and AO are the two largest costs. **Not every remaining pass is
 screen-resolution** — arc 2 left a ~0.73 ms floor (TLAS, probe trace/blend, froxel

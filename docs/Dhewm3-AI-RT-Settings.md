@@ -284,7 +284,7 @@ Needs fixing if they stay in the menu: `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIR
 | `r_vkRTProfile` | Vulkan | 0=off, 1=window summaries, 2=one row per frame | 0 | D | = |
 | `r_vkRTProfileWindow` | Vulkan | Frames per summary window (1-256) | 30 | D | = |
 | `r_vkRTProfileStats` | Vulkan | Summary columns: 1=mean 2=p5 4=p50 8=p95 16=max | 29 | D | = |
-| `r_vkRTProfileGroups` | Vulkan | Metric groups: 1=phases 2=frame 4=upload 8=waits 16=memory 32=midframe | 63 | D | = |
+| `r_vkRTProfileGroups` | Vulkan | Console filter only — all groups are always collected and always in the CSV. Leave at 63 | 63 | D | = |
 | `r_vkRTProfileSpikeMs` | Vulkan | Dump every metric for frames over this backend ms (0=off) | 0 | D | = |
 | `r_vkRTProfileCSV` | Vulkan | Per-frame CSV path (empty=off) | "" | D | = |
 | `r_vkDebugLabels` | Vulkan | VK_EXT_debug_utils pass labels for Nsight/RGP/RenderDoc | 0 | D | = |

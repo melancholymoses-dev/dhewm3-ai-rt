@@ -99,7 +99,8 @@ New module `vk_profile.cpp/.h` owns the metric registry, window, CSV and labels;
 | Only `gpu.<phase>` needs query pools. The registry, CPU spans, frame/upload/wait/memory metrics and the push all gate on `VK_Prof_Active()`, never on `VK_RTProfileEnabled()` | `VK_RTProfileEnabled()` also requires `vk.rayTracingSupported` and a created query pool, so gating the whole profiler on it gave a non-RT GPU no output at all |
 | Anything stamped after `present` but before `backendMs` must be added to `accounted` in the `frame.other` sum | Otherwise an entire frame's GPU wait lands in `other` under `r_vkSerializeFrames 1` or during a screenshot — the one metric whose large value means "go get a sampling profiler" |
 | Every `VK_RTProfile_PhaseBegin` needs exactly one `PhaseEnd` | With labels on, an unmatched Begin leaves an open label and `vkEndCommandBuffer` fails. Both command-buffer exits call `VK_RTProfile_CloseStrayLabels` and warn, so it fails loudly rather than as a driver error |
-| `VK_Prof_BeginFrameSlot` is the per-frame tick that runs with profiling off | It owns the CSV open/close check; `PushFrame` is unreachable at `r_vkRTProfile 0`, which stranded the file open |
+| `VK_Prof_BeginFrameSlot` is the per-frame tick that runs with profiling off | It owns the CSV open/close check and discards a partial window on an off→on transition; `PushFrame` is unreachable at `r_vkRTProfile 0`, which stranded the file open and let stale rows survive a settings change |
+| `r_vkRTProfileGroups` filters the console and nothing else — never gate collection on it | The memory group did, so a console filter silently turned `mem.*` into a column of zeros in the CSV. One capture recipe, groups left at 63 |
 
 ### Deliberately not done
 

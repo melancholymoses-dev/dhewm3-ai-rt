@@ -1,0 +1,72 @@
+A0 baseline — partial
+=====================
+2026-10-12. Ryzen 9 5950X / RTX 4070 Ti Super. Mars City entrance, standing still.
+2560x1440, r_fsrRenderScale 1.000, r_vkRTProfile 1, r_vkRTProfileGroups 3 (phases + frame).
+17 clean windows x 30 frames = 510 frames. Source: base/a0_test.txt.
+
+STILL MISSING: the upload/waits/memory groups, the CSV, and a chugging section.
+Phase 0 of the cleanup plan cannot close on this file alone.
+
+Validation of the instrumentation itself
+----------------------------------------
+1. Span arithmetic closes. frame.backend p50 1.707 vs the sum of its parts:
+   fence .003 + acquire .003 + drain .001 + upload .153 + submit .025 + present .025
+   + phase CPU (cpu.total .502 + cpu.raster .667) + other .330 = 1.709.  0.002 ms apart.
+2. Phase sum closes. GI .82 + Refl .67 + Vol .83 + AO 1.57 + Shadows .17 + TLAS .18
+   = 4.24 against gpu.total 4.273; the 0.03 remainder is VolComposite and friends.
+3. p50 stable to 0.9% across 17 windows (4.258 - 4.298). A0b gate wanted 5%.
+4. Resolution scaling matches the known floor. 0.667 -> 1.000 is 2.25x the pixels but
+   gpu.total went 2.57 -> 4.27, only 1.66x.  Resolution-independent work here is
+   TLAS .18 + ProbeTrace .05 + ProbeBlend .09 + FroxelFill .69 + FroxelIntegrate .06
+   = 1.06 ms; (4.27 - 1.06) / 2.25 + 1.06 = 2.49 against 2.57 measured, within 3%.
+   This is arc 2's floor (docs/plans/completed/20260918_fsr_upscaling.md s12) showing up
+   as an independent confirmation rather than an assumption.
+
+Measured, 1:1, p50 unless stated
+--------------------------------
+GPU   total 4.273   raster 6.072
+      Interactions 5.756   AO 1.571   FroxelFill 0.686   Refl 0.674   ProbeResolve 0.571
+      TLAS 0.179 (0.082 BLAS)   Shadows 0.168   DepthPrepass 0.133   ShaderPasses 0.125
+CPU   backend 1.707   frontend 0.750 (addModels 0.513, addLights 0.149, findView 0.066)
+      game 0.204   other 0.330   TLAS 0.344   Interactions 0.385
+
+Findings
+--------
+F2 confirmed, and worse than the audit assumed. frame.upload p50 0.153 but max 7.3-9.9 ms
+in EVERY one of the 17 windows. Roughly one frame in 30 eats a 7-10 ms blocking upload
+*while standing still*, so it is not confined to the "heavy frames" the audit described.
+This is now the top CPU item and it promotes A2 above everything else.
+
+frame.other max 11.8 against a p95 of 0.400. One frame per window has ~12 ms of
+unattributed backend time. Not explained by this capture: the waits group was off, so
+whatever blocks is not yet attributed. Needs a re-run with groups 15 and a spike line.
+
+Raster exceeds RT at 1:1 (6.07 vs 4.27) and Interactions alone is 5.76 — larger than every
+RT pass combined. Says nothing about arc 8a yet: this spot reads Shadows 0.168 because the
+entrance has almost no shadow-casting lights, so the serial-dispatch claim still needs the
+MC2 corner.
+
+Dead screen-space paths show as 0.001: GI, GITemporal, Vol, VolTemporal, VolBilateral.
+Confirms arc 8 phases 3 and 4 have nothing live to delete.
+
+Bug found by this capture
+-------------------------
+Window 1 read p50 2.563 / p95 4.287 while windows 2-18 all read p50 ~4.27. The 2.563 is the
+0.667-scale value from before the setting changed: a partial window survived profiling being
+toggled off, because PushFrame is unreachable while off and nothing cleared s_windowCount.
+Fixed in VK_Prof_BeginFrameSlot (discard the partial window on an off->on transition or a
+window-size change). Treat the first window after any cvar change in earlier logs as suspect.
+
+Next capture
+------------
+The only capture recipe. r_vkRTProfileGroups is a console filter and is always left at 63;
+every group is collected and written to the CSV regardless, so analysis never needs it.
+
+  r_vkRTProfileCSV a0.csv
+  r_vkRTProfileSpikeMs 8
+  r_vkRTProfileWindow 60
+  r_vkRTProfile 1
+
+Same spot, then the MC2 corner. The questions are which wait tag owns frame.other's 12 ms
+spike, and what upload.staticBlocks reads on the frames where frame.upload is 7-10 ms. Both
+answered from the CSV, not the console.
