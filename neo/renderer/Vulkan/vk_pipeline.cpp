@@ -1623,9 +1623,9 @@ VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest)
     const uint64_t start = SDL_GetPerformanceCounter();
     VkPipeline p = VK_CreateGuiPipelineEx(vkPipes.guiLayout, blend, src, dst, src, dst, depthTest, depthOp, colorMask);
     const double ms = (freq > 0) ? ((double)(SDL_GetPerformanceCounter() - start) * 1000.0) / (double)freq : 0.0;
-    VK_Prof_NotePipelineCreate(va("guiBlend key=0x%08x", key), ms);
     if (p == VK_NULL_HANDLE)
         return vkPipes.guiAlphaPipeline;
+    VK_Prof_NotePipelineCreate(va("guiBlend key=0x%08x", key), ms);
 
     s_blendCache[s_blendCacheCount++] = {key, p};
     return p;
@@ -1845,9 +1845,9 @@ VkPipeline VK_GetOrCreateBlendlightPipeline(int drawStateBits)
                                           "glprogs/glsl/blendlight.frag.spv", VK_COMPARE_OP_EQUAL,
                                           VK_CULL_MODE_FRONT_BIT, src, dst);
     const double ms = (freq > 0) ? ((double)(SDL_GetPerformanceCounter() - start) * 1000.0) / (double)freq : 0.0;
-    VK_Prof_NotePipelineCreate(va("blendlight key=0x%08x", key), ms);
     if (p == VK_NULL_HANDLE)
         return vkPipes.blendlightPipeline;
+    VK_Prof_NotePipelineCreate(va("blendlight key=0x%08x", key), ms);
 
     s_blendlightCache[s_blendlightCacheCount++] = {key, p};
     return p;

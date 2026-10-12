@@ -98,6 +98,16 @@ static void VK_SetRenderStage(const char *stage)
     s_stageBreadcrumbHead = (s_stageBreadcrumbHead + 1) % VK_STAGE_BREADCRUMB_MAX;
 }
 
+// A0a: pass labels for GPU capture tools, independent of timestamp profiling.
+// Declared up here because both command-buffer exits (the split submit below and
+// the frame end) have to verify the depth is back to zero before vkEndCommandBuffer.
+static bool s_rtProfLabelsThisFrame = false;
+static int s_rtProfLabelDepth = 0;
+
+// Closes any label an unbalanced phase span left open, so vkEndCommandBuffer cannot
+// fail on it.  Returns the number it had to close.
+static int VK_RTProfile_CloseStrayLabels(VkCommandBuffer cmd);
+
 static void VK_DumpStageBreadcrumbs(void)
 {
     common->Printf("VK: recent stage breadcrumbs (oldest -> newest):\n");
@@ -150,6 +160,11 @@ static bool VK_DebugSplitSubmit(VkCommandBuffer *cmdBufInOut, const char *stageT
 
     if (renderPassActive)
         vkCmdEndRenderPass(cmd);
+    // A split lands between phase spans, so the depth should already be zero; if it
+    // is not, closing here keeps vkEndCommandBuffer from failing on a stray label.
+    if (const int stray = VK_RTProfile_CloseStrayLabels(cmd))
+        common->Warning("VK PROFILE: %d debug label(s) open at split submit '%s'", stray,
+                        stageTag ? stageTag : "(null)");
     VK_CHECK(vkEndCommandBuffer(cmd));
 
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -435,9 +450,6 @@ static bool s_rtProfReady = false;
 // Stamped at the frame fence, read after present: not in the per-slot struct because
 // VK_RTProfile_BeginFrame zeroes that struct after the fence has already been waited on.
 static uint64_t s_rtProfFrameStart[VK_MAX_FRAMES_IN_FLIGHT] = {};
-// A0a: pass labels for GPU capture tools, independent of timestamp profiling.
-static bool s_rtProfLabelsThisFrame = false;
-static int s_rtProfLabelDepth = 0;
 
 // A table rather than a switch: the same names index the profiler's metric
 // registry (gpu.<name> / cpu.<name>) and label every pass for GPU capture tools,
@@ -475,9 +487,11 @@ static double VK_RTProfile_TicksToMs(uint64_t start, uint64_t end)
     return ((double)(end - start) * 1000.0) / (double)s_rtProfCPUFreq;
 }
 
+// Gated on VK_Prof_Active, not VK_RTProfileEnabled: CPU spans need no query pool,
+// so they still work on a device without timestamp support.
 static void VK_RTProfile_AccumulateCPU(vkRTProfilePhase_t phase, uint64_t startCounter)
 {
-    if (!VK_RTProfileEnabled() || s_rtProfCPUFreq == 0 || startCounter == 0)
+    if (!VK_Prof_Active() || s_rtProfCPUFreq == 0 || startCounter == 0)
         return;
 
     const uint64_t endCounter = SDL_GetPerformanceCounter();
@@ -519,24 +533,25 @@ static void VK_RTProfile_Init()
 {
     VK_RTProfile_Shutdown();
 
-    // Before the timestamp gate: the wait, upload and memory metrics do not need
-    // query pools, and the registry has to exist for the wrappers to record into.
+    // Everything before the timestamp gate has to work without query pools: the
+    // registry the wait/upload/memory wrappers record into, and the CPU clock every
+    // span uses.  Only the GPU phase timings need s_rtProfReady.
     VK_Prof_Init(s_rtProfPhaseNames, VK_RTPROF_PHASE_COUNT);
+
+    s_rtProfCPUFreq = SDL_GetPerformanceFrequency();
+    if (s_rtProfCPUFreq == 0)
+        common->Warning("VK RT PROFILE: SDL_GetPerformanceFrequency returned 0, CPU phase timing disabled");
 
     VkPhysicalDeviceProperties props = {};
     vkGetPhysicalDeviceProperties(vk.physicalDevice, &props);
     if (!props.limits.timestampComputeAndGraphics)
     {
-        common->Warning("VK RT PROFILE: timestampComputeAndGraphics unsupported, GPU phase profiling disabled");
+        common->Warning("VK RT PROFILE: timestampComputeAndGraphics unsupported, GPU phase timing disabled "
+                        "(CPU, wait, upload and memory metrics still report)");
         return;
     }
 
     s_rtProfTimestampPeriodNs = props.limits.timestampPeriod;
-    s_rtProfCPUFreq = SDL_GetPerformanceFrequency();
-    if (s_rtProfCPUFreq == 0)
-    {
-        common->Warning("VK RT PROFILE: SDL_GetPerformanceFrequency returned 0, CPU phase timing disabled");
-    }
 
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
@@ -547,9 +562,19 @@ static void VK_RTProfile_Init()
         VkResult res = vkCreateQueryPool(vk.device, &qpCI, NULL, &s_rtProfQueryPools[i]);
         if (res != VK_SUCCESS)
         {
-            common->Warning("VK RT PROFILE: vkCreateQueryPool failed slot=%d err=%d (%s)", i, (int)res,
-                            VK_ResultToString(res));
-            VK_RTProfile_Shutdown();
+            // Drop the pools but keep the registry and the CPU clock: a pool failure
+            // costs the GPU phase timings, not the rest of the profiler.
+            common->Warning("VK RT PROFILE: vkCreateQueryPool failed slot=%d err=%d (%s) — GPU phase timing "
+                            "disabled, other metrics still report",
+                            i, (int)res, VK_ResultToString(res));
+            for (int j = 0; j < VK_MAX_FRAMES_IN_FLIGHT; j++)
+            {
+                if (s_rtProfQueryPools[j] != VK_NULL_HANDLE)
+                {
+                    vkDestroyQueryPool(vk.device, s_rtProfQueryPools[j], NULL);
+                    s_rtProfQueryPools[j] = VK_NULL_HANDLE;
+                }
+            }
             return;
         }
     }
@@ -573,17 +598,32 @@ static void VK_RTProfile_BeginFrame(VkCommandBuffer cmd, int slot)
     s_rtProfBLASSpanOpen = false;
     s_rtProfBLASSpanDone = false;
 
-    if (!VK_RTProfileEnabled())
-        return;
-
-    s_rtProfEventCount[slot] = 0;
-    s_rtProfNextQuery[slot] = 0;
+    // Per-frame CPU state, cleared whether or not query pools exist.  The frontend
+    // counters are snapshotted here because CollectAndLog runs two frames later,
+    // where tr.pcLastFrame describes a different frame.
     s_rtProfCPURecordedFrameCount[slot] = -1;
     for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
         s_rtProfCPUMs[slot][p] = 0.0;
     s_rtProfFrameCPU[slot] = {};
     s_rtProfFrameCPU[slot].pc = tr.pcLastFrame;
+
+    if (!VK_RTProfileEnabled())
+        return;
+
+    s_rtProfEventCount[slot] = 0;
+    s_rtProfNextQuery[slot] = 0;
     vkCmdResetQueryPool(cmd, s_rtProfQueryPools[slot], 0, VK_RTPROF_QUERY_COUNT);
+}
+
+static int VK_RTProfile_CloseStrayLabels(VkCommandBuffer cmd)
+{
+    const int stray = s_rtProfLabelDepth;
+    while (s_rtProfLabelDepth > 0)
+    {
+        VK_Prof_PopLabel(cmd);
+        s_rtProfLabelDepth--;
+    }
+    return stray;
 }
 
 static int VK_RTProfile_PhaseBegin(VkCommandBuffer cmd, vkRTProfilePhase_t phase)
@@ -666,14 +706,12 @@ void VK_RTProfile_BLASGpuEnd(VkCommandBuffer cmd)
 
 static void VK_RTProfile_CollectAndLog(int slot)
 {
-    if (!s_rtProfReady)
-        return;
     if (slot < 0 || slot >= VK_MAX_FRAMES_IN_FLIGHT)
         return;
 
-    // Submit stamps the slot every frame; with profiling off the event/query counts are
-    // stale, so drop the stamp instead of replaying the last enabled frame's data.
-    if (!VK_RTProfileEnabled())
+    // Submit stamps the slot every frame; with profiling off the counts are stale, so
+    // drop the stamp instead of replaying the last enabled frame's data.
+    if (!VK_Prof_Active())
     {
         s_rtProfRecordedFrameCount[slot] = -1;
         s_rtProfCPURecordedFrameCount[slot] = -1;
@@ -681,39 +719,48 @@ static void VK_RTProfile_CollectAndLog(int slot)
     }
 
     const int recordedFrame = s_rtProfRecordedFrameCount[slot];
-    const uint32_t eventCount = s_rtProfEventCount[slot];
-    const uint32_t queryCount = s_rtProfNextQuery[slot];
-    if (recordedFrame < 0 || eventCount == 0 || queryCount == 0)
-        return;
+    if (recordedFrame < 0)
+        return; // this slot has not submitted a frame yet
 
     const int recordedCPUFrame = s_rtProfCPURecordedFrameCount[slot];
     const bool haveCPU = (recordedCPUFrame == recordedFrame);
 
-    uint64_t queryValues[VK_RTPROF_QUERY_COUNT] = {};
-    VkResult qr =
-        vkGetQueryPoolResults(vk.device, s_rtProfQueryPools[slot], 0, queryCount, sizeof(uint64_t) * queryCount,
-                              queryValues, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
-    if (qr != VK_SUCCESS)
-    {
-        common->Warning("VK RT PROFILE: vkGetQueryPoolResults failed slot=%d frame=%d err=%d (%s)", slot, recordedFrame,
-                        (int)qr, VK_ResultToString(qr));
-        s_rtProfRecordedFrameCount[slot] = -1;
-        return;
-    }
+    // The GPU phase timings are the only part that needs query pools.  Without them
+    // — no timestamp support, a failed pool, or a frame that opened no spans — the
+    // frame, upload, wait and memory metrics are still collected and pushed.
+    const uint32_t eventCount = s_rtProfEventCount[slot];
+    const uint32_t queryCount = s_rtProfNextQuery[slot];
+    bool haveGPU = VK_RTProfileEnabled() && eventCount > 0 && queryCount > 0;
 
     double phaseMs[VK_RTPROF_PHASE_COUNT] = {};
-    for (uint32_t i = 0; i < eventCount; i++)
+    if (haveGPU)
     {
-        const vkRTProfileEvent_t &ev = s_rtProfEvents[slot][i];
-        if (ev.queryStart >= queryCount || ev.queryEnd >= queryCount || ev.phase >= VK_RTPROF_PHASE_COUNT)
-            continue;
-        const uint64_t t0 = queryValues[ev.queryStart];
-        const uint64_t t1 = queryValues[ev.queryEnd];
-        if (t1 <= t0)
-            continue;
+        uint64_t queryValues[VK_RTPROF_QUERY_COUNT] = {};
+        VkResult qr =
+            vkGetQueryPoolResults(vk.device, s_rtProfQueryPools[slot], 0, queryCount, sizeof(uint64_t) * queryCount,
+                                  queryValues, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+        if (qr != VK_SUCCESS)
+        {
+            common->Warning("VK RT PROFILE: vkGetQueryPoolResults failed slot=%d frame=%d err=%d (%s)", slot,
+                            recordedFrame, (int)qr, VK_ResultToString(qr));
+            haveGPU = false;
+        }
+        else
+        {
+            for (uint32_t i = 0; i < eventCount; i++)
+            {
+                const vkRTProfileEvent_t &ev = s_rtProfEvents[slot][i];
+                if (ev.queryStart >= queryCount || ev.queryEnd >= queryCount || ev.phase >= VK_RTPROF_PHASE_COUNT)
+                    continue;
+                const uint64_t t0 = queryValues[ev.queryStart];
+                const uint64_t t1 = queryValues[ev.queryEnd];
+                if (t1 <= t0)
+                    continue;
 
-        const double ns = (double)(t1 - t0) * (double)s_rtProfTimestampPeriodNs;
-        phaseMs[ev.phase] += ns * 1e-6;
+                const double ns = (double)(t1 - t0) * (double)s_rtProfTimestampPeriodNs;
+                phaseMs[ev.phase] += ns * 1e-6;
+            }
+        }
     }
 
     // `total` is RT only — see the VK_RTPROF_PHASE_RT_COUNT comment.
@@ -732,12 +779,16 @@ static void VK_RTProfile_CollectAndLog(int slot)
 
     for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
     {
-        VK_Prof_SetSlot(slot, VK_Prof_PhaseMetric(p, true), phaseMs[p]);
+        if (haveGPU)
+            VK_Prof_SetSlot(slot, VK_Prof_PhaseMetric(p, true), phaseMs[p]);
         if (haveCPU)
             VK_Prof_SetSlot(slot, VK_Prof_PhaseMetric(p, false), s_rtProfCPUMs[slot][p]);
     }
-    VK_Prof_SetSlot(slot, VKPROF_GPU_TOTAL, totalMs);
-    VK_Prof_SetSlot(slot, VKPROF_GPU_RASTER, rasterMs);
+    if (haveGPU)
+    {
+        VK_Prof_SetSlot(slot, VKPROF_GPU_TOTAL, totalMs);
+        VK_Prof_SetSlot(slot, VKPROF_GPU_RASTER, rasterMs);
+    }
     VK_Prof_SetSlot(slot, VKPROF_CPU_TOTAL, totalCPUMs);
     VK_Prof_SetSlot(slot, VKPROF_CPU_RASTER, rasterCPUMs);
 
@@ -755,8 +806,15 @@ static void VK_RTProfile_CollectAndLog(int slot)
         // What the backend spent that no span accounts for.  Measured wall clock
         // minus the frame spans minus the per-phase CPU: a large `other=` is the
         // cue to put a sampling profiler on VK_RB_DrawView.
-        const double accounted =
-            fc.fenceWaitMs + fc.acquireMs + fc.drainMs + fc.uploadMs + fc.submitMs + fc.presentMs + phaseCPUSum;
+        //
+        // The readback and serialize waits sit after the present stamp but before
+        // backendMs is taken, so they belong here explicitly — otherwise a whole
+        // frame of GPU wait lands in `other` under r_vkSerializeFrames 1 or during
+        // a screenshot, which is exactly when you would be reading this number.
+        const double tailWaitMs = VK_Prof_GetSlot(slot, VK_Prof_WaitMetric(VKPROF_WAIT_READBACK, true)) +
+                                  VK_Prof_GetSlot(slot, VK_Prof_WaitMetric(VKPROF_WAIT_SERIALIZE, true));
+        const double accounted = fc.fenceWaitMs + fc.acquireMs + fc.drainMs + fc.uploadMs + fc.submitMs +
+                                 fc.presentMs + phaseCPUSum + tailWaitMs;
         VK_Prof_SetSlot(slot, VKPROF_FRAME_OTHER, Max(0.0, fc.backendMs - accounted));
 
         VK_Prof_SetSlot(slot, VKPROF_BLAS_UPDATES, (double)fc.blas.updates);
@@ -947,7 +1005,6 @@ static void VK_DestroyDataRings(void)
 // Returns the byte offset into dataRings[vk.currentFrame].buffer, or VK_WHOLE_SIZE on overflow.
 static VkDeviceSize VK_AllocDataRing(VkDeviceSize size, VkDeviceSize align, bool isIndex = false)
 {
-    VK_Prof_Add(isIndex ? VKPROF_RING_IDX_KB : VKPROF_RING_VERT_KB, (double)size / 1024.0);
     vkDataRing_t &ring = dataRings[vk.currentFrame];
     // round offset up to alignment
     VkDeviceSize aligned = (ring.offset + align - 1) & ~(align - 1);
@@ -959,7 +1016,9 @@ static VkDeviceSize VK_AllocDataRing(VkDeviceSize size, VkDeviceSize align, bool
     }
     ring.offset = aligned + size;
     // F1/F8: how much geometry is re-copied per frame, and how close the ring runs
-    // to its 64 MB.  Index vs vertex is split at the call sites.
+    // to its 64 MB.  Counted after the overflow return so rejected requests, whose
+    // draw is skipped, do not show up as bytes copied.
+    VK_Prof_Add(isIndex ? VKPROF_RING_IDX_KB : VKPROF_RING_VERT_KB, (double)size / 1024.0);
     VK_Prof_Max(VKPROF_RING_DATA_PEAK_KB, (double)(ring.offset >> 10));
     return aligned;
 }
@@ -5909,6 +5968,14 @@ void VK_RB_SwapBuffers()
         s_readbackPending = false;
         s_readbackSubmitted = true;
     }
+
+    // Debug labels turn the PhaseBegin/PhaseEnd pairing into a hard requirement: an
+    // unmatched PhaseBegin used to cost one timing, but now leaves an open label and
+    // vkEndCommandBuffer fails.  Say which frame did it instead of surfacing a driver
+    // error from VK_CHECK below.
+    if (const int stray = VK_RTProfile_CloseStrayLabels(cmdBuf))
+        common->Warning("VK PROFILE: %d debug label(s) left open at end of frame %d — an RT phase span is unbalanced",
+                        stray, tr.frameCount);
 
     VK_CHECK(vkEndCommandBuffer(cmdBuf));
 

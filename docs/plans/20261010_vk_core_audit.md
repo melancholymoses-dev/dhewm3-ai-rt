@@ -76,7 +76,7 @@ New module `vk_profile.cpp/.h` owns the metric registry, window, CSV and labels;
 | # | Change | Where | Check |
 |---|---|---|---|
 | A0a | `vkCmdBeginDebugUtilsLabelEXT`/`End` from `VK_RTProfile_PhaseBegin/End`, covering all 26 phases from one name table. Pushed **before** the profiling gate and popped before the eventIdx check, so a capture is readable at `r_vkRTProfile 0`. `r_vkDebugLabels`; `VK_EXT_debug_utils` now enabled whenever the loader has it, not only under validation | `vk_profile.cpp`, `vk_backend.cpp` PhaseBegin/End, `vk_instance.cpp` | Nsight/RGP timeline shows named passes with `r_vkRTProfile 0`; no validation error about unbalanced labels |
-| A0b | Window aggregator: every frame accumulates into a ring of `r_vkRTProfileWindow` (30); at close prints a `mean/p5/p50/p95/max` block, one metric per line, omitting metrics zero across the window. Column set is `r_vkRTProfileStats` (default mean/p50/p95/max). `pcLastFrame` snapshotted at frame open, fixing the two-frame skew | `VK_RTProfile_CollectAndLog` | Same corner captured twice: p50 within 5%; the 52-field line is gone |
+| A0b | Window aggregator: every frame accumulates into a ring of `r_vkRTProfileWindow` (30); at close prints a `mean/p5/p50/p95/max` block, one metric per line, omitting metrics zero across the window. Column set is `r_vkRTProfileStats` (default mean/p50/p95/max). Mode 2 bypasses the window entirely and prints one line per frame. `pcLastFrame` snapshotted at frame open, fixing the two-frame skew | `VK_RTProfile_CollectAndLog` | Same corner captured twice: p50 within 5%; the 52-field line is gone |
 | A0c | Spike line: frames whose `frame.backend` exceeds `r_vkRTProfileSpikeMs` dump every non-zero metric immediately, outside the window cadence | `vk_profile.cpp` | A forced stall emits a line; steady state emits none |
 | A0d | CSV: `r_vkRTProfileCSV <path>`, one row per frame, all ~130 columns, buffered and flushed at window close and at shutdown | `vk_profile.cpp` | Row count == frames run; p50 recomputed from the CSV matches the console |
 | A0e | `r_vkRTProfileGroups` bitmask (phases/frame/upload/waits/memory/midframe) replaces a cvar per group | `vk_profile.cpp` | Each bit toggles its rows |
@@ -91,6 +91,15 @@ New module `vk_profile.cpp/.h` owns the metric registry, window, CSV and labels;
 | waits | ms and count per tag across 40 wrapped sites in 20 files (uploadFlush, image, accelStruct, ao, gi, giProbe, vol, bloom, gbuffer, temporal, reflect, tonemap, upscale, swapchain, readback, serialize, shutdown, other) | F2, F3 |
 | memory | `mem.rssMB` (new `Sys_GetProcessMemoryBytes`), `mem.virtMemMB` (new `vertexCacheVirtMemBytes`), `mem.vramUsedMB`/`BudgetMB` via `VK_EXT_memory_budget` | F5, F12 |
 | midframe | lazy image loads + ms (one `VK_Image_LazyLoadTimed` for all four sites), first-use pipeline builds + ms | F3, X4 |
+
+### Invariants the code now relies on
+
+| Rule | Because |
+|---|---|
+| Only `gpu.<phase>` needs query pools. The registry, CPU spans, frame/upload/wait/memory metrics and the push all gate on `VK_Prof_Active()`, never on `VK_RTProfileEnabled()` | `VK_RTProfileEnabled()` also requires `vk.rayTracingSupported` and a created query pool, so gating the whole profiler on it gave a non-RT GPU no output at all |
+| Anything stamped after `present` but before `backendMs` must be added to `accounted` in the `frame.other` sum | Otherwise an entire frame's GPU wait lands in `other` under `r_vkSerializeFrames 1` or during a screenshot — the one metric whose large value means "go get a sampling profiler" |
+| Every `VK_RTProfile_PhaseBegin` needs exactly one `PhaseEnd` | With labels on, an unmatched Begin leaves an open label and `vkEndCommandBuffer` fails. Both command-buffer exits call `VK_RTProfile_CloseStrayLabels` and warn, so it fails loudly rather than as a driver error |
+| `VK_Prof_BeginFrameSlot` is the per-frame tick that runs with profiling off | It owns the CSV open/close check; `PushFrame` is unreachable at `r_vkRTProfile 0`, which stranded the file open |
 
 ### Deliberately not done
 

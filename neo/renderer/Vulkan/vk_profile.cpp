@@ -84,10 +84,15 @@ static const char *VK_Prof_PoolName(const char *fmt, const char *arg)
     return dst;
 }
 
+static int s_metricsRefused = 0;
+
 static int VK_Prof_Register(const char *name, uint32_t group, int prec)
 {
     if (s_metricCount >= VKPROF_MAX_METRICS)
-        return s_metricCount - 1;
+    {
+        s_metricsRefused++;
+        return -1;
+    }
     const int id = s_metricCount++;
     s_desc[id].name = name;
     s_desc[id].group = group;
@@ -192,8 +197,6 @@ int VK_Prof_Groups(void)
 
 static int VK_Prof_WindowSize(void)
 {
-    if (r_vkRTProfile.GetInteger() >= 2)
-        return 1;
     const int n = r_vkRTProfileWindow.GetInteger();
     return (n < 1) ? 1 : ((n > VKPROF_MAX_WINDOW) ? VKPROF_MAX_WINDOW : n);
 }
@@ -201,6 +204,7 @@ static int VK_Prof_WindowSize(void)
 void VK_Prof_Init(const char *const *phaseNames, int phaseCount)
 {
     s_metricCount = 0;
+    s_metricsRefused = 0;
     s_namePoolUsed = 0;
     s_windowCount = 0;
     memset(s_cur, 0, sizeof(s_cur));
@@ -223,8 +227,9 @@ void VK_Prof_Init(const char *const *phaseNames, int phaseCount)
         VK_Prof_Register(VK_Prof_PoolName("cpu.%s", phaseNames[i]), VKPROF_GRP_PHASES, 3);
     }
 
-    if (s_metricCount >= VKPROF_MAX_METRICS)
-        common->Warning("VK PROFILE: metric table full (%d); raise VKPROF_MAX_METRICS", s_metricCount);
+    if (s_metricsRefused > 0)
+        common->Warning("VK PROFILE: %d metrics dropped, table holds %d; raise VKPROF_MAX_METRICS", s_metricsRefused,
+                        VKPROF_MAX_METRICS);
 
     s_initialized = true;
 }
@@ -245,15 +250,35 @@ int VK_Prof_PhaseMetric(int phase, bool gpu)
     return s_phaseMetricBase + phase * 2 + (gpu ? 0 : 1);
 }
 
+int VK_Prof_WaitMetric(vkProfWait_t tag, bool ms)
+{
+    if (!s_initialized || s_waitMetricBase < 0 || (int)tag < 0 || (int)tag >= VKPROF_WAIT_COUNT)
+        return -1;
+    return s_waitMetricBase + (int)tag * 2 + (ms ? 0 : 1);
+}
+
 // ---------------------------------------------------------------------------
 // Sample accessors
 // ---------------------------------------------------------------------------
 
+static void VK_Prof_SampleMemory(int slot);
+static void VK_Prof_CheckCSV(void);
+
+// The one entry point that runs every frame whether or not profiling is on, so the
+// CSV open/close check lives here: PushFrame is unreachable with r_vkRTProfile 0,
+// which would otherwise leave the file open with a window of rows unflushed.
 void VK_Prof_BeginFrameSlot(int slot)
 {
+    VK_Prof_CheckCSV();
+
     if (slot < 0 || slot >= VK_MAX_FRAMES_IN_FLIGHT)
         return;
     memset(s_cur[slot], 0, sizeof(s_cur[slot]));
+
+    // Sampled at frame open, not at push: push happens two frames later, so sampling
+    // there attributed "now" to a frame that had already been presented.
+    if (VK_Prof_Active() && (r_vkRTProfileGroups.GetInteger() & VKPROF_GRP_MEMORY) != 0)
+        VK_Prof_SampleMemory(slot);
 }
 
 void VK_Prof_SetSlot(int slot, int metric, double value)
@@ -268,6 +293,13 @@ void VK_Prof_AddSlot(int slot, int metric, double value)
     if (!s_initialized || slot < 0 || slot >= VK_MAX_FRAMES_IN_FLIGHT || metric < 0 || metric >= s_metricCount)
         return;
     s_cur[slot][metric] += value;
+}
+
+double VK_Prof_GetSlot(int slot, int metric)
+{
+    if (!s_initialized || slot < 0 || slot >= VK_MAX_FRAMES_IN_FLIGHT || metric < 0 || metric >= s_metricCount)
+        return 0.0;
+    return s_cur[slot][metric];
 }
 
 void VK_Prof_Set(int metric, double value)
@@ -354,7 +386,9 @@ static void VK_Prof_CloseCSV(void)
 static void VK_Prof_CheckCSV(void)
 {
     const char *want = r_vkRTProfileCSV.GetString();
-    if (!want || !want[0])
+    // Switching profiling off closes the file rather than stranding it open with a
+    // window of rows still buffered.
+    if (!want || !want[0] || !VK_Prof_Active())
     {
         VK_Prof_CloseCSV();
         return;
@@ -483,12 +517,12 @@ static void VK_Prof_PrintWindow(int count, int lastFrame)
     }
 }
 
-// One long line, printed the moment a frame breaches the threshold.  Window
-// averages cannot show a hitch; this is the only output that sees every frame.
-static void VK_Prof_PrintSpike(int frameNum, const double *sample)
+// One line holding every non-zero metric for a single frame.  Used for the spike
+// dump (window averages cannot show a hitch) and for mode 2.
+static void VK_Prof_PrintFrameLine(const char *prefix, int frameNum, const double *sample)
 {
     const uint32_t groups = (uint32_t)r_vkRTProfileGroups.GetInteger();
-    idStr line = va("VK PROFILE SPIKE: frame=%d", frameNum);
+    idStr line = va("%s: frame=%d", prefix, frameNum);
     for (int m = 0; m < s_metricCount; m++)
     {
         if ((s_desc[m].group & groups) == 0 || sample[m] == 0.0)
@@ -509,17 +543,25 @@ void VK_Prof_PushFrame(int slot, int frameNum)
     if (!VK_Prof_Active() || slot < 0 || slot >= VK_MAX_FRAMES_IN_FLIGHT)
         return;
 
-    if ((r_vkRTProfileGroups.GetInteger() & VKPROF_GRP_MEMORY) != 0)
-        VK_Prof_SampleMemory(slot);
-
     const double *sample = s_cur[slot];
 
     const float spikeMs = r_vkRTProfileSpikeMs.GetFloat();
     if (spikeMs > 0.0f && sample[VKPROF_FRAME_BACKEND] > (double)spikeMs)
-        VK_Prof_PrintSpike(frameNum, sample);
+        VK_Prof_PrintFrameLine("VK PROFILE SPIKE", frameNum, sample);
 
-    VK_Prof_CheckCSV();
     VK_Prof_AppendCSVRow(frameNum, sample);
+
+    // Mode 2 is one row per frame, not a one-frame window: a block of 40-plus lines
+    // at 60 fps distorts what it is measuring, and every percentile would be the
+    // same number anyway.
+    if (r_vkRTProfile.GetInteger() >= 2)
+    {
+        VK_Prof_PrintFrameLine("VK PROFILE FRAME", frameNum, sample);
+        VK_Prof_FlushCSV();
+        s_windowCount = 0;
+        s_windowJustClosed = true;
+        return;
+    }
 
     if (s_windowCount < VKPROF_MAX_WINDOW)
     {

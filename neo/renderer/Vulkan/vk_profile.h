@@ -145,12 +145,15 @@ int VK_Prof_Groups(void);
 // ---------------------------------------------------------------------------
 
 int VK_Prof_PhaseMetric(int phase, bool gpu);
+// ms = true for wait.<tag>.ms, false for wait.<tag>.n.
+int VK_Prof_WaitMetric(vkProfWait_t tag, bool ms);
 
 void VK_Prof_BeginFrameSlot(int slot);
 void VK_Prof_Set(int metric, double value);
 void VK_Prof_Add(int metric, double value);
 void VK_Prof_SetSlot(int slot, int metric, double value);
 void VK_Prof_AddSlot(int slot, int metric, double value);
+double VK_Prof_GetSlot(int slot, int metric);
 void VK_Prof_Max(int metric, double value);
 
 // Closes the slot's sample: fills the memory gauges, appends to the window,

@@ -207,13 +207,14 @@ static void VKimp_CreateInstance(SDL_Window *window)
 
     // debug_utils is also how the profiler names passes and objects for GPU tools,
     // so enable it whenever the loader has it — not only under validation.
+    // The NULL-layer query cannot see extensions an explicit layer would add, so
+    // under validation we append it regardless; the flag is only set once
+    // vkCreateInstance has accepted the list below.
     uint32_t totalExtCount = sdlExtCount;
-    vk.debugUtilsSupported = VK_CheckInstanceExtensionSupport(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-    if (enableValidation || vk.debugUtilsSupported)
-    {
+    const bool wantDebugUtils = enableValidation || VK_CheckInstanceExtensionSupport(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    if (wantDebugUtils)
         sdlExts[totalExtCount++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
-        vk.debugUtilsSupported = true;
-    }
+    vk.debugUtilsSupported = false;
 
     VkApplicationInfo appInfo = {};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -236,6 +237,10 @@ static void VKimp_CreateInstance(SDL_Window *window)
     }
 
     VK_CHECK(vkCreateInstance(&createInfo, NULL, &vk.instance));
+
+    // Past the VK_CHECK the extension list was accepted, so this is the only point
+    // where claiming debug_utils support is actually true.
+    vk.debugUtilsSupported = wantDebugUtils;
 }
 
 // ---------------------------------------------------------------------------
