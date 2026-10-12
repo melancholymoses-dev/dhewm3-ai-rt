@@ -101,6 +101,8 @@ New module `vk_profile.cpp/.h` owns the metric registry, window, CSV and labels;
 | Every `VK_RTProfile_PhaseBegin` needs exactly one `PhaseEnd` | With labels on, an unmatched Begin leaves an open label and `vkEndCommandBuffer` fails. Both command-buffer exits call `VK_RTProfile_CloseStrayLabels` and warn, so it fails loudly rather than as a driver error |
 | `VK_Prof_BeginFrameSlot` is the per-frame tick that runs with profiling off | It owns the CSV open/close check and discards a partial window on an off→on transition; `PushFrame` is unreachable at `r_vkRTProfile 0`, which stranded the file open and let stale rows survive a settings change |
 | `r_vkRTProfileGroups` filters the console and nothing else — never gate collection on it | The memory group did, so a console filter silently turned `mem.*` into a column of zeros in the CSV. One capture recipe, groups left at 63 |
+| The slot's sample is cleared immediately after `CollectAndLog`, not at command-buffer begin | The upload flush and garbage drain run before the command buffer opens, so a clear down there wiped their counters — `upload.flushes` read 0 while `frame.upload` read 0.164 ms |
+| The profiler's own console print is measured as `frame.profilePrint` and counted in `accounted` | ~40 `common->Printf` calls cost 15-20 ms on a window-close frame. Unattributed, it appeared as an engine hitch every 30th frame: 137 of 139 `frame.other` spikes in the 2026-10-12 comm-fire capture were exactly 30 frames apart |
 
 ### Deliberately not done
 

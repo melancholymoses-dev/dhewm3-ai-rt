@@ -589,9 +589,9 @@ static void VK_RTProfile_BeginFrame(VkCommandBuffer cmd, int slot)
     // unbalanced push/pop pair in the command buffer.
     s_rtProfLabelsThisFrame = VK_Prof_LabelsEnabled();
     s_rtProfLabelDepth = 0;
-    // Unconditional: the wait/upload counters accumulate whether or not profiling
-    // is on, so the slot's sample has to be cleared every frame regardless.
-    VK_Prof_BeginFrameSlot(slot);
+
+    // The slot's sample is cleared by the caller, right after CollectAndLog — doing it
+    // here discarded everything the pre-command-buffer work recorded.
 
     // Also outside the gate: the BLAS span pairs labels, not just timestamps.
     s_rtProfBLASEvent = -1;
@@ -814,7 +814,8 @@ static void VK_RTProfile_CollectAndLog(int slot)
         const double tailWaitMs = VK_Prof_GetSlot(slot, VK_Prof_WaitMetric(VKPROF_WAIT_READBACK, true)) +
                                   VK_Prof_GetSlot(slot, VK_Prof_WaitMetric(VKPROF_WAIT_SERIALIZE, true));
         const double accounted = fc.fenceWaitMs + fc.acquireMs + fc.drainMs + fc.uploadMs + fc.submitMs +
-                                 fc.presentMs + phaseCPUSum + tailWaitMs;
+                                 fc.presentMs + phaseCPUSum + tailWaitMs +
+                                 VK_Prof_GetSlot(slot, VKPROF_FRAME_PROFILEPRINT);
         VK_Prof_SetSlot(slot, VKPROF_FRAME_OTHER, Max(0.0, fc.backendMs - accounted));
 
         VK_Prof_SetSlot(slot, VKPROF_BLAS_UPDATES, (double)fc.blas.updates);
@@ -4840,7 +4841,21 @@ void VK_RB_DrawView(const void *data)
 
         // Per-slot fence guarantees all previous GPU work for this slot is complete.
         // Collect RT GPU phase timings for the previously submitted frame now.
+        const uint64_t cpuCollectStart = VK_RTProfile_CPUStamp();
         VK_RTProfile_CollectAndLog((int)vk.currentFrame);
+        const double collectMs = VK_RTProfile_TicksToMs(cpuCollectStart, VK_RTProfile_CPUStamp());
+
+        // Clearing the slot here, not at command-buffer begin, is what makes the next
+        // ~40 lines of counters land in the right frame: VK_FlushPendingUploads and the
+        // garbage drain both run before the command buffer opens, so a clear down there
+        // wiped their counters (upload.flushes read 0 while frame.upload read 0.164).
+        //
+        // The collect cost has to be carried in by hand because it is paid before the
+        // slot it belongs to can be cleared.  It is real work — ~40 common->Printf calls
+        // on a window-close frame — and it was landing in frame.other, which made the
+        // profiler look like a 15-20 ms engine hitch every 30th frame.
+        VK_Prof_BeginFrameSlot((int)vk.currentFrame);
+        VK_Prof_Set(VKPROF_FRAME_PROFILEPRINT, collectMs);
 
         // --- Acquire swapchain image ---
         uint32_t imageIndex;

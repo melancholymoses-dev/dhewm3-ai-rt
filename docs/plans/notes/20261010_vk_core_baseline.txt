@@ -57,6 +57,41 @@ toggled off, because PushFrame is unreachable while off and nothing cleared s_wi
 Fixed in VK_Prof_BeginFrameSlot (discard the partial window on an off->on transition or a
 window-size change). Treat the first window after any cvar change in earlier logs as suspect.
 
+Capture 2: Communications fire, 4171 frames, full CSV (base/a0.csv)
+-------------------------------------------------------------------
+Same machine. Many lights, shadows, particles. The area that chugs on the 2600X/9070XT.
+It does NOT chug here: gpu.total p50 4.79, frame.backend p50 1.72.
+
+ARTIFACT FOUND FIRST, everything below is after discounting it.
+frame.other p99 16.0 / max 20.9 is the profiler printing its own console block. 137 of the
+139 frames with other > 8 ms are exactly 30 frames apart = the window-close frame. ~40
+common->Printf calls cost 15-20 ms. Now measured as frame.profilePrint and counted in
+accounted. This also explains capture 1's "12 ms unattributed" (one frame per window).
+Rule: treat any periodic spike at the window interval as the tool, not the engine.
+
+What the capture settles
+  Shadows own RT here: gpu.Shadows p50 2.36 / p95 4.11 / max 6.75, half of gpu.total 4.79.
+    gpu.Interactions p50 is only 0.080 (p95 2.56), so the batch path is working in this
+    area and the serial dispatch of arc 8a is location-specific — it needs >7 shadow
+    lights in view. The MC2 corner remains the only place that reproduces it.
+  F1 confirmed with numbers: ring.idxKB p50 276 / p95 567 / max 717 per frame, ring.vertKB
+    p50 39 / max 392, ring.draws p50 321 / p95 949. Index data is re-copied every frame
+    because Vulkan forces r_useIndexBuffers 0.
+  F2 cause confirmed: upload.staticBlocks p50 13 / p95 35 / max 90 per frame, standing
+    still. upload.KB p50 173 / max 416. frame.upload p99 6.6 / max 11.3.
+  F3 has no evidence here: midframe.imageLoads is zero across all 4171 frames, and every
+    wait tag except uploadFlush (max 1.46 ms) is zero. The lazy-image-load half of A2 is
+    not what hitches this area. Drop it unless another section shows it.
+  A4 / F12 have no evidence: mem.rssMB 228-276 flat, virtMem ~7 MB, VRAM 2352 of 15504.
+    No residency or VRAM pressure to fix.
+  blas.rebuilds p50 0 / max 9 - live play refits in place, as expected.
+  One genuine outlier, n=1: frame 8181 spent 21.6 ms in cpu.ShaderPasses with
+    upload.flushes=1 and wait.uploadFlush 1.46 ms. Not periodic. Worth one look, not a stage.
+
+Not answerable by more logging
+  Why this area chugs on the 2600X/9070XT and not here. That needs the same CSV captured on
+  that machine. No additional counters would help.
+
 Next capture
 ------------
 The only capture recipe. r_vkRTProfileGroups is a console filter and is always left at 63;

@@ -116,6 +116,7 @@ static const vkProfMetricDesc_t s_fixedDesc[VKPROF_FIXED_COUNT] = {
     {"frame.present", VKPROF_GRP_FRAME, 3},
     {"frame.backend", VKPROF_GRP_FRAME, 3},
     {"frame.other", VKPROF_GRP_FRAME, 3},
+    {"frame.profilePrint", VKPROF_GRP_FRAME, 3},
     {"frame.game", VKPROF_GRP_FRAME, 3},
     {"frame.frontend", VKPROF_GRP_FRAME, 3},
     {"frame.findView", VKPROF_GRP_FRAME, 3},
