@@ -20,6 +20,7 @@ of the original Doom 3 GPL Source Code release.
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 
 #include <string.h>
@@ -254,7 +255,7 @@ static void VK_RT_CreateAOMaskImages(uint32_t width, uint32_t height)
             submitInfo.commandBufferCount = 1;
             submitInfo.pCommandBuffers = &tmpCmd;
             vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-            vkQueueWaitIdle(vk.graphicsQueue);
+            VK_Prof_QueueWaitIdle(VKPROF_WAIT_AO, vk.graphicsQueue);
             vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
         }
     }
@@ -561,7 +562,7 @@ void VK_RT_InitAO(void)
 
 void VK_RT_ResizeAOMask(uint32_t width, uint32_t height)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_AO);
     VK_RT_DestroyAOMaskImages();
     VK_RT_CreateAOMaskImages(width, height);
 

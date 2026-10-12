@@ -47,6 +47,7 @@ Code release.
 #include "renderer/tr_local.h"
 #include "renderer/RenderWorld_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 
 #include <string.h>
@@ -542,7 +543,7 @@ static bool VK_RT_AllocProbeImage(vkRTImage_t &img, uint32_t w, uint32_t h, VkFo
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &tmpCmd;
         vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, fence);
-        vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        VK_Prof_WaitForFences(VKPROF_WAIT_GI_PROBE, 1, &fence, VK_TRUE, UINT64_MAX);
         vkDestroyFence(vk.device, fence, NULL);
         vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
     }
@@ -664,7 +665,7 @@ static void VK_RT_DestroyProbeResources(void)
 // geometry. Calls vkDeviceWaitIdle — init path, or the one frame a cvar changes.
 static void VK_RT_CreateProbeResources(void)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_GI_PROBE);
     VK_RT_DestroyProbeResources();
 
     int32_t dim[3];

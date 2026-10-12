@@ -188,6 +188,10 @@ void Sys_FPU_SetDAZ(bool enable);
 // returns amount of system ram
 int Sys_GetSystemRam(void);
 
+// dhewm3-rt: resident set size of this process in bytes, 0 if unavailable.
+// Used by r_vkRTProfile's memory group to watch RSS across level loads.
+unsigned long long Sys_GetProcessMemoryBytes(void);
+
 // returns amount of drive space in path
 int Sys_GetDriveFreeSpace(const char *path);
 

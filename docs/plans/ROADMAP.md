@@ -1,6 +1,6 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-10-10 · **Arcs 6 (player body) and 7 (vol_fix) closed; pick next arc**
+**Status reviewed:** 2026-10-11 · **Arc 8 (cleanup + optimization) is current; start at 8a**
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
 designs live in the linked docs. Prior cycle: `completed/202609_ROADMAP.md`.
@@ -39,7 +39,9 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 5 | **Bloom** - Add lighting bloom around emissive sources| `completed/20260906_bloom_plan.md` | Completed 2026-10-7. |
 | 6 | **Player Body** - Add visible body from first person | `completed/20261001_see_first_person_player_model.md` | ✅ Closed 2026-10-10. Lit, animating, RT-excluded, `rtPlayer` mask verified; ladder sink fixed (body lift, ladder leg anim, foot-IK void fix). Stairs and slopes still dip slightly, accepted |
 | 7 | **TLAS build defects** — (a) pass-2 distance cull holds only the view-visible set, so vol shadow rays miss off-screen occluders and in-scatter flips on a pure yaw; (b) instance mask/SBT key off `noSelfShadow` not the player, breaking breakable-glass reflections | `completed/20261009_vol_fix.md` | ✅ Closed 2026-10-10. Pass-2 bounds cull (free: TLAS build 0.12 ms), vol gain/falloff, `rtPlayer` mask bit (breakable glass fixed), vertex-cache sub-allocator. 7.4 (per-frame upload wait) conditional |
-| 8 | **Cleanup + optimization** — debug trim, drop F0/legacy reflection path, screen-space GI and non-froxel vol, presets + reset, Vulkan efficiency pass, comment sweep | `20261010_cleanup_optimization.md` | Planned |
+| 8 | **Cleanup + optimization** — debug trim, drop F0/legacy reflection path, screen-space GI and non-froxel vol, presets + reset, comment sweep | `20261010_cleanup_optimization.md` | Phase 0 (baseline) unblocked once 8b's A0 is validated in-game — the old 1-in-30 point sample was not comparable. Phases 1-5, 7 unstarted |
+| 8a | **RT shadow dispatch** — 14 of 21 shadow lights trace serially inside the interaction loop, 31.9 M pixels, billed to `Interactions`. Steps S0-S7 | `20261010_cleanup_optimization.md` §6a | Largest single GPU cost measured 2026-10-11. **Runs first**, independent of 8/8b |
+| 8b | **Vulkan core audit** — buffers, uploads, raster path, BLAS/TLAS, material table. 23 findings (F1-F13, R1-R10), stages A0-A5 / B0-B4 | `20261010_vk_core_audit.md` | Stage 0 triage done. **A0 code landed 2026-10-11, needs an in-game run**: new `vk_profile.cpp` (window stats + spike line + CSV + debug labels), 40 tagged wait sites, RSS/VRAM gauges. F2 and R1 confirmed; A2 and B1 promoted |
 
 
 ### Measured RT budget
@@ -58,6 +60,11 @@ Shadows and AO are the two largest costs. **Not every remaining pass is
 screen-resolution** — arc 2 left a ~0.73 ms floor (TLAS, probe trace/blend, froxel
 fill/integrate) that render scale cannot touch, so 0.50 saves only 0.1 ms more than 0.67.
 See `completed/20260918_fsr_upscaling.md` §12.
+
+**The `Shadows` column understates shadows.** Only 7 lights are batched; the rest trace
+one at a time inside the interaction loop, so their cost is billed to `Interactions`
+(`Shadows=0.16 Interactions=12.97` in the 2026-10-11 Mars City 2 corner capture). Arc 8a
+relabels the spans first, then fixes the dispatch.
 
 **Raster is now instrumented** — `r_vkRTProfile 1` reports `raster=` (depth prepass,
 interactions, shader passes, fog lights, upscale, tonemap) plus `VK FRAME PROFILE` / `VK CPU PROFILE`
@@ -113,6 +120,9 @@ while new lighting techniques enhance without fighting too much.
 
 | Doc | Owns |
 |---|---|
+| `20261010_cleanup_optimization.md` | **Arc 8.** Phase order, the per-phase rules (cvar+UBO+shader+menu deleted together), and §6a shadow dispatch S0-S7 |
+| `20261010_vk_core_audit.md` | **Arc 8b.** The finding list (F1-F13, R1-R10), stage order A0-A5 / B0-B4, the 2026-10-11 measurements, Windows profiling tooling, and the not-yet-audited list (X1-X8) |
+| `../Dhewm3-AI-RT-Settings.md` | Cvar inventory and tiers; the source for arc 8 phase 1 (trim) and phase 5 (presets) |
 | `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine. Load it before chasing any AMD-vs-NVIDIA or device-lost bug. |
 
 ---

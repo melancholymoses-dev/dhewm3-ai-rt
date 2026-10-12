@@ -41,6 +41,7 @@ of the original Doom 3 GPL Source Code release.
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 
 #include <string.h>
@@ -256,7 +257,7 @@ static bool VK_RT_AllocHistoryImage(vkRTImage_t &img, uint32_t width, uint32_t h
         submitI.commandBufferCount = 1;
         submitI.pCommandBuffers = &tmpCmd;
         vkQueueSubmit(vk.graphicsQueue, 1, &submitI, fence);
-        vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        VK_Prof_WaitForFences(VKPROF_WAIT_TEMPORAL, 1, &fence, VK_TRUE, UINT64_MAX);
         vkDestroyFence(vk.device, fence, NULL);
         vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
     }
@@ -442,7 +443,7 @@ void VK_RT_ResizeTemporal(uint32_t width, uint32_t height)
 {
     // Wait for all in-flight work to complete before touching any images that
     // may be referenced by currently executing command buffers.
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_TEMPORAL);
     VK_RT_DestroyHistoryImages();
     VK_RT_CreateHistoryImages(width, height);
 
@@ -767,7 +768,7 @@ void VK_RT_ShutdownAtrous(void)
 
 void VK_RT_ResizeAtrous(uint32_t width, uint32_t height)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_TEMPORAL);
     VK_RT_DestroyScratchImages();
     VK_RT_CreateScratchImages(width, height); // also resets aoReadView → aoHistory
 
@@ -1062,7 +1063,7 @@ static bool VK_RT_AllocGIHistoryImage(vkRTImage_t &img, uint32_t width, uint32_t
         submitI.commandBufferCount = 1;
         submitI.pCommandBuffers = &tmpCmd;
         vkQueueSubmit(vk.graphicsQueue, 1, &submitI, fence);
-        vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        VK_Prof_WaitForFences(VKPROF_WAIT_TEMPORAL, 1, &fence, VK_TRUE, UINT64_MAX);
         vkDestroyFence(vk.device, fence, NULL);
         vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
     }
@@ -1232,7 +1233,7 @@ void VK_RT_ShutdownGITemporal(void)
 
 void VK_RT_ResizeGITemporal(uint32_t width, uint32_t height)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_TEMPORAL);
     VK_RT_DestroyGIHistoryImages();
     VK_RT_CreateGIHistoryImages(width, height); // also resets giReadView → giHistory
 

@@ -33,6 +33,7 @@ Code release.
 #include "renderer/tr_local.h"
 #include "renderer/RenderWorld_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 
 #include <stdlib.h>
@@ -484,7 +485,7 @@ static void VK_RT_CreateVolImages(uint32_t width, uint32_t height)
             submitInfo.commandBufferCount = 1;
             submitInfo.pCommandBuffers = &tmpCmd;
             vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, fence);
-            vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+            VK_Prof_WaitForFences(VKPROF_WAIT_VOL, 1, &fence, VK_TRUE, UINT64_MAX);
             vkDestroyFence(vk.device, fence, NULL);
             vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
         }
@@ -1017,7 +1018,7 @@ static bool VK_RT_AllocVolHistoryImage(vkRTImage_t &img, uint32_t width, uint32_
         submitI.commandBufferCount = 1;
         submitI.pCommandBuffers = &tmpCmd;
         vkQueueSubmit(vk.graphicsQueue, 1, &submitI, fence);
-        vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        VK_Prof_WaitForFences(VKPROF_WAIT_VOL, 1, &fence, VK_TRUE, UINT64_MAX);
         vkDestroyFence(vk.device, fence, NULL);
         vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
     }
@@ -1186,7 +1187,7 @@ void VK_RT_ShutdownVolTemporal(void)
 
 void VK_RT_ResizeVolTemporal(uint32_t width, uint32_t height)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_VOL);
     VK_RT_DestroyVolHistoryImages();
     VK_RT_CreateVolHistoryImages(width, height);
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
@@ -1490,7 +1491,7 @@ void VK_RT_ShutdownVolBilateral(void)
 
 void VK_RT_ResizeVolBilateral(uint32_t width, uint32_t height)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_VOL);
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         VK_RT_FreeVolHistoryImage(vkRT.volBlurred[i]);
@@ -1781,7 +1782,7 @@ void VK_RT_ShutdownVolumetrics(void)
 
 void VK_RT_ResizeVolumetrics(uint32_t width, uint32_t height)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_VOL);
 
     // P8: march + temporal history at march res; the bilateral output stays full res
     // because it is what the compositor samples.

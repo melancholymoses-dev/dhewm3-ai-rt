@@ -524,6 +524,7 @@ if(WIN32)
 		iphlpapi
 		wsock32
 		ole32
+		psapi # Sys_GetProcessMemoryBytes (GetProcessMemoryInfo)
 	)
 endif()
 
@@ -675,6 +676,7 @@ endfunction()
 
 set(src_vulkan
 	renderer/Vulkan/vk_instance.cpp
+	renderer/Vulkan/vk_profile.cpp
 	renderer/Vulkan/vk_swapchain.cpp
 	renderer/Vulkan/vk_upscale.cpp
 	renderer/Vulkan/vk_buffer.cpp

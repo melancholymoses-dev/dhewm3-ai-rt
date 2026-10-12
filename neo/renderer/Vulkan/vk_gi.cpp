@@ -30,6 +30,7 @@ Code release.
 #include "renderer/tr_local.h"
 #include "renderer/RenderWorld_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 
 #include <stdlib.h>
@@ -828,7 +829,7 @@ static void VK_RT_CreateGIImages(uint32_t width, uint32_t height)
             submitInfo.commandBufferCount = 1;
             submitInfo.pCommandBuffers = &tmpCmd;
             vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, fence);
-            vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+            VK_Prof_WaitForFences(VKPROF_WAIT_GI, 1, &fence, VK_TRUE, UINT64_MAX);
             vkDestroyFence(vk.device, fence, NULL);
             vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
         }
@@ -1548,7 +1549,7 @@ void VK_RT_ShutdownGI(void)
 
 void VK_RT_ResizeGI(uint32_t width, uint32_t height)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_GI);
     VK_RT_DestroyGIImages();
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         vkRT.giDescSetLastUpdatedFrameCount[i] = -1;
@@ -3184,7 +3185,7 @@ static bool VK_RT_AllocGIAtrousImage(vkRTImage_t &img, uint32_t width, uint32_t 
         submitI.commandBufferCount = 1;
         submitI.pCommandBuffers = &tmpCmd;
         vkQueueSubmit(vk.graphicsQueue, 1, &submitI, fence);
-        vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        VK_Prof_WaitForFences(VKPROF_WAIT_GI, 1, &fence, VK_TRUE, UINT64_MAX);
         vkDestroyFence(vk.device, fence, NULL);
         vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
     }
@@ -3376,7 +3377,7 @@ void VK_RT_ShutdownGIAtrous(void)
 
 void VK_RT_ResizeGIAtrous(uint32_t width, uint32_t height)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_GI);
     VK_RT_DestroyGIAtrousImages();
     VK_RT_CreateGIAtrousImages(width, height);
 

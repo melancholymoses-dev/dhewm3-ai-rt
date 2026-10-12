@@ -18,10 +18,19 @@ Cvar inventory and tiers: `../Dhewm3-AI-RT-Settings.md`.
 
 ## Phase 0 — Baseline + first-person default on
 
+Will do baselining at 1440p, unscaled / no upscaling, uncapped refresh rate.  
+
+Capture CPU/GPU and location as well as breakdowns for CPU/GPU tasks.  
+
+**Needs audit stage A0 validated first.** `r_vkRTProfile 1` used to print one frame in 30 and
+discard the rest, so any baseline captured that way is a point sample, not a number later
+phases can be compared against. A0 landed the window aggregator — capture the
+`mean/p50/p95/max` summaries plus `r_vkRTProfileCSV`, not single frames.
+
 | Change | Files |
 |---|---|
-| `pm_showFirstPersonBody` default 0 → 1 | `neo/game/gamesys/SysCvar.cpp`, `neo/d3xp/gamesys/SysCvar.cpp` |
-| Capture baseline: `r_vkRTProfile 1` GPU ms + `VK CPU PROFILE` on Mars City, 1440p, scale 1.0, uncapped | log saved to `docs/plans/notes/20261010_baseline.txt` |
+| Capture baseline: `r_vkRTProfile 1` window summaries on Mars City Firefight | log saved to `docs/plans/notes/20261010_baseline.txt` |
+| Capture baseline: `r_vkRTProfile 1` window summaries on Communications Fire | log saved to `docs/plans/notes/20261010_baseline.txt` |
 | Screenshots: 6 fixed spots (glass, volumetric hall, flashlight, dark room, mirror, FP body) | `notes/baseline_*.png` |
 | Record RSS + VRAM after 5 min play and after 3 map loads | same notes file |
 
@@ -152,13 +161,15 @@ Detailed findings and stages A0-A5: `20261010_vk_core_audit.md`. Run A0 first; t
 
 Evidence so far: per-frame sync and allocation sites, roadmap item 7.4 (per-frame upload wait, conditional), cache/upload thrash reported by the user. Measure first; fix only what the numbers show.
 
+Steps are lettered E1-E5 to avoid collision with Phase 6a above.
+
 | Step | Detail |
 |---|---|
-| 6a. Instrument | Per-frame counters under `r_vkRTProfile`: bytes uploaded per buffer, `vkMap`/alloc calls, descriptor writes, fence waits and ms, TLAS/BLAS rebuild count. CPU time by function (VS profiler on `vk_backend.cpp` `DrawView`) |
-| 6b. Audit sync | `vkQueueWaitIdle` at `vk_ao.cpp:257`; `vkWaitForFences` in `vk_bloom.cpp:340`, `vk_gbuffer.cpp:185`, `vk_gi.cpp:831/3187`, `vk_gi_probe.cpp:545`; `vkDeviceWaitIdle` in resize/cvar-change paths. Confirm none run per frame |
-| 6c. Audit memory | Run 3 map loads + 10 min play; log buffer/image/AS create vs destroy counts at shutdown (`r_vkLogBufferGarbage` already exists: use before removing it). Validation layer leak report at exit |
-| 6d. Audit uploads | Full-buffer re-uploads of unchanged data (light tables, material table, instance data); write-combined reads (rule in ROADMAP); host-visible buffers not per-frame-slotted; BLAS rebuild vs update for dynamic models |
-| 6e. Fix | One change per commit, each with before/after numbers in the notes file |
+| E1. Instrument | Audit stage A0 (substages A0a-A0e) owns this. Do not restate the counter list here |
+| E2. Audit sync | `vkQueueWaitIdle` at `vk_ao.cpp:257`; `vkWaitForFences` in `vk_bloom.cpp:340`, `vk_gbuffer.cpp:185`, `vk_gi.cpp:831/3187`, `vk_gi_probe.cpp:545`; `vkDeviceWaitIdle` in resize/cvar-change paths. Confirm none run per frame — A0's tagged wait wrapper answers this directly |
+| E3. Audit memory | Run 3 map loads + 10 min play; log buffer/image/AS create vs destroy counts at shutdown (`r_vkLogBufferGarbage` already exists: use before removing it). Validation layer leak report at exit |
+| E4. Audit uploads | Full-buffer re-uploads of unchanged data (light tables, material table, instance data); write-combined reads (rule in ROADMAP); host-visible buffers not per-frame-slotted; BLAS rebuild vs update for dynamic models |
+| E5. Fix | One change per commit, each with before/after numbers in the notes file |
 
 Check per fix: frame CPU ms and uploaded bytes/frame drop; RSS and VRAM flat across map reloads (±2%); validation clean; screenshots identical.
 
@@ -184,7 +195,7 @@ Check: build output byte-identical for touched `.cpp` files if possible (compare
 
 | Phase | Risk | Depends on |
 |---|---|---|
-| 0 Baseline + FP on | none | — |
+| 0 Baseline + FP on | none | Audit A0a + A0b (window stats) |
 | 1 Debug trim | low | 0 |
 | 2 Reflections | low-med | 1 |
 | 3 Screen-space GI | med | 1 |

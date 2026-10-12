@@ -34,6 +34,7 @@ Code release.
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_gbuffer.h"
 
@@ -186,7 +187,7 @@ static void VK_RT_CreateHDRImages(uint32_t width, uint32_t height)
             submitInfo.commandBufferCount = 1;
             submitInfo.pCommandBuffers = &tmpCmd;
             vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, fence);
-            vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+            VK_Prof_WaitForFences(VKPROF_WAIT_TONEMAP, 1, &fence, VK_TRUE, UINT64_MAX);
             vkDestroyFence(vk.device, fence, NULL);
             vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
         }
@@ -359,7 +360,7 @@ static void VK_RT_CreateTonemapResolveImages(uint32_t width, uint32_t height)
             submitInfo.commandBufferCount = 1;
             submitInfo.pCommandBuffers = &tmpCmd;
             vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, fence);
-            vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+            VK_Prof_WaitForFences(VKPROF_WAIT_TONEMAP, 1, &fence, VK_TRUE, UINT64_MAX);
             vkDestroyFence(vk.device, fence, NULL);
             vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
         }
@@ -527,7 +528,7 @@ void VK_RT_ShutdownTonemap(void)
 
 void VK_RT_ResizeTonemap(uint32_t width, uint32_t height)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_TONEMAP);
     VK_RT_DestroyHDRFramebuffers();
     VK_RT_DestroyHDRImages();
     // Recreate gbufNormal before the HDR framebuffers below are rebuilt — they

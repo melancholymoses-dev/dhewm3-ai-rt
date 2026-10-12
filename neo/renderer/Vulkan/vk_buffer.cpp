@@ -18,6 +18,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/VertexCache.h"
 #include "renderer/Model.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include <string.h>
 
 // ---------------------------------------------------------------------------
@@ -156,6 +157,7 @@ static bool VK_UploadBufferRing(VkBuffer dstBuffer, VkDeviceSize dstOffset, cons
 
     memcpy(s_stagingRingPtr + start, data, (size_t)size);
     s_stagingRingOffset = start + size;
+    VK_Prof_Add(VKPROF_UPLOAD_KB, (double)size / 1024.0);
 
     VkCommandBuffer cmd = VK_BeginSingleTimeCommands();
     VkBufferCopy region = {start, dstOffset, size};
@@ -180,6 +182,7 @@ static void VK_UploadBufferAt(VkBuffer dstBuffer, VkDeviceSize dstOffset, const 
     VK_CHECK(vkMapMemory(vk.device, stagingMem, 0, size, 0, &mapped));
     memcpy(mapped, data, (size_t)size);
     vkUnmapMemory(vk.device, stagingMem);
+    VK_Prof_Add(VKPROF_UPLOAD_KB, (double)size / 1024.0);
 
     // Copy staging -> device-local
     VkCommandBuffer cmd = VK_BeginSingleTimeCommands();
@@ -289,6 +292,11 @@ static vkVcChunk_t *VK_VcCreateChunk(VkDeviceSize size)
         vkDestroyBuffer(vk.device, buf, NULL);
         return NULL;
     }
+
+    // The vertex-cache chunks are the largest device-local allocations after
+    // textures, so naming them is what makes an RMV capture legible.
+    VK_Prof_NameObject((uint64_t)buf, VK_OBJECT_TYPE_BUFFER, va("vertexCacheChunk(%dMB)", (int)(size >> 20)));
+    VK_Prof_NameObject((uint64_t)mem, VK_OBJECT_TYPE_DEVICE_MEMORY, va("vertexCacheChunkMem(%dMB)", (int)(size >> 20)));
 
     // Reuse a trimmed slot so chunk indices held by live blocks stay valid.
     vkVcChunk_t *c = NULL;
@@ -560,6 +568,8 @@ void VK_VertexCache_Alloc(vertCache_t *block, const void *data, int size, bool i
     VK_UploadBufferAt(bd->buf, bd->offset, data, (VkDeviceSize)size);
     s_bufferLiveCount++;
     s_bufferLiveBytes += bd->size;
+    // F2: heavy frames allocate 7-27 of these, and each one forces the upload flush.
+    VK_Prof_Add(VKPROF_UPLOAD_STATICBLOCKS, 1.0);
     block->backendData = bd;
 }
 
@@ -572,6 +582,8 @@ void VK_VertexCache_Free(vertCache_t *block)
     {
         Mem_Free(block->virtMem);
         block->virtMem = NULL;
+        if (vertexCacheVirtMemBytes >= (size_t)block->size)
+            vertexCacheVirtMemBytes -= (size_t)block->size;
     }
 
     if (!vk.isInitialized)

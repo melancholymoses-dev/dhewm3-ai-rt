@@ -18,6 +18,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/RenderWorld_local.h"
 #include "renderer/VertexCache.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_upscale.h"
 #include "renderer/Vulkan/vk_bloom.h"
@@ -2276,7 +2277,7 @@ void VK_RT_BeginLevelLoad(void)
     if (!vkRT.isInitialized)
         return;
 
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_ACCELSTRUCT);
 
     // Walk all worlds (still valid here) and free per-entity non-cached BLASes.
     // Also clears the model BLAS cache.
@@ -2360,7 +2361,7 @@ void VK_RT_Init(void)
 
 void VK_RT_Shutdown(void)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_ACCELSTRUCT);
 
     // Destroy live per-entity BLAS objects that are not in the deferred queue,
     // then clear all entity pointers so the next device lifetime starts clean.
@@ -2526,7 +2527,7 @@ void VK_RT_Shutdown(void)
 
 void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_ACCELSTRUCT);
 
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {

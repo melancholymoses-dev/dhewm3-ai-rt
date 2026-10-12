@@ -110,6 +110,11 @@ int Sys_GetSystemRam( void ) {
 		return 1024;
 }
 
+// dhewm3-rt: only the Vulkan profiler reads this; not implemented here.
+unsigned long long Sys_GetProcessMemoryBytes( void ) {
+	return 0;
+}
+
 bool OSX_GetCPUIdentification( int& cpuId, bool& oldArchitecture )
 {
 	SInt32 cpu;

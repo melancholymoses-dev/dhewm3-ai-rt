@@ -312,6 +312,26 @@ int Sys_GetSystemRam(void)
 }
 
 /*
+================
+Sys_GetProcessMemoryBytes
+    dhewm3-rt: resident pages of this process, for r_vkRTProfile's memory group.
+================
+*/
+unsigned long long Sys_GetProcessMemoryBytes(void)
+{
+    FILE *f = fopen("/proc/self/statm", "r");
+    if (!f)
+        return 0;
+    unsigned long long totalPages = 0, residentPages = 0;
+    const int got = fscanf(f, "%llu %llu", &totalPages, &residentPages);
+    fclose(f);
+    if (got != 2)
+        return 0;
+    const long pageSize = sysconf(_SC_PAGE_SIZE);
+    return (pageSize > 0) ? residentPages * (unsigned long long)pageSize : 0;
+}
+
+/*
 ==================
 Sys_DoStartProcess
 if we don't fork, this function never returns

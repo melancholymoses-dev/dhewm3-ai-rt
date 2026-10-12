@@ -36,7 +36,7 @@ Capture: `r_vkRTProfile 2` (every frame) through a section that chugs, plus Mars
 | `frontend=` or `game=` large | Not the backend | Sampling profiler; out of scope here, see X1-X2 |
 | `backend=` large, sum of per-phase CPU ms small | Unattributed backend time | Sampling profiler on `VK_RB_DrawView`; add spans |
 | TLAS CPU ms large | Gather loop / material table | B3 |
-| Spikes, none of the above | Pipeline create, lazy image load, allocation | A0 hitch counters |
+| Spikes, none of the above | Pipeline create, lazy image load, allocation | A0c spike line + A0 midframe counters |
 | `VK VC SITES` shows `shadowVP`, `shadowPriv`, `indexShadow` or `lighting` non-zero with `r_rtShadows 1` | Wasted frontend allocs | X3 |
 | `r_vkSerializeFrames 1` removes shading flicker on skinned meshes | R2 confirmed | B1 |
 
@@ -49,7 +49,7 @@ Check: `notes/20261010_vk_triage.txt` holds the log excerpts and one line per ro
 | PresentMon | any | Frame-time CSV; separates hitches from sustained low fps; CPU-busy vs GPU-busy | First tool for "it chugs here" |
 | Visual Studio Performance Profiler (Community) or Very Sleepy | any | CPU sampling, per-function time without instrumentation | Needs PDBs; `RelWithDebInfo` is the CMake default |
 | Windows Performance Recorder / Analyzer (Windows ADK) | any | ETW: CPU samples, disk I/O, page faults, time blocked in driver calls | For load time and for hitches the sampler shows as "waiting" |
-| Nsight Graphics, GPU Trace | NVIDIA | Per-pass GPU time including RT dispatches | Needs debug labels (A0) to be readable |
+| Nsight Graphics, GPU Trace | NVIDIA | Per-pass GPU time including RT dispatches | Needs debug labels (A0a) to be readable |
 | Radeon Developer Tool Suite: RGP, RMV, RRA | AMD | RGP per-event GPU time; RMV VRAM by allocation (F4, R4); RRA BLAS/TLAS quality and opaque flags (R3, X6) | RRA is the direct check for B2 |
 | RenderDoc | any | Raster draw inspection, overdraw, state per draw (F6) | Confirm RT capture support in the installed version |
 | Vulkan SDK validation via vkconfig: sync + best-practices | any | Best-practices flags small allocations and redundant work; sync covers GPU-GPU hazards | Sync cannot see CPU writes to mapped memory (R2) |
@@ -60,22 +60,51 @@ Tracy (free) only if log spans stop scaling; it adds a dependency.
 
 Already logged under `r_vkRTProfile`: `fenceWait`, `acquire`, `drain`, `upload`, `submit`, `present`; per-phase CPU and GPU ms; `game`/`frontend`/`backend`; vertex-cache allocs by site; BLAS updates/rebuilds.
 
-| Gap | Add | Answers |
+Two defects in what exists, both fixed by A0b:
+
+- `r_vkRTProfile 1` logs one frame in `r_vkRTProfileLogEvery` (30) and discards the other 29 —
+  a point sample, not a mean (`vk_backend.cpp:717`). A hitch is logged only if it lands on
+  frame ≡ 0 mod N. Mode 2 floods.
+- The `VK CPU PROFILE` line reads `tr.pcLastFrame`, a different frame from the GPU line above
+  it (`vk_backend.cpp:758`).
+
+### Substages — **code landed 2026-10-11, not yet run in-game**
+
+New module `vk_profile.cpp/.h` owns the metric registry, window, CSV and labels;
+`vk_backend.cpp` keeps the query pools and records raw numbers into it.
+
+| # | Change | Where | Check |
+|---|---|---|---|
+| A0a | `vkCmdBeginDebugUtilsLabelEXT`/`End` from `VK_RTProfile_PhaseBegin/End`, covering all 26 phases from one name table. Pushed **before** the profiling gate and popped before the eventIdx check, so a capture is readable at `r_vkRTProfile 0`. `r_vkDebugLabels`; `VK_EXT_debug_utils` now enabled whenever the loader has it, not only under validation | `vk_profile.cpp`, `vk_backend.cpp` PhaseBegin/End, `vk_instance.cpp` | Nsight/RGP timeline shows named passes with `r_vkRTProfile 0`; no validation error about unbalanced labels |
+| A0b | Window aggregator: every frame accumulates into a ring of `r_vkRTProfileWindow` (30); at close prints a `mean/p5/p50/p95/max` block, one metric per line, omitting metrics zero across the window. Column set is `r_vkRTProfileStats` (default mean/p50/p95/max). `pcLastFrame` snapshotted at frame open, fixing the two-frame skew | `VK_RTProfile_CollectAndLog` | Same corner captured twice: p50 within 5%; the 52-field line is gone |
+| A0c | Spike line: frames whose `frame.backend` exceeds `r_vkRTProfileSpikeMs` dump every non-zero metric immediately, outside the window cadence | `vk_profile.cpp` | A forced stall emits a line; steady state emits none |
+| A0d | CSV: `r_vkRTProfileCSV <path>`, one row per frame, all ~130 columns, buffered and flushed at window close and at shutdown | `vk_profile.cpp` | Row count == frames run; p50 recomputed from the CSV matches the console |
+| A0e | `r_vkRTProfileGroups` bitmask (phases/frame/upload/waits/memory/midframe) replaces a cvar per group | `vk_profile.cpp` | Each bit toggles its rows |
+
+### Counters landed
+
+| Group | Metrics | Answers |
 |---|---|---|
-| Log prints every N frames, so hitches are missed; mode 2 floods | `r_vkRTProfileSpikeMs`: print the full line set only for frames over the threshold | all hitches |
-| Backend time outside phase spans | `backend` minus sum of phase CPU ms, printed as `other=` | unattributed CPU |
-| Ring use | Draws; index and vertex bytes copied to the data ring; data and UBO ring high-water | F1, F8 |
-| Upload detail | Flushes per frame, bytes staged, static blocks allocated | F2 |
-| Blocking waits outside the frame fence | One wrapper with a tag for every `vkWaitForFences` / `vkQueueWaitIdle` / flush; count and ms per tag | F2, F3, `vk_backend.cpp:4586`, `5649` |
-| Mid-frame creation | Log name and ms for each lazy image load and each pipeline created after level load | F3, X4 |
-| Object counts | Live `vkAllocateMemory` and `VkSampler` counts by owner; device limits at startup | F4, R4 |
-| Memory | RSS delta across level load; bytes in `virtMem`; VRAM used/budget via `VK_EXT_memory_budget` (not queried today) | F5, F12 |
-| Draw state | Pushes and redundant state sets per frame; draws and triangles per pass | F6, X7 |
-| GPU tool readability | `VK_EXT_debug_utils` labels per pass (none emitted today) | Nsight, RGP, RenderDoc |
+| phases | `gpu.<phase>`, `cpu.<phase>` x26, plus gpu/cpu total and raster | the RT budget table |
+| frame | fenceWait, acquire, drain, upload, submit, present, **backend** (fence→present wall clock), **other** (backend minus every span), game, frontend, findView, addLights, addModels | unattributed CPU, X1 |
+| upload | flushes, KB staged, staticBlocks, draws, ring vert/idx KB, data+UBO high-water, overflows, vc allocs/KB/ms/frees, BLAS updates/rebuilds/tris/dynInst | F1, F2, F8, X3 |
+| waits | ms and count per tag across 40 wrapped sites in 20 files (uploadFlush, image, accelStruct, ao, gi, giProbe, vol, bloom, gbuffer, temporal, reflect, tonemap, upscale, swapchain, readback, serialize, shutdown, other) | F2, F3 |
+| memory | `mem.rssMB` (new `Sys_GetProcessMemoryBytes`), `mem.virtMemMB` (new `vertexCacheVirtMemBytes`), `mem.vramUsedMB`/`BudgetMB` via `VK_EXT_memory_budget` | F5, F12 |
+| midframe | lazy image loads + ms (one `VK_Image_LazyLoadTimed` for all four sites), first-use pipeline builds + ms | F3, X4 |
 
-New cvars here are debug-only; no settings-menu entry.
+### Deliberately not done
 
-Check: Mars City and one chugging section written to `notes/20261010_vk_core_baseline.txt`, ranked by measured cost. The order of A1-A5 may change.
+| Item | Why |
+|---|---|
+| Live `vkAllocateMemory` / `VkSampler` ledger (F4, R4) | 134 call sites across 19 files for a number RMV, Nsight and the best-practices layer already report. Startup prints the two device limits (`VK PROFILE LIMITS`); A0a's object names make an RMV capture attribute them. Only the vertex-cache chunks are named so far |
+| Draw-state pushes and redundant state sets | Raster CPU measured 0.4-1.6 ms on 2026-10-11, which demoted A5. X7 (draws and triangles per pass) comes from an A0a capture instead |
+| `r_vkRTProfileLogEvery` | Removed; `r_vkRTProfileWindow` replaces it. Old configs setting it just create an unused cvar |
+
+B0's counters belong to the same groups — A0a/A0b are in, so B0 can follow in the same session.
+New cvars are debug-only, listed in `../Dhewm3-AI-RT-Settings.md`, no settings-menu entry.
+
+Check: Mars City and one chugging section written to `notes/20261010_vk_core_baseline.txt` as
+window summaries plus the CSV, ranked by measured cost. The order of A1-A5 may change.
 
 ## Stage A1 — Stop re-copying geometry (F1, F7)
 
@@ -239,7 +268,7 @@ Candidates outside the files this audit read. Each needs a Stage 0 / A0 number b
 | X4 | `VK_GetOrCreateGuiBlendPipeline`, `VK_GetOrCreateBlendlightPipeline`; no `VkPipelineCache` in the tree | First-use hitches; startup and `vid_restart` time | pipeline-create log (A0) |
 | X5 | Whole-world walks per frame: `vk_accelstruct.cpp:1554`, `1723`; `vk_rt_emitters.cpp:674`; `vk_gi.cpp:1635`; `vk_backend.cpp:4675` | CPU with large entity counts | visited vs accepted (B0); `other=` (A0) |
 | X6 | Non-opaque BLAS geometry (perforated, translucent) | Any-hit cost per ray | count + debug tint (B0), RRA |
-| X7 | Depth prepass, G-buffer, interactions x lights, shader passes | Geometry submitted 3+ times | draws and triangles per pass (A0) |
+| X7 | Depth prepass, G-buffer, interactions x lights, shader passes | Geometry submitted 3+ times | RenderDoc/Nsight capture with A0a labels |
 | X8 | Level load: single-threaded image decode; CPU `R_MipMap` vs GPU blit mips (`vk_image.cpp:775`); BLAS build per model | Load time | WPR trace of one map load |
 
 ## Risky edits
@@ -262,7 +291,7 @@ Candidates outside the files this audit read. Each needs a Stage 0 / A0 number b
 | Stage | Risk | Gate / expected gain |
 |---|---|---|
 | 0 | none | Existing logs + PresentMon; decides which stages run |
-| A0 + B0 | none | Close logging gaps; one session covers both; includes the R2 and R7 A/Bs |
+| A0 + B0 | none | Close logging gaps; one session covers both; includes the R2 and R7 A/Bs. A0a (labels) and A0b (window stats) first — labels turn several B0 counters into RGP/RRA/RMV reads |
 | A2 (lazy-load part) | low-med | Run if lazy image loads appear on hitch frames (F3) |
 | B3 | low-med | Run if TLAS CPU ms is material; per-frame CPU, streaming stalls |
 | A3 (sampler cache, staging) | low-med | Run if object counts are high; load time, limit safety |
