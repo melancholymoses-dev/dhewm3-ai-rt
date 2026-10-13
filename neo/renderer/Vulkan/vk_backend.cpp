@@ -5320,6 +5320,23 @@ void VK_RB_DrawView(const void *data)
                     return;
             }
 
+            // Froxel grid (20260906_froxel_probe_gi.md Part A), r_rtVolFroxel 1.
+            // Exclusive with the march as of F2: VK_RT_VolFroxelActive() stands the
+            // march/temporal/bilateral passes down, so exactly one path writes volBuffer.
+            //
+            // Runs here, ahead of reflections, because the reflection rgen marches
+            // froxelScatter for in-scatter along the reflected ray
+            // (20261013_reflection_volumetrics.md) and a volume filled after it would be
+            // two frames stale on a moving light. Only needs the TLAS and the vol light
+            // selection, both ready well before this point. Integrate and resolve stay
+            // after GI, where the rest of the vol chain lives.
+            VK_SetRenderStage("RT_VolFroxelFill");
+            const uint64_t rtCpuFroxelFillStart = VK_RTProfile_CPUStamp();
+            int rtProfFroxelFill = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_FROXEL_FILL);
+            VK_RT_DispatchVolFroxelFill(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfFroxelFill);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_FROXEL_FILL, rtCpuFroxelFillStart);
+
             VK_SetRenderStage("RT_Reflections");
             const uint64_t rtCpuReflStart = VK_RTProfile_CPUStamp();
             int rtProfRefl = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_REFLECTIONS);
@@ -5432,16 +5449,6 @@ void VK_RB_DrawView(const void *data)
             VK_RT_DispatchVolBilateral(cmdBuf, backEnd.viewDef);
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolBi);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_BILATERAL, rtCpuVolBiStart);
-
-            // Froxel grid (20260906_froxel_probe_gi.md Part A), r_rtVolFroxel 1.
-            // Exclusive with the march as of F2: VK_RT_VolFroxelActive() stands the
-            // three passes above down, so exactly one path writes volBuffer.
-            VK_SetRenderStage("RT_VolFroxelFill");
-            const uint64_t rtCpuFroxelFillStart = VK_RTProfile_CPUStamp();
-            int rtProfFroxelFill = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_FROXEL_FILL);
-            VK_RT_DispatchVolFroxelFill(cmdBuf, backEnd.viewDef);
-            VK_RTProfile_PhaseEnd(cmdBuf, rtProfFroxelFill);
-            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_FROXEL_FILL, rtCpuFroxelFillStart);
 
             VK_SetRenderStage("RT_VolFroxelIntegrate");
             const uint64_t rtCpuFroxelIntStart = VK_RTProfile_CPUStamp();

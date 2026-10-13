@@ -122,7 +122,16 @@ idCVar r_rtReflectionDebugMode(
 //   int    emitterCount   offset 116 size  4  (vk_rt_emitters.cpp, 0 = none)
 //   float  glowGain       offset 120 size  4  (r_rtReflGlowGain, 0 when r_rtReflGlow is off)
 //   int    glowTriCount   offset 124 size  4  (vk_rt_emitters.cpp glow triangles)
-//   total: 128 bytes — std140 rounds the block up to a multiple of
+//   mat4   viewProj       offset 128 size 64  (froxel grid's own, GL convention)
+//   vec4   froxelCamPos   offset 192 size 16  (xyz)
+//   vec4   froxelCamFwd   offset 208 size 16  (xyz)
+//   float  froxelDNear    offset 224 size  4
+//   float  froxelLogRange offset 228 size  4
+//   float  froxelInvLogRange offset 232 size 4
+//   int    froxelNz       offset 236 size  4
+//   int    volSteps       offset 240 size  4  (0 = no volume bound this frame)
+//   float  volGain        offset 244 size  4
+//   total: 256 bytes — std140 rounds the block up to a multiple of
 //   16, and uboInfo.range is sizeof(ReflParamsUBO), which must not be smaller.
 // ---------------------------------------------------------------------------
 
@@ -145,8 +154,23 @@ struct ReflParamsUBO
     int32_t emitterCount; // projectile glow discs in the emitter SSBO (binding 6)
     float glowGain;       // r_rtReflGlowGain
     int32_t glowTriCount; // additive translucent triangles after the discs in binding 6
+
+    // Froxel scatter grid (20261013_reflection_volumetrics.md). Mirrors
+    // VolFroxelSlices in vol_froxel_sample.glsl plus the forward projection the
+    // world -> grid lookup needs; filled from VK_RT_GetFroxelSampleParams so the
+    // mapping is the one the fill actually used.
+    float viewProj[16];
+    float froxelCamPos[4];
+    float froxelCamFwd[4];
+    float froxelDNear;
+    float froxelLogRange;
+    float froxelInvLogRange;
+    int32_t froxelNz;
+    int32_t volSteps; // 0 = no usable grid this frame; the rgen takes no samples
+    float volGain;
+    float _pad0[2]; // std140 rounds the block to 256
 };
-static_assert(sizeof(ReflParamsUBO) == 128, "ReflParamsUBO size mismatch");
+static_assert(sizeof(ReflParamsUBO) == 256, "ReflParamsUBO size mismatch");
 
 // ---------------------------------------------------------------------------
 // Forward declarations (defined in other files)
@@ -520,7 +544,9 @@ static void VK_RT_InitReflPipeline(void)
     //            VK_RT_CreateNullGbufNormal / VK_RT_DispatchReflections.
     // binding 6: projectile emitter SSBO (vk_rt_emitters.cpp), one per frame slot.
 
-    VkDescriptorSetLayoutBinding bindings[7] = {};
+    // binding 7: froxel scatter grid, sampler3D — in-scatter along the reflected ray
+    //            (20261013_reflection_volumetrics.md).
+    VkDescriptorSetLayoutBinding bindings[8] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -558,9 +584,14 @@ static void VK_RT_InitReflPipeline(void)
     bindings[6].descriptorCount = 1;
     bindings[6].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
+    bindings[7].binding = 7;
+    bindings[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[7].descriptorCount = 1;
+    bindings[7].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 7;
+    layoutInfo.bindingCount = 8;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.reflDescLayout));
 
@@ -852,7 +883,8 @@ static void VK_RT_InitReflPipeline(void)
     VkDescriptorPoolSize poolSizes[5] = {
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT * 2},
+        // depth + gbufNormal + froxelScatter
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT * 3},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_MAX_FRAMES_IN_FLIGHT * 2}, // GI light SSBO + emitters
     };
@@ -1199,6 +1231,28 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.glowTriCount = (int32_t)VK_RT_GetReflGlowTriCount(frameIdx);
     // 0 when off, so the glow triangles are also dropped in the rgen.
     ubo.glowGain = r_rtReflGlow.GetBool() ? Max(0.0f, r_rtReflGlowGain.GetFloat()) : 0.0f;
+
+    // Froxel scatter grid for in-scatter along the reflected ray. volSteps 0 is the
+    // "no volume this frame" signal — the binding still holds the null grid, but the
+    // rgen must not spend taps discovering that it is black.
+    {
+        vkFroxelSampleParams_t fs;
+        if (VK_RT_GetFroxelSampleParams(viewDef, &fs))
+        {
+            memcpy(ubo.viewProj, fs.viewProj, sizeof(ubo.viewProj));
+            for (int i = 0; i < 3; i++)
+            {
+                ubo.froxelCamPos[i] = fs.camPos[i];
+                ubo.froxelCamFwd[i] = fs.camFwd[i];
+            }
+            ubo.froxelDNear = fs.dNear;
+            ubo.froxelLogRange = fs.logRange;
+            ubo.froxelInvLogRange = fs.invLogRange;
+            ubo.froxelNz = fs.nz;
+            ubo.volSteps = 0; // Stage 3 wires the march; nothing samples the grid yet
+            ubo.volGain = 1.0f;
+        }
+    }
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
 
     // --- Update descriptor set (once per frame slot when frameCount changes).
@@ -1209,6 +1263,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     static VkImageView s_lastReflDepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkBuffer s_lastReflLightSsbo[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastReflGbufView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastReflFroxelView[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
     // Pick the GI light SSBO for this frame; fall back to the null SSBO if not ready.
     VkBuffer lightSsbo = (vkRT.giLightSsbo[frameIdx] != VK_NULL_HANDLE) ? vkRT.giLightSsbo[frameIdx] : s_nullLightSsbo;
@@ -1220,10 +1275,15 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     const bool haveGbuf = vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE;
     VkImageView gbufView = haveGbuf ? vkRT.gbufNormal[frameIdx].view : s_nullGbufView;
 
+    // Swaps between the live grid and the null one whenever r_rtVolFroxel is toggled,
+    // and changes outright when the res cvars force a realloc.
+    const VkImageView froxelView = VK_RT_GetFroxelScatterView();
+
     const bool reflResourceChanged =
         (s_lastReflTlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
         (s_lastReflStorageView[frameIdx] != rb.view) || (s_lastReflDepthView[frameIdx] != vk.depthSampledView) ||
-        (s_lastReflLightSsbo[frameIdx] != lightSsbo) || (s_lastReflGbufView[frameIdx] != gbufView);
+        (s_lastReflLightSsbo[frameIdx] != lightSsbo) || (s_lastReflGbufView[frameIdx] != gbufView) ||
+        (s_lastReflFroxelView[frameIdx] != froxelView);
 
     if (reflResourceChanged && vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] == tr.frameCount &&
         r_vkLogRT.GetInteger() >= 1)
@@ -1273,7 +1333,15 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         emitterInfo.offset = 0;
         emitterInfo.range = VK_WHOLE_SIZE;
 
-        VkWriteDescriptorSet writes[7] = {};
+        // Froxel scatter grid — trilinear, and GENERAL because the grids never leave
+        // that layout. The null 1x1x1 grid stands in when the froxel path is down,
+        // with volSteps 0 to match.
+        VkDescriptorImageInfo froxelInfo = {};
+        froxelInfo.sampler = VK_RT_GetFroxelSampler();
+        froxelInfo.imageView = froxelView;
+        froxelInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkWriteDescriptorSet writes[8] = {};
 
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].pNext = &tlasWrite;
@@ -1324,13 +1392,21 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writes[6].pBufferInfo = &emitterInfo;
 
-        vkUpdateDescriptorSets(vk.device, 7, writes, 0, NULL);
+        writes[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[7].dstSet = ds;
+        writes[7].dstBinding = 7;
+        writes[7].descriptorCount = 1;
+        writes[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[7].pImageInfo = &froxelInfo;
+
+        vkUpdateDescriptorSets(vk.device, 8, writes, 0, NULL);
         vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
         s_lastReflTlasHandle[frameIdx] = vkRT.tlas[frameIdx].handle;
         s_lastReflStorageView[frameIdx] = rb.view;
         s_lastReflDepthView[frameIdx] = vk.depthSampledView;
         s_lastReflLightSsbo[frameIdx] = lightSsbo;
         s_lastReflGbufView[frameIdx] = gbufView;
+        s_lastReflFroxelView[frameIdx] = froxelInfo.imageView;
     }
 
     // --- Dispatch ---
@@ -1345,8 +1421,9 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         // glowTris is the separate population: additive translucent surfaces the BLAS drops,
         // which is the only way a beam or sprite reaches a reflection as geometry.  emitters
         // counts discs (projectiles, smoke) and says nothing about those.
-        common->Printf("VK RT Refl: dispatch %ux%u at (%d,%d) mode=%d maxDist=%.1f emitters=%d glowTris=%d\n", rectW,
-                       rectH, rectX, rectY, ubo.reflMode, ubo.maxDist, ubo.emitterCount, ubo.glowTriCount);
+        common->Printf(
+            "VK RT Refl: dispatch %ux%u at (%d,%d) mode=%d maxDist=%.1f emitters=%d glowTris=%d volSteps=%d\n", rectW,
+            rectH, rectX, rectY, ubo.reflMode, ubo.maxDist, ubo.emitterCount, ubo.glowTriCount, ubo.volSteps);
 
     vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion, rectW,
                       rectH, 1);

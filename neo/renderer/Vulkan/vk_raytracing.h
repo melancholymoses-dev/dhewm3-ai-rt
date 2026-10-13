@@ -1300,6 +1300,42 @@ void VK_RT_DispatchVolFroxelIntegrate(VkCommandBuffer cmd, const viewDef_t *view
 // Must be called outside a render pass; depth must be in ATTACHMENT_OPTIMAL.
 void VK_RT_DispatchVolFroxelResolve(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
+// ---------------------------------------------------------------------------
+// Sampling the scatter grid from outside the froxel passes
+// (docs/plans/20261013_reflection_volumetrics.md).
+//
+// froxelScatter holds per-cell in-scatter and extinction with no camera-path
+// integration baked in, so any ray can march it — which is how the reflection
+// pass reaches the volumetrics. froxelIntegrated is the camera-prefix integral
+// and is NOT reusable this way.
+// ---------------------------------------------------------------------------
+
+// Mirrors VolFroxelSlices in vol_froxel_sample.glsl, plus the projection the
+// world -> grid direction needs.  viewProj is the GL-convention matrix the
+// grid's own invViewProj inverts, built identically so the two cannot drift.
+struct vkFroxelSampleParams_t
+{
+    float viewProj[16];
+    float camPos[3];
+    float camFwd[3];
+    float dNear;
+    float logRange;
+    float invLogRange;
+    int nz;
+};
+
+// This frame's grid description. False when the froxel path is standing down,
+// in which case the caller should bind VK_RT_GetFroxelScatterView()'s null grid
+// and take no samples.
+bool VK_RT_GetFroxelSampleParams(const viewDef_t *viewDef, vkFroxelSampleParams_t *out);
+
+// The live scatter grid, or a 1x1x1 black stand-in when there is none. Always a
+// valid 3D view in VK_IMAGE_LAYOUT_GENERAL — the grids never leave that layout.
+VkImageView VK_RT_GetFroxelScatterView(void);
+
+// Trilinear + clamp, shared with the resolve pass.
+VkSampler VK_RT_GetFroxelSampler(void);
+
 // r_rtVolFroxelDebug, but 0 unless the froxel path and its resolve pipeline are
 // actually usable.  vk_vol.cpp reads this to switch the volumetric composite to
 // its replace (non-additive) pipeline while an overlay is up.

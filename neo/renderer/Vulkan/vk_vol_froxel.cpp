@@ -196,6 +196,10 @@ static bool VK_RT_VolFroxelDimsChanged(void)
 
 static void VK_RT_FreeFroxelImage(vkFroxelGrid_t &g);
 
+// 1x1x1 black stand-in handed out by VK_RT_GetFroxelScatterView when the froxel
+// path is standing down, so consumers always have a valid 3D view to bind.
+static vkFroxelGrid_t s_nullFroxelGrid;
+
 // Allocation here is deliberately NON-FATAL, unlike most VK_CHECK sites in this
 // renderer.  r_rtVolFroxelResX/Y/Z clamp to 512x512x256, which is 512 MiB per
 // image and ~2 GiB across both images and both frame slots — a setting the
@@ -434,6 +438,22 @@ static void VK_RT_CreateFroxelImages(void)
 // a singular view-projection.
 // ---------------------------------------------------------------------------
 
+// The view-projection the grid is defined against — GL convention, and jittered,
+// because viewDef->projectionMatrix carries the FSR sub-pixel offset. Shared with
+// VK_RT_GetFroxelSampleParams so the forward and inverse cannot drift apart.
+static void VK_RT_BuildFroxelViewProj(const viewDef_t *viewDef, float vp[16])
+{
+    const float *proj = viewDef->projectionMatrix;
+    const float *mv = viewDef->worldSpace.modelViewMatrix;
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+        {
+            vp[c * 4 + r] = 0.0f;
+            for (int k = 0; k < 4; k++)
+                vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
+        }
+}
+
 static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid_t &grid, VolFroxelParamsUBO &ubo)
 {
     memset(&ubo, 0, sizeof(ubo));
@@ -441,16 +461,8 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     // invViewProj — same construction as the march's, kept identical so cell
     // positions and march step positions agree (that is what F1's overlay tests).
     {
-        const float *proj = viewDef->projectionMatrix;
-        const float *mv = viewDef->worldSpace.modelViewMatrix;
         float vp[16];
-        for (int r = 0; r < 4; r++)
-            for (int c = 0; c < 4; c++)
-            {
-                vp[c * 4 + r] = 0.0f;
-                for (int k = 0; k < 4; k++)
-                    vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
-            }
+        VK_RT_BuildFroxelViewProj(viewDef, vp);
         idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
                      idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
         idMat4 invVP = vpMat.Inverse();
@@ -926,6 +938,9 @@ void VK_RT_InitVolFroxel(void)
 
 void VK_RT_ShutdownVolFroxel(void)
 {
+    // Lazily built by VK_RT_GetFroxelScatterView when the froxel path is down.
+    VK_RT_FreeFroxelImage(s_nullFroxelGrid);
+
     if (vkRT.froxelFillDescPool != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorPool(vk.device, vkRT.froxelFillDescPool, NULL);
@@ -1045,6 +1060,64 @@ int VK_RT_VolFroxelDebugMode(void)
     if (vkRT.froxelResolvePipeline == VK_NULL_HANDLE)
         return 0;
     return idMath::ClampInt(0, 4, r_rtVolFroxelDebug.GetInteger());
+}
+
+// ---------------------------------------------------------------------------
+// Sampling the scatter grid from outside this file — see vk_raytracing.h.
+// ---------------------------------------------------------------------------
+
+VkImageView VK_RT_GetFroxelScatterView(void)
+{
+    const vkFroxelGrid_t &grid = vkRT.froxelScatter[vk.currentFrame];
+    if (VK_RT_VolFroxelActive() && grid.view != VK_NULL_HANDLE)
+        return grid.view;
+
+    // Black stand-in: scatter 0 and extinction 0, so a caller that samples it
+    // anyway accumulates exactly nothing.
+    if (s_nullFroxelGrid.view == VK_NULL_HANDLE)
+    {
+        if (!VK_RT_AllocFroxelImage(s_nullFroxelGrid, 1, 1, 1))
+            return VK_NULL_HANDLE;
+    }
+    return s_nullFroxelGrid.view;
+}
+
+VkSampler VK_RT_GetFroxelSampler(void)
+{
+    return vkRT.froxelSampler;
+}
+
+bool VK_RT_GetFroxelSampleParams(const viewDef_t *viewDef, vkFroxelSampleParams_t *out)
+{
+    if (out == NULL || viewDef == NULL)
+        return false;
+
+    memset(out, 0, sizeof(*out));
+
+    if (!VK_RT_VolFroxelActive())
+        return false;
+
+    const vkFroxelGrid_t &grid = vkRT.froxelScatter[vk.currentFrame];
+    if (grid.image == VK_NULL_HANDLE)
+        return false;
+
+    // Through the same builder the fill uses, so the dNear/dFar derivation is
+    // shared rather than repeated.
+    VolFroxelParamsUBO ubo;
+    if (!VK_RT_BuildFroxelParams(viewDef, grid, ubo))
+        return false;
+
+    VK_RT_BuildFroxelViewProj(viewDef, out->viewProj);
+    for (int i = 0; i < 3; i++)
+    {
+        out->camPos[i] = ubo.cameraPosW[i];
+        out->camFwd[i] = ubo.camForwardW[i];
+    }
+    out->dNear = ubo.depthParams[0];
+    out->logRange = ubo.rangeParams[0];
+    out->invLogRange = ubo.rangeParams[1];
+    out->nz = ubo.gridDim[2];
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1186,13 +1259,17 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
     const uint32_t groupsZ = (grid.depth + 3) / 4;
     vkCmdDispatch(cmd, groupsX, groupsY, groupsZ);
 
-    // Compute write -> compute read, for the integrate pass (F2).
+    // Compute write -> compute read for the integrate pass (F2), and -> ray tracing
+    // for the reflection rgen, which marches this grid directly
+    // (20261013_reflection_volumetrics.md).  No layout change: the grids live in
+    // GENERAL from allocation onward.
     {
         VkMemoryBarrier memBarrier = {};
         memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 1,
                              &memBarrier, 0, NULL, 0, NULL);
     }
 

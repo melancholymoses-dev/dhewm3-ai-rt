@@ -76,7 +76,38 @@ layout(set = 0, binding = 3) uniform ReflParams {
     int    emitterCount;  // projectile glow discs in emitterBuf (0 = r_rtReflGlow off)
     float  glowGain;      // r_rtReflGlowGain (0 when r_rtReflGlow is off)
     int    glowTriCount;  // additive translucent triangles in emitterBuf.tris
+
+    // Froxel scatter grid (20261013_reflection_volumetrics.md). viewProj is the
+    // grid's own, GL convention — the matrix its invViewProj inverts, jitter and all.
+    mat4   viewProj;
+    vec4   froxelCamPos;
+    vec4   froxelCamFwd;
+    float  froxelDNear;
+    float  froxelLogRange;
+    float  froxelInvLogRange;
+    int    froxelNz;
+    int    volSteps;      // 0 = no usable grid this frame; take no samples
+    float  volGain;
 } params;
+
+// Grid math only — no bindings of its own, so it can live alongside this set.
+#include "vol_froxel_sample.glsl"
+
+// binding 7: the scatter grid itself. rgb = in-scatter per unit length, a =
+// extinction, with no camera-path integration baked in. Always valid: the live
+// grid, or a 1x1x1 black stand-in with volSteps 0 to match.
+layout(set = 0, binding = 7) uniform sampler3D froxelScatterSampler;
+
+// This frame's grid, in the form vol_froxel_sample.glsl's helpers want.
+VolFroxelSlices refl_FroxelSlices()
+{
+    VolFroxelSlices s;
+    s.dNear       = params.froxelDNear;
+    s.logRange    = params.froxelLogRange;
+    s.invLogRange = params.froxelInvLogRange;
+    s.nz          = params.froxelNz;
+    return s;
+}
 
 // Projectile glow emitters (vk_rt_emitters.cpp), filled per frame slot.
 #include "rt_emitter.glsl"
