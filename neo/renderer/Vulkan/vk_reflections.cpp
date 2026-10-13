@@ -72,6 +72,25 @@ idCVar r_rtReflectionMinWeight(
     "Skip the reflection ray and its shadow rays when the pixel's final Fresnel weight is below\n"
     "this. Only affects legacy mode 2; glass always traces. 0.004 = pre-R1 behaviour.");
 
+// Volumetrics in reflections (docs/plans/20261013_reflection_volumetrics.md). The
+// reflection ray marches the same froxel scatter grid the primary view resolves, so
+// light shafts — the flashlight beam above all — show up in glass. Needs
+// r_rtVolFroxel 1: the ray march path builds no grid to sample.
+static idCVar r_rtReflVol("r_rtReflVol", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
+                          "march the froxel scatter grid along reflection rays, so volumetric light shafts "
+                          "appear in reflections (needs r_rtVolFroxel 1)");
+static idCVar r_rtReflVolSteps("r_rtReflVolSteps", "6", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
+                               "samples per reflection ray through the froxel scatter grid (1-32). Raise if the "
+                               "reflected beam bands; brightness should not change with this.");
+// 2.0, not 1.0: the froxel cell bakes the phase function at the CAMERA's angle
+// (vol_froxel_fill.comp), so a reflected ray sampling it sits off the forward lobe and
+// reads low. Tuned by eye 2026-10-13. Raising r_rtVolIsotropicMix attacks the same bias
+// at its source — the isotropic fraction is direction-independent and so is exact for
+// any ray — and should let this come back down.
+static idCVar r_rtReflVolGain("r_rtReflVolGain", "2.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                              "scale on reflected in-scatter. 1.0 is the literal integral; the default "
+                              "compensates for the reflected ray inheriting the camera's phase angle.");
+
 idCVar r_rtReflectionMode("r_rtReflectionMode", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                           "1 = glass only (default). Reflections are dispatched over the union screen rect of the\n"
                           "    view's SURFTYPE_GLASS surfaces and skipped entirely when the view holds no glass;\n"
@@ -1249,8 +1268,8 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
             ubo.froxelLogRange = fs.logRange;
             ubo.froxelInvLogRange = fs.invLogRange;
             ubo.froxelNz = fs.nz;
-            ubo.volSteps = 0; // Stage 3 wires the march; nothing samples the grid yet
-            ubo.volGain = 1.0f;
+            ubo.volSteps = r_rtReflVol.GetBool() ? idMath::ClampInt(1, 32, r_rtReflVolSteps.GetInteger()) : 0;
+            ubo.volGain = Max(0.0f, r_rtReflVolGain.GetFloat());
         }
     }
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));

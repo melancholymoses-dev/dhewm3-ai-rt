@@ -131,6 +131,54 @@ layout(location = 1) rayPayloadEXT GlassProbePayload glassProbe;
 // tonemap toe while mode 6 is judged (docs/plans/20260918_reflection_brightness.md F3).
 const float REFL_DEBUG_GAIN = 8.0;
 
+// ---------------------------------------------------------------------------
+// In-scatter along the reflected segment (20261013_reflection_volumetrics.md).
+//
+// froxelScatter stores per-cell in-scattered radiance per unit length and the
+// extinction coefficient, with no camera-path integration baked in, so the same
+// volume the primary view resolves can be marched by any ray. That is what puts
+// the flashlight beam into glass.
+//
+// Steps outside the grid contribute nothing AND do not attenuate: the medium
+// beyond the froxel frustum is simply unknown here, and guessing at it would
+// darken reflections of rooms the grid never covered.
+//
+// The jitter is spatial only, never per frame. Nothing downstream denoises the
+// reflection buffer, so a per-frame offset would read as a shimmering beam
+// instead of a static dither.
+// ---------------------------------------------------------------------------
+vec3 ReflVolumetrics(vec3 o, vec3 d, float hitT, ivec2 coord)
+{
+    int n = params.volSteps;
+    if (n <= 0 || hitT <= 0.0)
+        return vec3(0.0);
+
+    VolFroxelSlices slices = refl_FroxelSlices();
+
+    float segLen = hitT / float(n);
+    float jitter = randFloat(wang_hash(uint(coord.x) * 73856093u ^ wang_hash(uint(coord.y) * 19349663u)));
+
+    vec3  scattered    = vec3(0.0);
+    float transmitting = 1.0;
+
+    for (int i = 0; i < n; i++)
+    {
+        vec3 p = o + d * ((float(i) + jitter) * segLen);
+
+        vec3 tc;
+        if (!vfs_WorldToTexCoord(slices, params.viewProj, params.froxelCamPos.xyz, params.froxelCamFwd.xyz, p, tc))
+            continue;
+
+        vec4 cell = texture(froxelScatterSampler, tc);
+        scattered += transmitting * cell.rgb * segLen;
+        transmitting *= exp(-cell.a * segLen);
+        if (transmitting < 0.01)
+            break;
+    }
+
+    return scattered * params.volGain;
+}
+
 // Projectile glows along (o, d) in front of the reflected surface at hitT. With
 // debugDiscs (mode 8) returns flat discs instead: green in front, red behind.
 vec3 ReflEmitterGlow(vec3 o, vec3 d, float hitT, bool debugDiscs)
@@ -413,6 +461,11 @@ void main()
     // rest of the reflected scene.
     if (params.emitterCount > 0 || params.glowTriCount > 0)
         accum += ReflEmitterGlow(segOrigin, reflDir, segHitT, false);
+
+    // Light scattered by the air between the reflecting surface and what it sees —
+    // emissive along the segment, so it joins accum on the same footing as the glows
+    // rather than being tinted by the reflector.
+    accum += ReflVolumetrics(segOrigin, reflDir, segHitT, coord);
 
     if (params.debugMode == 6 || params.debugMode == 7)
     {

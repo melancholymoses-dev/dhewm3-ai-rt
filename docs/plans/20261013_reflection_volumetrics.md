@@ -86,14 +86,16 @@ changes brightness the segment length is wrong.
 
 ## Stage 4 — controls
 
+The three cvars below landed with stage 3 — the march is untestable without them.
+
 | Cvar | Default | Purpose |
 |---|---|---|
 | `r_rtReflVol` | 1 | Off switch / A-B |
 | `r_rtReflVolSteps` | 6 | Taps per reflection ray |
 | `r_rtReflVolGain` | 1.0 | Scale against the primary view |
 
-`r_rtReflectionDebugMode 9`: reflected-ray volumetric term alone, nothing else. Add the
-first two to `Dhewm3SettingsMenu.cpp` next to the reflection block.
+Remaining: `r_rtReflectionDebugMode 9` showing the reflected-ray volumetric term alone,
+and the first two cvars in `Dhewm3SettingsMenu.cpp` next to the reflection block.
 
 **Check:** `r_rtReflVol 0` restores the current image exactly. Mode 9 shows the beam shape
 against black and nothing on surfaces the beam does not cross.
