@@ -285,8 +285,8 @@ Needs fixing if they stay in the menu: `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIR
 | `r_vkRTProfileWindow` | Vulkan | Frames per summary window (1-256) | 30 | D | = |
 | `r_vkRTProfileStats` | Vulkan | Summary columns: 1=mean 2=p5 4=p50 8=p95 16=max | 29 | D | = |
 | `r_vkRTProfileGroups` | Vulkan | Console filter only — all groups are always collected and always in the CSV. Leave at 63 | 63 | D | = |
-| `r_vkRTProfileSpikeMs` | Vulkan | Dump every metric for frames over this backend ms (0=off) | 0 | D | = |
-| `r_vkRTProfileCSV` | Vulkan | Per-frame CSV path (empty=off) | "" | D | = |
+| `r_vkRTProfileSpikeMs` | Vulkan | Dump every metric for frames over this backend ms (0=off); ignored while a CSV is open | 0 | D | = |
+| `r_vkRTProfileCSV` | Vulkan | Per-frame CSV path (empty=off). Suppresses the console block in favour of one heartbeat line per window | "" | D | = |
 | `r_vkDebugLabels` | Vulkan | VK_EXT_debug_utils pass labels for Nsight/RGP/RenderDoc | 0 | D | = |
 | `r_vkVcCheck`, `r_vkLogBufferGarbage` | Vulkan | Vertex-cache validation / accounting | 0 | D | = |
 | `r_vkLogRT`, `r_vkLogShadowBranch`, `r_vkLogShadowGeom`, `r_vkLogSubmitInfo`, `r_vkLogTranslucent` | Vulkan | Logging | 0 | D | = |

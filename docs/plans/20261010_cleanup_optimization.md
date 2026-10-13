@@ -27,9 +27,15 @@ discard the rest, so any baseline captured that way is a point sample, not a num
 phases can be compared against. A0 landed the window aggregator — capture the
 `mean/p50/p95/max` summaries plus `r_vkRTProfileCSV`, not single frames.
 
+Scenarios:
+Mars City Walkthrough: Reflections, Shadows, lots of Grates
+Alpha Labs Firefight: Accelerator room, many enemies, stairway
+Communications Fire: Many particle effects and lights and mirrors.  
+
 | Change | Files |
 |---|---|
-| Capture baseline: `r_vkRTProfile 1` window summaries on Mars City Firefight | log saved to `docs/plans/notes/20261010_baseline.txt` |
+| Capture baseline: `r_vkRTProfile 1` window summaries on Mars City Walkthrough | log saved to `docs/plans/notes/20261010_baseline.txt` |
+| Capture baseline: `r_vkRTProfile 1` window summaries on Alpha Labs Firefight | log saved to `docs/plans/notes/20261010_baseline.txt` |
 | Capture baseline: `r_vkRTProfile 1` window summaries on Communications Fire | log saved to `docs/plans/notes/20261010_baseline.txt` |
 | Screenshots: 6 fixed spots (glass, volumetric hall, flashlight, dark room, mirror, FP body) | `notes/baseline_*.png` |
 | Record RSS + VRAM after 5 min play and after 3 map loads | same notes file |

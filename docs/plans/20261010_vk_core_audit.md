@@ -46,6 +46,7 @@ Check: `notes/20261010_vk_triage.txt` holds the log excerpts and one line per ro
 
 | Tool | GPU | Use | Notes |
 |---|---|---|---|
+| `tools/vk_profile_report.py <csv>` | any | First pass on any `r_vkRTProfileCSV` capture: capture conditions, periodic-artifact detection, span-closure audit, bimodality, full percentile table, worst-frame dumps. `--baseline before.csv` for a stage's before/after | Run it before reading individual frames. It catches the two mistakes that have already happened: quoting a p50 from a capture that never met the finding's condition, and reading the profiler's own console print as an engine hitch |
 | PresentMon | any | Frame-time CSV; separates hitches from sustained low fps; CPU-busy vs GPU-busy | First tool for "it chugs here" |
 | Visual Studio Performance Profiler (Community) or Very Sleepy | any | CPU sampling, per-function time without instrumentation | Needs PDBs; `RelWithDebInfo` is the CMake default |
 | Windows Performance Recorder / Analyzer (Windows ADK) | any | ETW: CPU samples, disk I/O, page faults, time blocked in driver calls | For load time and for hitches the sampler shows as "waiting" |
@@ -92,17 +93,15 @@ New module `vk_profile.cpp/.h` owns the metric registry, window, CSV and labels;
 | memory | `mem.rssMB` (new `Sys_GetProcessMemoryBytes`), `mem.virtMemMB` (new `vertexCacheVirtMemBytes`), `mem.vramUsedMB`/`BudgetMB` via `VK_EXT_memory_budget` | F5, F12 |
 | midframe | lazy image loads + ms (one `VK_Image_LazyLoadTimed` for all four sites), first-use pipeline builds + ms | F3, X4 |
 
-### Invariants the code now relies on
+### If you edit the profiler
 
-| Rule | Because |
+| Rule | Failure if broken |
 |---|---|
-| Only `gpu.<phase>` needs query pools. The registry, CPU spans, frame/upload/wait/memory metrics and the push all gate on `VK_Prof_Active()`, never on `VK_RTProfileEnabled()` | `VK_RTProfileEnabled()` also requires `vk.rayTracingSupported` and a created query pool, so gating the whole profiler on it gave a non-RT GPU no output at all |
-| Anything stamped after `present` but before `backendMs` must be added to `accounted` in the `frame.other` sum | Otherwise an entire frame's GPU wait lands in `other` under `r_vkSerializeFrames 1` or during a screenshot — the one metric whose large value means "go get a sampling profiler" |
-| Every `VK_RTProfile_PhaseBegin` needs exactly one `PhaseEnd` | With labels on, an unmatched Begin leaves an open label and `vkEndCommandBuffer` fails. Both command-buffer exits call `VK_RTProfile_CloseStrayLabels` and warn, so it fails loudly rather than as a driver error |
-| `VK_Prof_BeginFrameSlot` is the per-frame tick that runs with profiling off | It owns the CSV open/close check and discards a partial window on an off→on transition; `PushFrame` is unreachable at `r_vkRTProfile 0`, which stranded the file open and let stale rows survive a settings change |
-| `r_vkRTProfileGroups` filters the console and nothing else — never gate collection on it | The memory group did, so a console filter silently turned `mem.*` into a column of zeros in the CSV. One capture recipe, groups left at 63 |
-| The slot's sample is cleared immediately after `CollectAndLog`, not at command-buffer begin | The upload flush and garbage drain run before the command buffer opens, so a clear down there wiped their counters — `upload.flushes` read 0 while `frame.upload` read 0.164 ms |
-| The profiler's own console print is measured as `frame.profilePrint` and counted in `accounted` | ~40 `common->Printf` calls cost 15-20 ms on a window-close frame. Unattributed, it appeared as an engine hitch every 30th frame: 137 of 139 `frame.other` spikes in the 2026-10-12 comm-fire capture were exactly 30 frames apart |
+| Gate new metrics on `VK_Prof_Active()`, not `VK_RTProfileEnabled()` (that one also needs RT support and a query pool) | No output at all on a non-RT GPU. Only `gpu.<phase>` needs the pools |
+| A new CPU span between `present` and `backendMs` must be added to `accounted` | Its cost silently becomes `frame.other`, the one metric read as "unexplained" |
+| One `PhaseEnd` per `VK_RTProfile_PhaseBegin` | With labels on, `vkEndCommandBuffer` fails. `VK_RTProfile_CloseStrayLabels` warns at both exits |
+| Don't move `VK_Prof_BeginFrameSlot` or the slot clear that follows `CollectAndLog` | It is the tick that runs with profiling off (CSV open/close, partial-window discard), and clearing any later wipes the pre-command-buffer upload counters |
+| `r_vkRTProfileGroups` filters the console only — never gate collection on it | A console filter turns a CSV column into zeros |
 
 ### Deliberately not done
 

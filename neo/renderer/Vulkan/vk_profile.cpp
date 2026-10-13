@@ -42,9 +42,9 @@ static idCVar r_vkRTProfileGroups("r_vkRTProfileGroups", "63", CVAR_RENDERER | C
 static idCVar r_vkRTProfileStats("r_vkRTProfileStats", "29", CVAR_RENDERER | CVAR_INTEGER,
                                  "Summary columns: 1=mean 2=p5 4=p50 8=p95 16=max");
 static idCVar r_vkRTProfileSpikeMs("r_vkRTProfileSpikeMs", "0", CVAR_RENDERER | CVAR_FLOAT,
-                                   "Dump every metric for any frame whose backend ms exceeds this (0=off)");
+                                   "Dump every metric for any frame whose backend ms exceeds this (0=off). Ignored while a CSV is open");
 static idCVar r_vkRTProfileCSV("r_vkRTProfileCSV", "", CVAR_RENDERER,
-                               "Write one CSV row per frame to this path (empty=off)");
+                               "Write one CSV row per frame to this path (empty=off). Replaces the console block with one heartbeat line per window");
 static idCVar r_vkDebugLabels("r_vkDebugLabels", "0", CVAR_RENDERER | CVAR_BOOL,
                               "Emit VK_EXT_debug_utils pass labels and object names for Nsight/RGP/RenderDoc/RMV");
 
@@ -151,6 +151,11 @@ static const vkProfMetricDesc_t s_fixedDesc[VKPROF_FIXED_COUNT] = {
     {"midframe.imageMs", VKPROF_GRP_MIDFRAME, 3},
     {"midframe.pipelines", VKPROF_GRP_MIDFRAME, 1},
     {"midframe.pipelineMs", VKPROF_GRP_MIDFRAME, 3},
+
+    {"lights.view", VKPROF_GRP_FRAME, 0},
+    {"lights.shadow", VKPROF_GRP_FRAME, 0},
+    {"lights.batched", VKPROF_GRP_FRAME, 0},
+    {"lights.serial", VKPROF_GRP_FRAME, 0},
 };
 
 static const char *const s_waitTagNames[VKPROF_WAIT_COUNT] = {
@@ -561,6 +566,24 @@ bool VK_Prof_WindowJustClosed(void)
     return s_windowJustClosed;
 }
 
+// With a CSV open the console block is pure overhead that also perturbs the thing it
+// measures (~40 Printf calls cost 15-20 ms, which showed up as a periodic engine hitch).
+// One heartbeat line replaces it so a long capture still shows it is recording.
+static void VK_Prof_PrintCSVHeartbeat(int count, int lastFrame)
+{
+    double gpu[VKPROF_MAX_WINDOW];
+    for (int i = 0; i < count; i++)
+        gpu[i] = s_window[i][VKPROF_GPU_TOTAL] + s_window[i][VKPROF_GPU_RASTER];
+    qsort(gpu, (size_t)count, sizeof(double), VK_Prof_CompareDouble);
+
+    vkProfStats_t backend;
+    VK_Prof_ComputeStats(VKPROF_FRAME_BACKEND, count, &backend);
+
+    common->Printf("VK PROFILE: %d frames -> '%s' (frame %d, p50 backend %.2f gpu %.2f ms)\n",
+                   count, s_csvPath.c_str(), lastFrame,
+                   backend.p50, gpu[(int)(0.50 * (count - 1) + 0.5)]);
+}
+
 void VK_Prof_PushFrame(int slot, int frameNum)
 {
     s_windowJustClosed = false;
@@ -568,9 +591,12 @@ void VK_Prof_PushFrame(int slot, int frameNum)
         return;
 
     const double *sample = s_cur[slot];
+    const bool csv = (s_csvFile != NULL);
 
+    // The spike line and mode 2 both exist to get per-frame detail to the console when
+    // there is no file; the CSV already has every frame, in a form worth analysing.
     const float spikeMs = r_vkRTProfileSpikeMs.GetFloat();
-    if (spikeMs > 0.0f && sample[VKPROF_FRAME_BACKEND] > (double)spikeMs)
+    if (!csv && spikeMs > 0.0f && sample[VKPROF_FRAME_BACKEND] > (double)spikeMs)
         VK_Prof_PrintFrameLine("VK PROFILE SPIKE", frameNum, sample);
 
     VK_Prof_AppendCSVRow(frameNum, sample);
@@ -580,7 +606,8 @@ void VK_Prof_PushFrame(int slot, int frameNum)
     // same number anyway.
     if (r_vkRTProfile.GetInteger() >= 2)
     {
-        VK_Prof_PrintFrameLine("VK PROFILE FRAME", frameNum, sample);
+        if (!csv)
+            VK_Prof_PrintFrameLine("VK PROFILE FRAME", frameNum, sample);
         VK_Prof_FlushCSV();
         s_windowCount = 0;
         s_windowJustClosed = true;
@@ -596,7 +623,10 @@ void VK_Prof_PushFrame(int slot, int frameNum)
 
     if (s_windowCount >= VK_Prof_WindowSize())
     {
-        VK_Prof_PrintWindow(s_windowCount, s_windowFrameNum[s_windowCount - 1]);
+        if (csv)
+            VK_Prof_PrintCSVHeartbeat(s_windowCount, s_windowFrameNum[s_windowCount - 1]);
+        else
+            VK_Prof_PrintWindow(s_windowCount, s_windowFrameNum[s_windowCount - 1]);
         VK_Prof_FlushCSV();
         s_windowCount = 0;
         s_windowJustClosed = true;

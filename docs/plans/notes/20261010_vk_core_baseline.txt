@@ -98,9 +98,16 @@ The only capture recipe. r_vkRTProfileGroups is a console filter and is always l
 every group is collected and written to the CSV regardless, so analysis never needs it.
 
   r_vkRTProfileCSV a0.csv
-  r_vkRTProfileSpikeMs 8
   r_vkRTProfileWindow 60
   r_vkRTProfile 1
+
+With a CSV open the console block is suppressed (one heartbeat line per window) and
+r_vkRTProfileSpikeMs is ignored; set it only when capturing without a file.
+
+Then, before reading any individual frame:
+
+  python tools/vk_profile_report.py a0.csv
+  python tools/vk_profile_report.py after.csv --baseline before.csv   # per-stage deltas
 
 Same spot, then the MC2 corner. The questions are which wait tag owns frame.other's 12 ms
 spike, and what upload.staticBlocks reads on the frames where frame.upload is 7-10 ms. Both

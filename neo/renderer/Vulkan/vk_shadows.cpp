@@ -1316,6 +1316,8 @@ static vkShadowBatchEntry_t s_shadowBatch[VK_RT_SHADOW_BATCH_TRACK];
 static int s_shadowBatchCount = 0;       // entries recorded (including no-shadow lights)
 static int s_shadowBatchLayers = 0;      // batched layers assigned: 0..VK_RT_SHADOW_BATCH_MAX
 static bool s_shadowBatchSerial = false; // any light landed on the serial layer
+static int s_shadowBatchCasters = 0;     // shadow-casting lights this view, batched or not
+static int s_shadowBatchSerialCount = 0; // of those, how many took the serial layer
 static int s_shadowBatchOverflowLogged = -1;
 
 bool VK_RT_ShadowBatchEnabled(void)
@@ -1328,6 +1330,21 @@ void VK_RT_ShadowBatchBegin(void)
     s_shadowBatchCount = 0;
     s_shadowBatchLayers = 0;
     s_shadowBatchSerial = false;
+    s_shadowBatchCasters = 0;
+    s_shadowBatchSerialCount = 0;
+}
+
+// Whether a capture met Phase 6a's condition at all.  Without this, a profile from an
+// area with <= VK_RT_SHADOW_BATCH_MAX shadow lights is indistinguishable from one where
+// the serial path is simply fast, because serial time is still billed to Interactions.
+void VK_RT_GetShadowBatchStats(int *outCasters, int *outBatched, int *outSerial)
+{
+    if (outCasters)
+        *outCasters = s_shadowBatchCasters;
+    if (outBatched)
+        *outBatched = s_shadowBatchLayers;
+    if (outSerial)
+        *outSerial = s_shadowBatchSerialCount;
 }
 
 int VK_RT_ShadowBatchAddLight(const viewLight_t *vLight, VkRect2D dispatchRect)
@@ -1365,6 +1382,7 @@ int VK_RT_ShadowBatchAddLight(const viewLight_t *vLight, VkRect2D dispatchRect)
     int layer = -1;
     if (castsShadows)
     {
+        s_shadowBatchCasters++;
         if (VK_RT_ShadowBatchEnabled() && s_shadowBatchLayers < VK_RT_SHADOW_BATCH_MAX)
         {
             layer = s_shadowBatchLayers++;
@@ -1374,6 +1392,7 @@ int VK_RT_ShadowBatchAddLight(const viewLight_t *vLight, VkRect2D dispatchRect)
             // Over budget (or batching disabled): reuse the serial scratch layer.
             layer = VK_RT_SHADOW_SERIAL_LAYER;
             s_shadowBatchSerial = true;
+            s_shadowBatchSerialCount++;
             if (VK_RT_ShadowBatchEnabled() && r_vkLogRT.GetInteger() >= 1 &&
                 s_shadowBatchOverflowLogged != tr.frameCount)
             {

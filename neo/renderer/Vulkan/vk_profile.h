@@ -99,6 +99,12 @@ enum vkProfMetric_t
     VKPROF_MIDFRAME_PIPELINES,
     VKPROF_MIDFRAME_PIPELINE_MS,
 
+    // Scene content, so a capture can be checked against the condition a finding needs.
+    VKPROF_LIGHTS_VIEW,
+    VKPROF_LIGHTS_SHADOW,
+    VKPROF_LIGHTS_BATCHED,
+    VKPROF_LIGHTS_SERIAL,
+
     VKPROF_FIXED_COUNT
 };
 
