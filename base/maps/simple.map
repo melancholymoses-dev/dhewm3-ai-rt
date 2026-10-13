@@ -92,10 +92,10 @@ brushDef3
 {
 ( 0 0 1 -124 ) ( ( 0.0078125 0 0 ) ( 0 0.015625 0 ) ) "textures/glass/breakyglass3_nvp" 0 0 0
 ( 0 1 0 -420 ) ( ( 0.0078125 0 0 ) ( 0 0.015625 0 ) ) "textures/glass/breakyglass3_nvp" 0 0 0
-( 1 0 0 -180 ) ( ( 0.0078125 0 0 ) ( 0 0.015625 0 ) ) "textures/glass/breakyglass3_nvp" 0 0 0
+( 1 0 0 -749 ) ( ( 0.0078125 0 0 ) ( 0 0.015625 0 ) ) "textures/glass/breakyglass3_nvp" 0 0 0
 ( 0 0 -1 -4 ) ( ( 0.0078125 0 0 ) ( 0 0.015625 0 ) ) "textures/glass/breakyglass3_nvp" 0 0 0
 ( 0 -1 0 -238 ) ( ( 0.0078125 0 0 ) ( 0 0.015625 0 ) ) "textures/glass/breakyglass3_nvp" 0 0 0
-( -1 0 0 175 ) ( ( 0.0078125 0 0 ) ( 0 0.015625 0 ) ) "textures/glass/breakyglass3_nvp" 0 0 0
+( -1 0 0 732 ) ( ( 0.0078125 0 0 ) ( 0 0.015625 0 ) ) "textures/glass/breakyglass3_nvp" 0 0 0
 }
 }
 // primitive 8
@@ -424,7 +424,7 @@ brushDef3
 "light_target" "0 0 -256"
 "light_up" "0 128 0"
 "origin" "264 -112 96"
-"rotation" "-0.85688 -4.20826e-05 -0.515517 -0.177401 -0.9389 0.29495 -0.484031 0.344189 0.804517"
+"rotation" "0.392701 -0.434719 -0.810436 0.468623 -0.663653 0.583058 -0.791314 -0.608756 -0.0568978"
 "texture" "lights/square_flicker3"
 }
 // entity 20
@@ -511,12 +511,5 @@ brushDef3
 "classname" "monster_demon_pinky"
 "name" "monster_demon_pinky_1"
 "origin" "664 216 0"
-"rotation" "1 0 0 0 1 0 0 0 1"
-}
-// entity 31
-{
-"classname" "monster_boss_cyberdemon"
-"name" "monster_boss_cyberdemon_1"
-"origin" "600 344 40"
 "rotation" "1 0 0 0 1 0 0 0 1"
 }

@@ -60,10 +60,13 @@ struct ShadowParamsUBO
     // visible as peter-panning once it exceeds the pixel footprint, and the
     // footprint grows as d while the reconstruction error grows as d^2.
     float biasFootprintCoeff; // offset 180
-    // Camera-to-pixel distance below which player instances are culled from shadow rays.
-    // Separate from rayCullMask above, which is a per-light decision.
+    // Fallback camera-to-pixel distance below which player instances are culled from
+    // shadow rays, used only when playerClassValid is 0.  Separate from rayCullMask
+    // above, which is a per-light decision.
     float playerExcludeRadius; // was _pad1[0] // offset 184
-    float _pad1;               // pad block to 16-byte multiple (192 total) // offset 188
+    // 1 = binding 4 holds this frame's G-buffer surface class, so the rgen can ask
+    // per pixel whether it is the first-person body instead of guessing from distance.
+    int32_t playerClassValid; // was _pad1 // offset 188
 };
 // Must stay within the shared RT UBO ring stride (384 bytes, sized off VkInteractionUBO
 // in vk_backend.cpp) and match the std140 layout of ShadowParams in shadow_ray.rgen exactly.
@@ -157,15 +160,20 @@ static idCVar r_rtShadowPlayerExcludeDist(
     "exclude player body from shadow rays when player-to-light distance is below this (0 = never exclude)");
 
 // Distinct from the cvar above, which keys on light-to-camera distance and exists so an
-// *invisible* body doesn't cast a shadow from nowhere.  This one keys on pixel-to-camera
-// distance: a pixel this close to the eye is the first-person body, which stands inside the
-// world body, so rays leaving it hit that duplicate and lose both direct light and bounce.
+// *invisible* body doesn't cast a shadow from nowhere.  This one decides, per pixel,
+// whether rays leaving it skip the player: the fp body stands inside the world body, so
+// without the exclusion it hits that duplicate and loses both direct light and bounce.
 // Shared with vk_gi.cpp — the same exclusion must apply to GI or the body still reads black.
-// ~40 covers thighs and pelvis (25-30 units out) while leaving boots (~65) and the floor at
-// the feet (~68) alone, so the body still casts its contact shadow.
+//
+// The per-pixel answer now comes from the G-buffer surface class, so this value is only a
+// fallback for frames with no G-buffer.  Distance cannot separate the body from a wall you
+// are standing against — both land in the same band — so the sphere also cancelled the
+// player's shadow on that wall, punching a hole in it.  Doubles as the off switch: 0 here
+// (or pm_showFirstPersonBody 0) disables the exclusion on both paths.
 idCVar r_rtPlayerExcludeRadius(
     "r_rtPlayerExcludeRadius", "40", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
-    "cull the player body from shadow/GI rays leaving pixels closer than this to the eye (0 = off)");
+    "fallback radius for culling the player body from shadow/GI rays, used only when the "
+    "G-buffer surface class is unavailable; 0 disables the exclusion entirely");
 
 /*
 ===============
@@ -192,6 +200,8 @@ float VK_RT_PlayerExcludeRadius(void)
 }
 
 extern idCVar r_rtUnlockNoShadows; // defined in vk_light_classify.cpp — AR6 noShadows shadow unlock
+// vk_accelstruct.cpp — does player geometry carry suppressShadowInLightID for this light?
+extern bool VK_RT_PlayerSuppressesLight(int lightId);
 static idCVar r_rtShadowDebugMode(
     "r_rtShadowDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
     "visualize RT shadow pass internals in the shadow mask: "
@@ -201,6 +211,9 @@ static idCVar r_rtShadowDebugMode(
     "9=bias budget (black=base rayBias/nDotL in charge, grey-to-white=the A12 depth-error floor in "
     "charge with brightness = bias / pixel footprint; white means the bias has reached a full pixel "
     "and raising r_rtShadowBiasErrMargin further will start detaching contact shadows), "
+    "10=player-body exclusion (white = this pixel drops the player instances from its shadow "
+    "rays; should cover the first-person body and nothing else — view it with "
+    "r_rtShadowBlurEnable 0 so the blur doesn't soften the boundary), "
     "7=anisotropic cone half-angle sin(U) (tangent-plane 'right' axis), "
     "8=anisotropic cone half-angle sin(V) (tangent-plane 'up/fwd' axis) — 7/8 together show the "
     "elliptical soft-shadow cone shape (Phase 9 Stage 1); a spherical point light shows 7==8, an "
@@ -277,8 +290,9 @@ static void VK_RT_InitShadowPipeline(void)
     // binding 1: shadow mask storage image
     // binding 2: depth sampler
     // binding 3: shadow params UBO
+    // binding 4: gbufAlbedo sampler — alpha is the surface class (view-local or not)
 
-    VkDescriptorSetLayoutBinding bindings[4] = {};
+    VkDescriptorSetLayoutBinding bindings[5] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -300,9 +314,14 @@ static void VK_RT_InitShadowPipeline(void)
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
+    bindings[4].binding = 4;
+    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 4;
+    layoutInfo.bindingCount = 5;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.shadowDescLayout));
 
@@ -479,7 +498,8 @@ static void VK_RT_InitShadowPipeline(void)
     VkDescriptorPoolSize poolSizes[4] = {
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT},
+        // depth + gbufAlbedo
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_MAX_FRAMES_IN_FLIGHT},
     };
     VkDescriptorPoolCreateInfo poolInfo = {};
@@ -642,6 +662,81 @@ static void VK_RT_InitBlurPipeline(void)
 // light instead of once per light.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Surface-class G-buffer (gbufAlbedo alpha) access for the shadow rgen.
+//
+// The prepass flags view-local pixels there, which is how the rgen knows a pixel is
+// the first-person body rather than a wall at the same distance.  When no G-buffer
+// exists the null image is bound and VK_RT_ShadowClassValid() is false, which puts
+// the rgen back on the r_rtPlayerExcludeRadius sphere.
+// ---------------------------------------------------------------------------
+
+extern VkImageView VK_RT_GetNullGbufNormalView(void); // vk_reflections.cpp — shared 1x1 fallback
+
+static bool VK_RT_ShadowClassValid(void)
+{
+    const bool valid = vk.gbufferSupported && vkRT.gbufAlbedo[vk.currentFrame].view != VK_NULL_HANDLE;
+
+    // Say so when the fallback takes over, so "the radius is doing something" is never a
+    // mystery — it means the per-pixel class never arrived.
+    static bool s_logged = false;
+    if (!valid && !s_logged)
+    {
+        s_logged = true;
+        common->Printf("VK RT: no gbufAlbedo surface class this frame — player exclusion falls back to "
+                       "r_rtPlayerExcludeRadius %.1f\n",
+                       r_rtPlayerExcludeRadius.GetFloat());
+    }
+    return valid;
+}
+
+static VkImageView VK_RT_ShadowClassView(void)
+{
+    return VK_RT_ShadowClassValid() ? vkRT.gbufAlbedo[vk.currentFrame].view : VK_RT_GetNullGbufNormalView();
+}
+
+// The serial path dispatches from inside the interaction loop, where gbufAlbedo is a
+// colour attachment of the (just-ended) HDR render pass rather than in the RT block's
+// SHADER_READ_ONLY window.  Round-trip it exactly like depth, so the descriptor's
+// declared layout is honest on both paths.
+static void VK_RT_ShadowClassToRead(VkCommandBuffer cmd)
+{
+    if (!VK_RT_ShadowClassValid())
+        return;
+
+    VkImageMemoryBarrier toRead = {};
+    toRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toRead.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    toRead.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    toRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toRead.image = vkRT.gbufAlbedo[vk.currentFrame].image;
+    toRead.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, NULL, 0, NULL, 1, &toRead);
+}
+
+static void VK_RT_ShadowClassRestore(VkCommandBuffer cmd, VkPipelineStageFlags srcStage)
+{
+    if (!VK_RT_ShadowClassValid())
+        return;
+
+    VkImageMemoryBarrier restore = {};
+    restore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    restore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    restore.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    restore.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    restore.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    restore.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    restore.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    restore.image = vkRT.gbufAlbedo[vk.currentFrame].image;
+    restore.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd, srcStage, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, NULL, 0, NULL, 1,
+                         &restore);
+}
+
 static VkImageAspectFlags VK_RT_DepthAspect(void)
 {
     VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
@@ -742,7 +837,7 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
             tlasWrite.accelerationStructureCount = 1;
             tlasWrite.pAccelerationStructures = &vkRT.tlas[frameIdx].handle;
 
-            VkWriteDescriptorSet writes[4] = {};
+            VkWriteDescriptorSet writes[5] = {};
 
             writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[0].pNext = &tlasWrite;
@@ -792,7 +887,25 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
             writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
             writes[3].pBufferInfo = &uboInfo;
 
-            vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
+            // Binding 4: gbufAlbedo — alpha is the surface class.  texelFetch only in the
+            // rgen, so filter/wrap state is irrelevant; reuse the depth sampler.  The null
+            // 1x1 image stands in when there is no G-buffer, with playerClassValid 0 so the
+            // rgen never reads it.  Layout matches both dispatch paths: the batch runs
+            // inside vk_backend's SHADER_READ_ONLY window, the serial path round-trips it
+            // alongside depth.
+            VkDescriptorImageInfo gbufImgInfo = {};
+            gbufImgInfo.sampler = vkRT.depthSampler;
+            gbufImgInfo.imageView = VK_RT_ShadowClassView();
+            gbufImgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[4].dstSet = ds;
+            writes[4].dstBinding = 4;
+            writes[4].descriptorCount = 1;
+            writes[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[4].pImageInfo = &gbufImgInfo;
+
+            vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
             vkRT.shadowDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
         }
 
@@ -1053,7 +1166,20 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         {
             ubo.rayCullMask = 0xFFu;
         }
+        // The game's own rule, which the RT path had never implemented (renderLight_t::lightId:
+        // "muzzle flash lights will not cast shadows from player and weapon world models").
+        // The first-person muzzle flash is also the flashlight beam, so without this the hand
+        // holding the light shadows its own beam.  Interaction.cpp applies the same test when
+        // it builds stencil shadow volumes; one TLAS serves every light, so here it has to be
+        // a per-light cull mask.
+        if (VK_RT_PlayerSuppressesLight(light.lightId))
+        {
+            ubo.rayCullMask = VK_RT_MASK_NO_PLAYER;
+        }
         ubo.playerExcludeRadius = VK_RT_PlayerExcludeRadius();
+        // Zero also when the fp body isn't drawn: with no body there is nothing to
+        // protect, and the rgen must not spend a fetch deciding that per pixel.
+        ubo.playerClassValid = (VK_RT_ShadowClassValid() && ubo.playerExcludeRadius > 0.0f) ? 1 : 0;
 
         if (VK_RTDebugLightFrameAllowed(r_vkRTDebugLights.GetInteger() > 0) && VK_RTDebugLightMatch(vLight))
         {
@@ -1262,6 +1388,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         return;
 
     VK_RT_ShadowDepthToRead(cmd);
+    VK_RT_ShadowClassToRead(cmd);
     VK_RT_RecordShadowTrace(cmd, viewDef, vLight, dispatchRect, layer);
 
     const int blurRadius = VK_RT_ShadowBlurWanted(dispatchRect) ? VK_RT_ShadowBlurRadius() : 0;
@@ -1287,8 +1414,9 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
     VK_RT_ShadowMemBarrier(cmd, srcStage, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
                            VK_ACCESS_SHADER_READ_BIT);
 
-    // --- Depth barrier: restore to DEPTH_STENCIL_ATTACHMENT_OPTIMAL for render pass resume ---
+    // --- Depth + gbufAlbedo barriers: restore attachment layouts for the render pass resume ---
     VK_RT_ShadowDepthRestore(cmd, srcStage);
+    VK_RT_ShadowClassRestore(cmd, srcStage);
 }
 
 // ---------------------------------------------------------------------------

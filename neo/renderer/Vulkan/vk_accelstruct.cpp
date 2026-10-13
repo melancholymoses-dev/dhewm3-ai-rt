@@ -1173,6 +1173,54 @@ bool VK_RT_TLASActive(void)
 }
 
 // ---------------------------------------------------------------------------
+// Player shadow suppression per light (renderLight_t::lightId).
+//
+// The game sets suppressShadowInLightID on the player body, head and the weapon's
+// world model to the first-person muzzle flash's lightId — which is also the
+// flashlight beam.  Interaction.cpp honours it for stencil shadows; the RT path
+// cannot, because one TLAS serves every light, so the shadow pass turns it into a
+// per-light cull mask instead.  Collected here because the player body is never a
+// viewEntity in its own view (suppressSurfaceInViewID), so this is the only pass
+// that actually enumerates it.
+// ---------------------------------------------------------------------------
+
+#define VK_RT_PLAYER_SUPPRESS_MAX 4
+
+static int s_playerSuppressIds[VK_RT_PLAYER_SUPPRESS_MAX];
+static int s_playerSuppressCount = 0;
+static int s_playerSuppressFrame = -1;
+
+static void VK_RT_NotePlayerSuppress(const idRenderEntityLocal *ent)
+{
+    const int id = ent->parms.suppressShadowInLightID;
+    if (!ent->parms.rtPlayer || id == 0)
+        return;
+
+    for (int i = 0; i < s_playerSuppressCount; i++)
+    {
+        if (s_playerSuppressIds[i] == id)
+            return;
+    }
+    if (s_playerSuppressCount < VK_RT_PLAYER_SUPPRESS_MAX)
+        s_playerSuppressIds[s_playerSuppressCount++] = id;
+}
+
+bool VK_RT_PlayerSuppressesLight(int lightId)
+{
+    // Stale list (no TLAS rebuild this frame) reports no suppression, which is the
+    // pre-existing behaviour rather than a wrong cull.
+    if (lightId == 0 || s_playerSuppressFrame != tr.frameCount)
+        return false;
+
+    for (int i = 0; i < s_playerSuppressCount; i++)
+    {
+        if (s_playerSuppressIds[i] == lightId)
+            return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
 // VK_RT_RebuildTLAS
 // Rebuild the Top-Level AS each frame from visible entities in viewDef.
 // Each entity contributes one instance pointing to its BLAS.
@@ -1232,6 +1280,11 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     uint32_t dynamicCount = 0;
     uint64_t staticSignature = 1469598103934665603ull; // FNV-1a 64 offset basis
     bool anyBLASBuilt = false;
+
+    // Rebuilt with the instance list below, and only here — the early-out above keeps
+    // the previous DrawView's list intact for the rest of this frame.
+    s_playerSuppressCount = 0;
+    s_playerSuppressFrame = tr.frameCount;
 
     vkRTTlasPassStats_t passStats = {};
     passStats.nearestRejWorldOrigin = idMath::INFINITY;
@@ -1365,6 +1418,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         // Player body uses SBT offset 2 → player_reflect.rchit (main) and placeholder (probe, never fires).
         // World geometry uses offset 0 → reflect_ray.rchit (main) and glass_probe.rchit (probe).
         inst.instanceShaderBindingTableRecordOffset = ent->parms.rtPlayer ? 2 : 0;
+        VK_RT_NotePlayerSuppress(ent);
         inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
         // Per-surface opaque flags are encoded in the BLAS geometry entries; no instance-level override needed.
         inst.accelerationStructureReference = ent->blas->deviceAddress;
@@ -1805,6 +1859,9 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             inst.instanceShaderBindingTableRecordOffset = ent->parms.rtPlayer ? 2 : 0;
             inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
             inst.accelerationStructureReference = ent->blas->deviceAddress;
+            // This pass is where the player body actually arrives: it is never a
+            // viewEntity in its own view, so pass 1 above never sees it.
+            VK_RT_NotePlayerSuppress(ent);
 
             const uint32_t base = dynamicGeomCount;
             dynamicInstBaseGeom[dynamicCount] = base;

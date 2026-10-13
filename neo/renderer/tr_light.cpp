@@ -434,6 +434,8 @@ viewEntity_t *R_SetEntityDefViewEntity(idRenderEntityLocal *def)
     // copy the model and weapon depth hack for back-end use
     vModel->modelDepthHack = def->parms.modelDepthHack;
     vModel->weaponDepthHack = def->parms.weaponDepthHack;
+    // dhewm3-rt: see viewEntity_t::viewLocal.
+    vModel->viewLocal = (def->parms.allowSurfaceInViewID != 0);
 
     R_AxisToModelMatrix(def->parms.axis, def->parms.origin, vModel->modelMatrix);
 

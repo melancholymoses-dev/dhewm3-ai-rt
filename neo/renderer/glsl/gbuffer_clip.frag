@@ -47,8 +47,15 @@ layout(set=0, binding=0) uniform GBufferParams {
     float u_AlphaTestThreshold;
     float u_SpecF0Scale;
     float u_SpecF0Gamma;
-    float u_TcClass; // U4 T&C class — see gbuffer.frag
+    float u_TcClass;   // U4 T&C class — see gbuffer.frag
+    float u_ViewLocal; // 1 = first-person body / view weapon — see gbuffer.frag
 };
+
+// Same three-level alpha encoding as gbuffer.frag — keep the two in step.
+float GBuf_AlphaClass() {
+    if ( u_ViewLocal > 0.5 ) return 0.5;
+    return ( u_TcClass > 0.5 ) ? 0.0 : 1.0;
+}
 
 layout(set=0, binding=1) uniform sampler2D u_BumpMap;
 layout(set=0, binding=2) uniform sampler2D u_DiffuseMap; // alpha test only
@@ -87,7 +94,7 @@ void main() {
     float f0      = clamp(pow(max(specLum, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0, 1.0);
 
     outGbuf   = vec4(nWS * 0.5 + 0.5, f0);
-    outAlbedo = vec4(diffuseSample.rgb, 1.0 - u_TcClass);
+    outAlbedo = vec4(diffuseSample.rgb, GBuf_AlphaClass());
     outMotion = GBuf_MotionVector(vary_CurClip, vary_PrevClip);
     fragColor = vec4(0.0);
 }

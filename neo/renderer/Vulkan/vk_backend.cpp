@@ -1852,10 +1852,13 @@ struct VkGBufferUBO
     float specF0Scale;             // 4 bytes  — r_rtSpecF0Scale
     float specF0Gamma;             // 4 bytes  — r_rtSpecF0Gamma
     // U4 transparency-and-composition class, 0 = ordinary surface, 1 = motion vectors here
-    // are known wrong.  Written to gbufAlbedo's alpha (as 1 - tcClass) and extracted by
-    // fsr_tc_mask.comp; took over the old _pad0 slot, so the struct size is unchanged.
+    // are known wrong.  Rides gbufAlbedo's alpha, extracted by fsr_tc_mask.comp; took
+    // over the old _pad0 slot, so the struct size is unchanged.
     float tcClass;                 // 4 bytes
-}; // 368 bytes total
+    // dhewm3-rt: 1 = view-local surface (first-person body, view weapon).  Shares that
+    // alpha channel as a third level — see the encoding in gbuffer.frag.
+    float viewLocal;               // 4 bytes
+}; // 372 bytes total
 
 // Every UBO here comes out of the one ring, whose stride is sized from
 // INTERACTION_UBO_SIZE.  A struct that outgrows it would silently scribble over the
@@ -3138,6 +3141,10 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             const bool tcDeformed = surf->geo->deformedSurface;
             const bool tcViewmodel = surf->space->weaponDepthHack;
             ubo->tcClass = (tcDeformed || tcViewmodel) ? 1.f : 0.f;
+            // Pixels of geometry that only exists in this view, and so duplicates something
+            // already in the TLAS.  The RT shadow/GI rays leaving them must skip the player
+            // instances — see rt_player_exclude.glsl.
+            ubo->viewLocal = surf->space->viewLocal ? 1.f : 0.f;
 
             VkDescriptorImageInfo bumpInfo = {}, specInfo = {};
             if (!VK_Image_GetDescriptorInfo(bumpImage, &bumpInfo))
