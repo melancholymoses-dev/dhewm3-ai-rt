@@ -822,6 +822,7 @@ set(GLSL_INCLUDES
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_gbuf_normal.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_player_exclude.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/vol_froxel_common.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/vol_froxel_sample.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/gi_probe_common.glsl"
 	# AMD FSR 1 (MIT) — vendored unmodified, see THIRD-PARTY-LICENSES.md.
 	"${CMAKE_SOURCE_DIR}/libs/ffx-fsr/ffx_a.h"

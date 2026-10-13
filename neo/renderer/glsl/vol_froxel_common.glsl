@@ -36,6 +36,9 @@ Code release.
 #ifndef VOL_FROXEL_COMMON_GLSL
 #define VOL_FROXEL_COMMON_GLSL
 
+// Binding-free slice mapping — see the wrappers below.
+#include "vol_froxel_sample.glsl"
+
 // std140 — offsets must match VolFroxelParamsUBO in vk_vol_froxel.cpp exactly.
 // Deliberately vec4-packed rather than scalar-packed: the scalar layout in
 // VolParamsUBO has already cost two offset-mismatch debugging sessions.
@@ -80,40 +83,23 @@ float vf_randFloat(uint seed)
 }
 
 // ---------------------------------------------------------------------------
-// Slice <-> planar view distance.  zc is a CONTINUOUS slice coordinate: cell
-// centre is float(cell.z) + 0.5, so zc spans [0, Nz] across the whole grid.
-//
-//   dist(zc) = dNear * (dFar/dNear)^(zc/Nz) = dNear * exp(zc/Nz * logRange)
-//
-// Spacing is therefore proportional to distance, which is what keeps cells
-// roughly CUBICAL: a cell's XY world size already grows linearly with distance
-// (perspective), and anisotropic cells are what alias.  That — not any
-// inverse-square argument — is why the curve is exponential.  Do not make the
-// distribution humped: mid-dense would leave the far cells, where the
-// surface-straddle error is worst, exactly as coarse as they are now.
-//
-// The range is anchored at BOTH ends (F2).  It used to run [0, maxDist], which
-// put ~22% of the slices inside r_znear and the outer half of the grid below
-// 2% transmittance.  See VK_RT_BuildFroxelParams for how dNear/dFar are derived.
+// Slice <-> planar view distance.  The mapping itself lives in
+// vol_froxel_sample.glsl, which has no bindings and so can also be included by
+// passes outside this set; these wrap it with this pass's UBO.
 // ---------------------------------------------------------------------------
-float vf_SliceToDist(float zc)
+VolFroxelSlices vf_Slices()
 {
-    float nz = float(max(fp.gridDim.z, 1));
-    return fp.depthParams.x * exp(clamp(zc / nz, 0.0, 1.0) * fp.rangeParams.x);
+    VolFroxelSlices s;
+    s.dNear       = fp.depthParams.x;
+    s.logRange    = fp.rangeParams.x;
+    s.invLogRange = fp.rangeParams.y;
+    s.nz          = max(fp.gridDim.z, 1);
+    return s;
 }
 
-// Normalised W texture coordinate (0..1) for a planar view distance — what the
-// resolve feeds to a trilinear sampler3D fetch.
-float vf_DistToTexW(float dist)
-{
-    float dNear = max(fp.depthParams.x, 1e-4);
-    return clamp(log(max(dist, dNear) / dNear) * fp.rangeParams.y, 0.0, 1.0);
-}
-
-float vf_DistToSlice(float dist)
-{
-    return vf_DistToTexW(dist) * float(max(fp.gridDim.z, 1));
-}
+float vf_SliceToDist(float zc)   { return vfs_SliceToDist(vf_Slices(), zc); }
+float vf_DistToTexW(float dist)  { return vfs_DistToTexW(vf_Slices(), dist); }
+float vf_DistToSlice(float dist) { return vf_DistToTexW(dist) * float(max(fp.gridDim.z, 1)); }
 
 // ---------------------------------------------------------------------------
 // Depth buffer -> planar view distance.  Same idiom as BilateralPC's
