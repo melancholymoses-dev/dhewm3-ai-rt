@@ -25,9 +25,11 @@ Gate: no fix stage (A1-A5, B1-B4) starts until Stage 0 shows its finding on a ch
 
 Already good: chunk sub-allocator with generation guard, garbage rings with overflow lists, 16 MB staging ring for buffers, batched `VK_BeginSingleTimeCommands`.
 
-## Stage 0 — Triage with existing logging (no code)
+## Stage 0 — Triage with existing logging (no code) — **DONE, superseded by A0**
 
-Capture: `r_vkRTProfile 2` (every frame) through a section that chugs, plus Mars City. Run PresentMon alongside for the frame-time trace.
+A0 replaced this table's whole premise: `r_vkRTProfile 2` floods, and the recipe is now
+one CSV plus `tools/vk_profile_report.py`. Kept for the reading-to-stage mapping, which
+still holds. Results are in "Measured 2026-10-12" below.
 
 | Reading (`VK FRAME PROFILE` / `VK CPU PROFILE` / `VK RT PROFILE`) | Means | Next |
 |---|---|---|
@@ -257,6 +259,38 @@ Check: TLAS gather CPU ms (B0 counter) drops; descriptor writes per rebuild drop
 
 Check: per-buffer memory type log shows the BAR type on this machine; RT pass GPU ms on the 4070 Ti Super and the 9070 XT compared against B0; machine without ReBAR still runs (force the fallback with a debug cvar and confirm).
 
+## Measured 2026-10-12 (three scenarios, `com_fixedTic 1`, full CSV)
+
+Numbers and method: `notes/20261010_vk_core_baseline.txt`. 5950X / 4070 Ti Super, 1440p,
+no upscaling. mchq 2978 frames, r2r 4456, commfire 1327.
+
+| Result | Numbers | Consequence |
+|---|---|---|
+| **Phase 6a confirmed.** Bucketing mchq by `lights.serial`: `Interactions` +7.41 ms while `Shadows` −2.38 ms across 20 serial lights. Total GPU 6.50 → 13.13 ms | `lights.batched` pins to 7 (`VK_RT_SHADOW_BATCH_MAX`); 74% of frames overflow it | 6a is the top item. Try raising the cap before anything more elaborate |
+| All three scenarios are GPU-bound | GPU 9.2 / 11.6 / 14.9 ms vs CPU busy 2.0 / 2.2 / 2.4 ms. `cpu.total + cpu.raster` 1.4-1.7 ms | Every CPU-side stage below is a non-factor at these settings. A CPU win only shortens a wait |
+| BLAS rebuilds cost ~0.9-1.2 ms of CPU each, linear, and arrive in bursts | 32 rebuild frames per capture; worst 36 rebuilds = 42.6 ms in `cpu.TLAS.BLAS`, 49 ms backend | New item; belongs with B2's flag work. Cap and spread the per-frame count |
+| F2 reframed: the upload "wait" is GPU back-pressure | `frame.upload` tracks the **previous** frame's GPU cost 62-74x across quintiles. Real upload cost is `vc.allocMs` p50 0.014 ms | A2's async flush moves the wait, it does not recover time. Demoted |
+
+### Dispatched by measurement — not factors at these settings
+
+Not removed: a different GPU, a CPU-bound scenario or a streaming-heavy map could revive any
+of them. Each needs its counter re-read before the stage is reopened.
+
+| # / Stage | Counter | Reading | Verdict |
+|---|---|---|---|
+| F3, A2 lazy-load rows | `midframe.imageLoads` | 0 across 8761 frames in three scenarios | Dead. The "one-by-one" pattern never fires in gameplay |
+| F5, F12, **A4** | `mem.rssMB`, `mem.vramUsedMB` | RSS 145-219 MB flat; VRAM 2.1 of 15.5 GB (14%) | Dead. No residency or VRAM pressure to fix; BC compression has no case |
+| F8, A5 ring sizing | `ring.overflows` | 0 in every frame; `ring.dataPeakKB` 1023 of a 64 MB ring | Dead. High-water tracking still worth having as a guard rail, not a fix |
+| F11 | `vc.allocMs` | p50 0.01 ms, max 0.08 | Dead |
+| F6, **A5** state pushes | `cpu.raster` | p50 0.5-0.95 ms total, including all pushes and draws | Dead |
+| F7 | — | Zero with `r_rtShadows 1`; shadow volumes are never generated | Dead as documented |
+| X1 frontend | `frame.frontend` | p50 0.75-1.36 ms (`addModels` 0.68-1.02) | Not a factor |
+| X4 pipeline hitches | `midframe.pipelines` | 2 events in 8761 frames, 0.23 ms each | Dead. No `VkPipelineCache` still worth adding for startup, not for hitches |
+| F1, A1 | `ring.idxKB` | p50 338-589 KB/frame re-copied, but it lands inside `cpu.raster`'s 0.9 ms | CPU case is dead. A1 survives **only** as a dependency of B1 (zero-copy BLAS) |
+
+Still live and unmeasured: X3 (`VK VC SITES` is not in the CSV), X5-X8, R5/R6 (`cpu.TLAS`
+p50 0.6 ms every frame is 5% of a 12 ms frame), R7 (needs the B0 A/B).
+
 ## Measured 2026-10-11 (timedemo + live, Mars City 2)
 
 | Result | Numbers | Consequence |
@@ -299,19 +333,23 @@ Candidates outside the files this audit read. Each needs a Stage 0 / A0 number b
 
 ## Order
 
+Re-ordered 2026-10-12 against the measurements above. Everything that survives is either
+GPU-side or a correctness fix; the CPU-side stages are parked because all three scenarios
+are GPU-bound by 4-7x.
+
 | Stage | Risk | Gate / expected gain |
 |---|---|---|
-| 0 | none | Existing logs + PresentMon; decides which stages run |
-| A0 + B0 | none | Close logging gaps; one session covers both; includes the R2 and R7 A/Bs. A0a (labels) and A0b (window stats) first — labels turn several B0 counters into RGP/RRA/RMV reads |
-| A2 (lazy-load part) | low-med | Run if lazy image loads appear on hitch frames (F3) |
-| B3 | low-med | Run if TLAS CPU ms is material; per-frame CPU, streaming stalls |
-| A3 (sampler cache, staging) | low-med | Run if object counts are high; load time, limit safety |
-| B2 | med | Run on RRA / allocation evidence; VRAM, update cost |
-| A1 | med | Run if ring bytes are large or B1 is wanted; prerequisite for B1 |
-| B1 | med-high | Run if R2 or R7 confirmed; removes host copies |
-| A5 | low | Run if draw-state counters are high and the frame is CPU-bound |
+| 0, A0, B0 (counters) | none | Done. A0 landed and is validated; B0's counter list is next |
+| Phase 6a (cleanup doc) | med | **Confirmed, runs first.** 74% of mchq frames overflow the 7-layer batch; the overflow costs ~0.37 ms per light billed to `Interactions` |
+| BLAS rebuild burst | med | New. 36 rebuilds in one frame = 49 ms. Cap and spread the per-frame count; overlaps B2's flag work |
+| B0 (remaining A/Bs) | none | R2 serialize-frames A/B and R7 memory-type A/B — both answer GPU-side questions |
+| B2 | med | Static BLAS flags and shared scratch. RRA read first |
+| B1 | med-high | Run if R2 or R7 confirmed; removes host copies. Needs A1 |
+| A1 | med | **Only as B1's prerequisite.** Its own CPU case is dead (`cpu.raster` 0.9 ms) |
+| B3 | low-med | `cpu.TLAS` p50 0.6 ms every frame; 5% of frame time, worth it once the GPU items land |
 | B4 | low | Run if the R7 A/B shows a gain |
-| A2 (async flush), A3 (pools), A4 | med | Only on direct evidence |
+| A3 (sampler cache, staging) | low-med | Load time and allocation-limit safety, not frame time |
+| A2, A4, A5 | — | Parked, see the dispatched table. Reopen only if a counter changes |
 
 B1 cannot start before A1 lands the static index buffers. One change per commit with before/after numbers in the notes file.
 

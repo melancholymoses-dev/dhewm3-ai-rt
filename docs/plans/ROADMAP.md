@@ -1,6 +1,6 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-10-11 · **Arc 8 (cleanup + optimization) is current; start at 8a**
+**Status reviewed:** 2026-10-12 · **Arc 8 (cleanup + optimization) is current; start at 8a**
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
 designs live in the linked docs. Prior cycle: `completed/202609_ROADMAP.md`.
@@ -39,9 +39,9 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 5 | **Bloom** - Add lighting bloom around emissive sources| `completed/20260906_bloom_plan.md` | Completed 2026-10-7. |
 | 6 | **Player Body** - Add visible body from first person | `completed/20261001_see_first_person_player_model.md` | ✅ Closed 2026-10-10. Lit, animating, RT-excluded, `rtPlayer` mask verified; ladder sink fixed (body lift, ladder leg anim, foot-IK void fix). Stairs and slopes still dip slightly, accepted |
 | 7 | **TLAS build defects** — (a) pass-2 distance cull holds only the view-visible set, so vol shadow rays miss off-screen occluders and in-scatter flips on a pure yaw; (b) instance mask/SBT key off `noSelfShadow` not the player, breaking breakable-glass reflections | `completed/20261009_vol_fix.md` | ✅ Closed 2026-10-10. Pass-2 bounds cull (free: TLAS build 0.12 ms), vol gain/falloff, `rtPlayer` mask bit (breakable glass fixed), vertex-cache sub-allocator. 7.4 (per-frame upload wait) conditional |
-| 8 | **Cleanup + optimization** — debug trim, drop F0/legacy reflection path, screen-space GI and non-froxel vol, presets + reset, comment sweep | `20261010_cleanup_optimization.md` | Phase 0 (baseline) unblocked once 8b's A0 is validated in-game — the old 1-in-30 point sample was not comparable. Phases 1-5, 7 unstarted |
-| 8a | **RT shadow dispatch** — 14 of 21 shadow lights trace serially inside the interaction loop, 31.9 M pixels, billed to `Interactions`. Steps S0-S7 | `20261010_cleanup_optimization.md` §6a | Largest single GPU cost measured 2026-10-11. **Runs first**, independent of 8/8b |
-| 8b | **Vulkan core audit** — buffers, uploads, raster path, BLAS/TLAS, material table. 23 findings (F1-F13, R1-R10), stages A0-A5 / B0-B4 | `20261010_vk_core_audit.md` | Stage 0 triage done. **A0 code landed 2026-10-11, needs an in-game run**: new `vk_profile.cpp` (window stats + spike line + CSV + debug labels), 40 tagged wait sites, RSS/VRAM gauges. F2 and R1 confirmed; A2 and B1 promoted |
+| 8 | **Cleanup + optimization** — debug trim, drop F0/legacy reflection path, screen-space GI and non-froxel vol, presets + reset, comment sweep | `20261010_cleanup_optimization.md` | Phase 0 baseline measured 2026-10-12 (three scenarios, uncapped, CSV). FP-body default and screenshots outstanding. Phases 1-5, 7 unstarted; the dead GI/vol paths are confirmed at 0.001 ms |
+| 8a | **RT shadow dispatch** — only 7 shadow lights batch; the rest trace serially inside the interaction loop and are billed to `Interactions`. Steps S0-S7 | `20261010_cleanup_optimization.md` §6a | **Confirmed on 2978 frames 2026-10-12** and promoted ahead of 8's phases 1-5: 74% of frames overflow the cap, costing up to 10 ms. **Runs next.** S0 should sweep the batch cap first |
+| 8b | **Vulkan core audit** — buffers, uploads, raster path, BLAS/TLAS, material table. 23 findings (F1-F13, R1-R10), stages A0-A5 / B0-B4 | `20261010_vk_core_audit.md` | A0 landed and validated. **9 findings dispatched by measurement** (F3, F5, F6, F7, F8, F11, F12, X1, X4) and A2/A4/A5 parked — all three scenarios are GPU-bound. Stage order re-cut around B1/B2/B4 plus a new BLAS-rebuild-burst item (36 rebuilds = 49 ms) |
 
 
 ### Measured RT budget
@@ -56,27 +56,26 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 2026-09-23 MC2, scale 0.67 | 0.54 | ~0 | 0.37 | 0.49 | 0.68 | 0.14 | **2.22** |
 | 2026-10-10 MC 1440p, scale 1.00, vol_fix 1-4,6 (76 samples, `r_rtTlasFallbackRadius 0`) | 1.72 | ~0 (p90 1.8 with glass) | 0.82 | 2.05 | 2.93 | 0.46 (0.12 TLAS + 0.34 BLAS) | **~8.0** RT |
 | 2026-10-12 MC entrance, 1440p scale 1.00, **A0 window p50** (17 windows x 30 frames) | 0.82 | 0.67 | 0.83 | 1.57 | 0.17 | 0.18 (incl. 0.08 BLAS) | **4.27** RT / **6.07** raster |
+| **2026-10-12 baseline, `com_fixedTic 1`, three scenarios** (p50, CSV) | 0.00 | 0.00-1.11 | 0.50-1.13 | 1.69-2.51 | 1.33-4.07 | 0.17 | **5.07-9.68** RT / **3.47-6.56** raster |
 
-The 2026-10-12 row is the first capture from the A0 aggregator, so it is a p50 over 510 frames
-rather than a single sampled frame; p50 held within 0.9% across all 17 windows. **Shadows reads
-0.17 only because the entrance has almost no shadow-casting lights** — it is not comparable to
-the 2.93 from the MC2 corner, and says nothing about arc 8a. Vol (0.83 vs 0.82) is the useful
-cross-check: the froxel grid is a fixed size, so it should not move with location, and it didn't.
-**Raster now exceeds RT** (6.07 vs 4.27), with `Interactions` alone at 5.76.
+Every row above the last is capped at 62.5 fps (`USERCMD_MSEC` is integer `1000/60`), so
+GPU cost beyond ~16 ms was invisible. The baseline row is uncapped; numbers, method and
+the three scenario routes are in `notes/20261010_vk_core_baseline.txt` and
+`20261010_cleanup_optimization.md` §0. Total GPU p50: mchq 9.17 ms (109 fps), r2r 11.63
+(86), commfire 14.94 (67). All three are GPU-bound by 4-7x — CPU recording is 1.4-1.7 ms.
 
-Shadows and AO are the two largest costs. **Not every remaining pass is
-screen-resolution** — arc 2 left a ~0.73 ms floor (TLAS, probe trace/blend, froxel
-fill/integrate) that render scale cannot touch, so 0.50 saves only 0.1 ms more than 0.67.
-See `completed/20260918_fsr_upscaling.md` §12.
+**The `Shadows` column understates shadows, and by more than previously thought.** Only 7
+lights batch; the rest trace one at a time inside the interaction loop and are billed to
+`Interactions`. Bucketing 2978 Mars City frames by `lights.serial`: `Interactions` climbs
+0.08 → 10.40 ms while `Shadows` falls 2.48 → 0.31, and total GPU doubles (6.50 → 13.13).
+**74% of frames overflow the 7-layer cap**, so this is the default case, not a corner.
+Arc 8a owns it. The `lights.*` counters read zero until 2026-10-12 (the 2D GUI overlay is
+a second `RC_DRAW_VIEW` and its `ShadowBatchBegin` zeroed them before the read), which is
+why three earlier captures looked like they had no shadow casters at all.
 
-**The `Shadows` column understates shadows.** Only 7 lights are batched; the rest trace
-one at a time inside the interaction loop, so their cost is billed to `Interactions`
-(`Shadows=0.16 Interactions=12.97` in the 2026-10-11 Mars City 2 corner capture). Arc 8a
-relabels the spans first, then fixes the dispatch.
-
-**Raster is now instrumented** — `r_vkRTProfile 1` reports `raster=` (depth prepass,
-interactions, shader passes, fog lights, upscale, tonemap) plus `VK FRAME PROFILE` / `VK CPU PROFILE`
-lines. The rows above were vsync-locked RT-only runs; re-measure uncapped before quoting a raster share.
+**Not every remaining pass is screen-resolution** — arc 2 left a ~0.73 ms floor (TLAS,
+probe trace/blend, froxel fill/integrate) that render scale cannot touch, so 0.50 saves
+only 0.1 ms more than 0.67. See `completed/20260918_fsr_upscaling.md` §12.
 
 Also recorded on a slower CPU Ryzen 5 2600x and AMD 9070XT, which had previously shown worse performance.  It is a weaker RT card, which motivated the upscale work.  
 This is after fixing big CPU drops due to particle uploads.  FPS closer to 60 now. 

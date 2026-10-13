@@ -22,25 +22,32 @@ Will do baselining at 1440p, unscaled / no upscaling, uncapped refresh rate.
 
 Capture CPU/GPU and location as well as breakdowns for CPU/GPU tasks.  
 
-**Needs audit stage A0 validated first.** `r_vkRTProfile 1` used to print one frame in 30 and
-discard the rest, so any baseline captured that way is a point sample, not a number later
-phases can be compared against. A0 landed the window aggregator — capture the
-`mean/p50/p95/max` summaries plus `r_vkRTProfileCSV`, not single frames.
+**Measured 2026-10-12. Numbers in `notes/20261010_vk_core_baseline.txt`.**
 
-Scenarios:
-Mars City Walkthrough: Reflections, Shadows, lots of Grates
-Alpha Labs Firefight: Accelerator room, many enemies, stairway
-Communications Fire: Many particle effects and lights and mirrors.  
+Recipe (`com_fixedTic 1` matters: Doom 3 otherwise caps at 62.5 fps, so GPU cost is invisible):
 
-| Change | Files |
+```
+com_fixedTic 1 / r_vkRTProfileCSV <scenario>.csv / r_vkRTProfileWindow 60 / r_vkRTProfile 1
+python tools/vk_profile_report.py <scenario>.csv
+```
+
+| Scenario | What it stresses | CSV | GPU p50 | fps |
+|---|---|---|---|---|
+| Mars City Walkthrough | Reflections, shadows, grates. Run the hall, look at mirrors and lights, firing pistol throughout | `mchq.csv` | 9.17 ms | 109 |
+| Alpha Labs Firefight | Accelerator-room geometry, many enemies, then the stairway edge for many lights and shadows | `r2r.csv` | 11.63 ms | 86 |
+| Communications Fire | Particles, lights, mirrors. Circle the fires and reflections, plasma rifle for reflected particles | `commfire.csv` | 14.94 ms | 67 |
+
+All three are GPU-bound by 4-7x (CPU busy 2.0-2.4 ms). Top GPU costs are `Interactions`
+and `Shadows`, which Phase 6a shows are the same thing — see below.
+
+| Outstanding | Files |
 |---|---|
-| Capture baseline: `r_vkRTProfile 1` window summaries on Mars City Walkthrough | log saved to `docs/plans/notes/20261010_baseline.txt` |
-| Capture baseline: `r_vkRTProfile 1` window summaries on Alpha Labs Firefight | log saved to `docs/plans/notes/20261010_baseline.txt` |
-| Capture baseline: `r_vkRTProfile 1` window summaries on Communications Fire | log saved to `docs/plans/notes/20261010_baseline.txt` |
+| Recapture r2r and commfire for `lights.*` (counter fix landed after them) | same CSVs |
 | Screenshots: 6 fixed spots (glass, volumetric hall, flashlight, dark room, mirror, FP body) | `notes/baseline_*.png` |
-| Record RSS + VRAM after 5 min play and after 3 map loads | same notes file |
+| First-person body default on | `neo/game`, `neo/d3xp` |
 
-Check: new game starts with body visible; the baseline files exist. Every later phase is compared against them.
+Check: new game starts with body visible. Every later phase diffs against these CSVs with
+`--baseline`.
 
 ---
 
@@ -124,7 +131,23 @@ Check: pick each preset, `cvarlist` shows expected values; Reset returns every R
 
 ## Phase 6a — RT shadow dispatch (one chunk)
 
-Top GPU item from the 2026-10-11 capture (`r_vkLogRT 1`, Mars City 2 corner, 2560x1440, 25 view lights, 21 shadow-casting).
+Top GPU item. First seen in the 2026-10-11 capture (`r_vkLogRT 1`, Mars City 2 corner,
+2560x1440, 25 view lights, 21 shadow-casting); **confirmed 2026-10-12 across 2978 frames**
+of the Mars City Walkthrough with `lights.serial` in the CSV:
+
+| `lights.serial` | frames | `gpu.Interactions` | `gpu.Shadows` | casters |
+|---|---|---|---|---|
+| 0 | 780 | 0.08 | 2.48 | 6 |
+| 5 | 229 | 5.03 | 2.18 | 12 |
+| 10 | 92 | 7.56 | 1.08 | 17 |
+| 15 | 40 | 10.40 | 0.31 | 22 |
+| 20 | 31 | 7.49 | 0.10 | 27 |
+
+`Interactions` +7.41 ms while `Shadows` −2.38 ms: work moves out of the batched dispatch
+and reappears in the interaction loop. Total GPU 6.50 → 13.13 ms. `lights.batched` pins
+to exactly 7 and **74% of frames overflow the cap**, so this is not a corner case. The
+`lights.*` counters were zeroed by a GUI-view bug until 2026-10-12; `python
+tools/vk_profile_report.py mchq.csv` reproduces the table.
 
 | Finding | Evidence | Where |
 |---|---|---|
@@ -139,7 +162,7 @@ No leftover GI "reach" extension was found in this path; the full-screen rects a
 
 | Step | Change | Check |
 |---|---|---|
-| S0 Measure | In the capture corner: `r_rtShadowSamples 1`, then `r_rtShadowBlurEnable 0`, with `r_vkRTProfile 1` | Notes file records ray cost vs blur cost vs remainder (break overhead) |
+| S0 Measure | Mars City Walkthrough: `r_rtShadowSamples 1`, then `r_rtShadowBlurEnable 0`. Also sweep `r_vkRTShadowBatchMax` if it is a cvar (else raise `VK_RT_SHADOW_BATCH_MAX` and rebuild) — the cheapest possible win if break overhead dominates | `--baseline mchq.csv` per variant; notes record ray vs blur vs break overhead |
 | S1 Label | Close the `Interactions` span around any mid-loop shadow dispatch and open a `Shadows` span for it | `Shadows` + `Interactions` sum unchanged; `Interactions` under ~1.5 ms in the corner |
 | S2 Pixel cull | In `shadow_ray.rgen`, before tracing: point light = test world pos against the light's oriented box; projected = against the frustum planes. Outside stores 1.0 and returns. Replaces `r_rtShadowDistanceCutoff` | Debug mode tinting culled pixels; shadows identical inside volumes; `Shadows` ms drops |
 | S3 Looped batches | Assign shadow lights to batch `k = n / W`. Batch 0 traces where it does today. On reaching the first light of batch k>0: end pass, clear used layers, trace + blur the batch, resume. Lights are additive, so order within the loop is free | 21 lights = 2 breaks at W=8 (was 14); log line per batch |
@@ -157,15 +180,22 @@ Order: S0, S1, S2, S3+S4, S5, S6, S7. One commit each, numbers in `notes/2026101
 | S5 rect too tight when surface bounds are stale (animated models) | Use the same bounds the frontend culled with; fall back to light scissor when unsure |
 | S7 shared mask across slots | Only after sync validation is clean on S3 |
 
-Exit: corner capture shows `Interactions` ≤ 1.5 ms, total shadow ms at least halved, 60 fps held with default settings.
+Exit: on `mchq.csv`'s route, `SHADOW DISPATCH` shows `Interactions` flat against
+`lights.serial` instead of climbing, `Interactions + Shadows` p50 at serial≥10 at most
+half of today's 8.6-10.7 ms, and GPU p50 under 9.17 ms.
 
 ---
 
 ## Phase 6 — Vulkan efficiency pass
 
-Detailed findings and stages A0-A5: `20261010_vk_core_audit.md`. Run A0 first; the audit's ordering supersedes the generic steps below where they overlap.
+Detailed findings and stages A0-A5: `20261010_vk_core_audit.md`. A0 is done; that doc's
+"Dispatched by measurement" table and re-ordered stage list supersede the steps below.
 
-Evidence so far: per-frame sync and allocation sites, roadmap item 7.4 (per-frame upload wait, conditional), cache/upload thrash reported by the user. Measure first; fix only what the numbers show.
+**Most of this phase is parked.** All three Phase 0 scenarios are GPU-bound by 4-7x, with
+total CPU recording at 1.4-1.7 ms, so A2/A4/A5 have no measurable target. What survives is
+GPU-side (B1, B2, B4) plus the BLAS rebuild burst. E2-E4 below are still worth doing as
+audits because they are cheap and protect against regressions, not because a number demands
+them.
 
 Steps are lettered E1-E5 to avoid collision with Phase 6a above.
 
@@ -199,16 +229,19 @@ Check: build output byte-identical for touched `.cpp` files if possible (compare
 
 ## Order and exit
 
-| Phase | Risk | Depends on |
-|---|---|---|
-| 0 Baseline + FP on | none | Audit A0a + A0b (window stats) |
-| 1 Debug trim | low | 0 |
-| 2 Reflections | low-med | 1 |
-| 3 Screen-space GI | med | 1 |
-| 4 Non-froxel vol | med | 1 |
-| 5 Presets/reset | low | 2, 3, 4 (final cvar set) |
-| 6a Shadow dispatch | med | 0 (independent of 1-5; can run first) |
-| 6 Efficiency | med | 3, 4 (smaller surface) |
-| 7 Comments | none | 6 |
+| Phase | Risk | Depends on | Status |
+|---|---|---|---|
+| 0 Baseline + FP on | none | Audit A0 | Baseline measured 2026-10-12; FP default and screenshots outstanding |
+| 6a Shadow dispatch | med | 0 | **Next.** Confirmed on 2978 frames; largest measured GPU item |
+| 1 Debug trim | low | 0 | |
+| 2 Reflections | low-med | 1 | |
+| 3 Screen-space GI | med | 1 | Dead paths confirmed: `gpu.GI`/`GITemporal`/`Vol`/`VolTemporal`/`VolBilateral` all read 0.001 ms |
+| 4 Non-froxel vol | med | 1 | same |
+| 5 Presets/reset | low | 2, 3, 4 (final cvar set) | |
+| 6 Efficiency | med | 3, 4 (smaller surface) | Mostly parked — GPU-bound, see the phase note |
+| 7 Comments | none | 6 | |
 
-Exit: cvar count down ≥ 40%, `vk_gi.cpp` + `vk_vol.cpp` combined line count down ≥ 40%, RSS/VRAM flat over map reloads, uploaded bytes/frame and CPU frame time ≤ baseline, all baseline screenshots unchanged.
+6a moved ahead of 1-5: it is the only item with a measured double-digit GPU cost, and the
+cvar trimming in 1-5 cannot change a GPU-bound frame.
+
+Exit: cvar count down ≥ 40%, `vk_gi.cpp` + `vk_vol.cpp` combined line count down ≥ 40%, RSS/VRAM flat over map reloads, GPU p50 below the Phase 0 baseline on all three scenarios, all baseline screenshots unchanged.

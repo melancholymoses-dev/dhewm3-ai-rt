@@ -79,6 +79,7 @@ What the capture settles
     because Vulkan forces r_useIndexBuffers 0.
   F2 cause confirmed: upload.staticBlocks p50 13 / p95 35 / max 90 per frame, standing
     still. upload.KB p50 173 / max 416. frame.upload p99 6.6 / max 11.3.
+    SUPERSEDED by capture 3: frame.upload's tail is GPU back-pressure, not upload work.
   F3 has no evidence here: midframe.imageLoads is zero across all 4171 frames, and every
     wait tag except uploadFlush (max 1.46 ms) is zero. The lazy-image-load half of A2 is
     not what hitches this area. Drop it unless another section shows it.
@@ -92,12 +93,91 @@ Not answerable by more logging
   Why this area chugs on the 2600X/9070XT and not here. That needs the same CSV captured on
   that machine. No additional counters would help.
 
+=====================================================================================
+BASELINE, 2026-10-12. Supersedes captures 1 and 2 above; keep those only for the
+instrumentation-validation arithmetic and the bug write-ups.
+=====================================================================================
+Ryzen 9 5950X / RTX 4070 Ti Super. 2560x1440, render scale 1.000, com_fixedTic 1.
+Two measurement defects fixed between capture 2 and here, both of which invalidated
+earlier readings:
+  1. The profiler's own console block cost 2.4 ms/frame mean. Now suppressed whenever a
+     CSV is open. frame.profilePrint p50 2.540 -> 0.036, below the reporting floor.
+  2. lights.shadow/batched/serial read 0 in every frame. The 2D GUI overlay is a second
+     RC_DRAW_VIEW whose VK_RT_ShadowBatchBegin zeroed them before the submit-time read.
+     Recorded in VK_RB_AssignShadowLayers with VK_Prof_Max instead. Any capture before
+     2026-10-12 22:10 has zeroed light counts — its timings are still good.
+
+com_fixedTic 1 is now part of the recipe. Doom 3 otherwise caps at 62.5 fps, not 60:
+USERCMD_MSEC is integer 1000/60 = 16, and Session.cpp:3121 blocks one render per tic.
+With the cap off, frame.backend ~= GPU time, which is the signature of a clean GPU-bound
+measurement. The pacing wait also stops splitting between Sys_WaitForEvent and the
+upload fence.
+
+Scenario files (base/*.csv)       mchq          r2r         commfire
+  frames                          2978          4456          1327
+  GPU p50 (RT + raster)            9.17         11.63         14.94
+  = fps                             109            86            67
+  frame.backend p95 = fps            --     21.8 / 46     34.6 / 29
+  CPU busy p50 (waits removed)     2.03          2.24          2.39
+  gpu.total (RT) p50               5.69          5.07          9.68
+  gpu.raster p50                   3.47          6.56          5.26
+  gpu.Interactions p50 / p95       3.47 / --    6.16 / 10.6   4.82 / 21.0
+  gpu.Shadows p50 / p95            1.33 / --    1.33 / 7.66   4.07 / 10.5
+  gpu.AO p50                       1.69          1.79          2.51
+  gpu.FroxelFill p50               0.50          0.54          1.13
+  gpu.Refl p50                     0.00          0.00          1.11
+  lights.view / casting p50       15 / 12        41 / ?        21 / ?
+  RSS MB                        162 -> 187    145 -> 192    210 -> 219
+  VRAM MB                          2167          2042          2126
+  r2r and commfire predate the counter fix: their light counts are unusable, timings fine.
+
+Every scenario is GPU-bound. CPU recording is 2.0-2.4 ms against 9-15 ms of GPU, and
+cpu.total + cpu.raster is 1.4-1.7 ms. There is no CPU problem in any of the three.
+
+FINDING: Phase 6a confirmed. Serial shadow dispatch is the top GPU cost.
+  mchq, 2978 frames bucketed by lights.serial (now that the counter works):
+    serial   n    Interact  Shadows  Int+Shad  casters
+         0  780      0.08     2.48      2.56        6
+         5  229      5.03     2.18      7.20       12
+        10   92      7.56     1.08      8.64       17
+        15   40     10.40     0.31     10.71       22
+        20   31      7.49     0.10      7.59       27
+  Interactions +7.41 ms while Shadows -2.38 ms across 20 serial lights. Work moves out
+  of the batched dispatch and reappears inside Interactions: that handoff IS the finding,
+  and it is why a single p50 cannot see it. Total GPU 6.50 -> 13.13 ms, a doubling.
+  lights.batched pins to exactly 7 (VK_RT_SHADOW_BATCH_MAX) and 2198 of 2978 frames
+  (74%) overflow it. Raising the cap is the first lever to try.
+  Caveat: casters rises with serial (6 -> 27), so part of the climb is more lights to
+  shade. But 6 casters cost 0.08 ms and 8 cost 0.71 — two lights cannot explain that
+  step. `python tools/vk_profile_report.py mchq.csv` reproduces the table.
+
+FINDING: BLAS rebuild hitch. Reproducible across 5 captures, CPU-side.
+  ~0.9-1.2 ms of CPU per blas.rebuild in cpu.TLAS.BLAS, linear in the count. Refits
+  (blas.updates) are free by comparison; only rebuilds hurt. Rebuilds are rare (32
+  frames per capture) but arrive in bursts.
+                       mchq 21:04   r2r 22:05   r2r 21:48   r2r (pre-fix)
+  worst frame              19           3          36           35
+  cpu.TLAS.BLAS on it   14.75 ms       --       42.61 ms     40.90 ms
+  frame.backend on it   18.72 ms       --       48.96 ms     47.52 ms
+  ms per rebuild           1.24         --         0.94         1.20
+  The 36-rebuild frame also carries that capture's only midframe.pipelines hit, so this
+  fires when new content first enters view. ~3 dropped frames in a row.
+  Next: why those BLAS rebuild instead of refitting, and whether the per-frame rebuild
+  count can be capped and spread the way shadow casters are.
+
+CORRECTED: frame.upload / wait.uploadFlush is not an upload cost (capture 2 read it
+  wrong). It is the CPU parking on the upload fence while the GPU catches up. Bucketing
+  by the PREVIOUS frame's GPU cost, frame.upload rises monotonically 0.35 -> 9.01 ms
+  across quintiles (62-74x bottom to top). Fixing the blocking flush moves the wait; it
+  does not recover the time while GPU-bound. F2's real cost is vc.allocMs p50 0.014 ms.
+
 Next capture
 ------------
 The only capture recipe. r_vkRTProfileGroups is a console filter and is always left at 63;
 every group is collected and written to the CSV regardless, so analysis never needs it.
 
-  r_vkRTProfileCSV a0.csv
+  com_fixedTic 1
+  r_vkRTProfileCSV <scenario>.csv
   r_vkRTProfileWindow 60
   r_vkRTProfile 1
 
@@ -106,9 +186,14 @@ r_vkRTProfileSpikeMs is ignored; set it only when capturing without a file.
 
 Then, before reading any individual frame:
 
-  python tools/vk_profile_report.py a0.csv
+  python tools/vk_profile_report.py <scenario>.csv
   python tools/vk_profile_report.py after.csv --baseline before.csv   # per-stage deltas
 
-Same spot, then the MC2 corner. The questions are which wait tag owns frame.other's 12 ms
-spike, and what upload.staticBlocks reads on the frames where frame.upload is 7-10 ms. Both
-answered from the CSV, not the console.
+Outstanding
+-----------
+  Recapture r2r and commfire with the light-counter fix. Only the CONDITIONS and
+  SHADOW DISPATCH blocks are needed; their timings above stand.
+  The MC2 corner, to check the 2026-10-11 "14 of 21 serial" reading against the fixed
+  counter. mchq already satisfies Phase 6a's condition, so this is confirmation only.
+  One-off, not a stage: a0.csv frame 8181 spent 21.6 ms in cpu.ShaderPasses, once in
+  4171 frames.

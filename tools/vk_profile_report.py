@@ -155,7 +155,15 @@ def report_conditions(cap: Capture, periodic: Dict[str, int]) -> None:
                 serial_max,
             ),
         )
-        if serial_max == 0:
+        # A zero caster count alongside a real gpu.Shadows cost is a broken counter, not
+        # a scene with no shadows; that combination hid the GUI-view reset bug for three
+        # captures.  Say which of the two it is rather than blaming the scene.
+        if max(cap.col("lights.shadow")) == 0 and cap.stat("gpu.Shadows", 0.5) > 0.2:
+            line("", "!! lights.shadow is 0 in every frame but gpu.Shadows p50 is %.2f ms."
+                 % cap.stat("gpu.Shadows", 0.5))
+            line("", "   The counter is wrong, not the scene. Nothing here speaks to")
+            line("", "   shadow dispatch until it is fixed and recaptured.")
+        elif serial_max == 0:
             line("", "!! lights.serial is 0 in every frame: this capture CANNOT")
             line("", "   speak to serial shadow dispatch (cleanup doc Phase 6a).")
             line("", "   Serial time is billed to Interactions, so a low")
@@ -248,8 +256,10 @@ def detect_periodic(cap: Capture, min_share: float = 0.6) -> Dict[str, int]:
     for name in cap.live_columns():
         vals = cap.col(name)
         p50, mx = cap.stat(name, 0.5), max(vals)
-        # Only worth testing when there is a real tail to explain.
-        if mx < 1.0 or mx < 4.0 * max(p50, 1e-6):
+        # Only worth reporting when the periodic spike is big enough to distort a
+        # reading.  The window-close CSV flush is periodic and costs ~0.6 ms, which is
+        # true and useless; the print this was written to catch cost 15-20 ms.
+        if mx < 3.0 or mx < 4.0 * max(p50, 1e-6):
             continue
         thresh = max(p50 * 4.0, mx * 0.4)
         hits = [cap.frames[i] for i, v in enumerate(vals) if v > thresh]
@@ -296,6 +306,61 @@ def backpressure_columns(cap: Capture, candidates: Sequence[str]) -> Dict[str, f
 # ---------------------------------------------------------------------------
 # 3. Consistency: does frame.backend close?
 # ---------------------------------------------------------------------------
+
+
+def report_shadow_dispatch(cap: Capture) -> None:
+    """Pass cost bucketed by how many shadow lights overflowed the batch.
+
+    Serial shadow dispatch is billed to gpu.Interactions, so the two cannot be told apart
+    from a single p50.  Varying lights.serial within one capture separates them: if
+    Interactions rises with it while Shadows falls, work is moving from the batched
+    dispatch into the serial path.
+    """
+    if not cap.has("lights.serial") or max(cap.col("lights.serial")) == 0:
+        return
+    serial = [int(v) for v in cap.col("lights.serial")]
+    if len(set(serial)) < 4:
+        return
+
+    print("=" * 78)
+    print("SHADOW DISPATCH  (cost vs shadow lights that overflowed the batch)")
+    print("=" * 78)
+    batched_cap = cap.stat("lights.batched", 0.95)
+    over = sum(1 for s in serial if s > 0)
+    print("  batch cap appears to be %d layers; %d of %d frames (%.0f%%) overflow it"
+          % (batched_cap, over, cap.n, 100.0 * over / cap.n))
+    print("  %8s %6s %9s %9s %9s %9s" % ("serial", "n", "Interact", "Shadows", "Int+Shad", "casters"))
+
+    buckets: Dict[int, List[int]] = {}
+    for i, s in enumerate(serial):
+        buckets.setdefault(s, []).append(i)
+
+    def med(idxs: List[int], name: str) -> float:
+        v = sorted(cap.col(name)[i] for i in idxs)
+        return percentile(v, 0.5)
+
+    shown = [s for s in sorted(buckets) if len(buckets[s]) >= 20]
+    for s in shown:
+        idxs = buckets[s]
+        it, sh = med(idxs, "gpu.Interactions"), med(idxs, "gpu.Shadows")
+        print("  %8d %6d %9.2f %9.2f %9.2f %9.0f"
+              % (s, len(idxs), it, sh, it + sh, med(idxs, "lights.shadow")))
+
+    if len(shown) >= 2:
+        lo, hi = buckets[shown[0]], buckets[shown[-1]]
+        d_int = med(hi, "gpu.Interactions") - med(lo, "gpu.Interactions")
+        d_sh = med(hi, "gpu.Shadows") - med(lo, "gpu.Shadows")
+        span = shown[-1] - shown[0]
+        if d_int > 0.5 and d_sh < 0.0:
+            print("  CONFIRMED: Interactions +%.2f ms and Shadows %.2f ms across %d serial"
+                  % (d_int, d_sh, span))
+            print("             lights = %.2f ms per serial light, billed to Interactions."
+                  % (d_int / max(1, span)))
+        else:
+            print("  Interactions %+.2f ms, Shadows %+.2f ms across %d serial lights:"
+                  % (d_int, d_sh, span))
+            print("             no clean handoff; the serial path is not the cost here.")
+    print()
 
 
 def report_consistency(cap: Capture) -> None:
@@ -508,6 +573,7 @@ def main() -> int:
 
     periodic = detect_periodic(cap)
     report_conditions(cap, periodic)
+    report_shadow_dispatch(cap)
     report_consistency(cap)
     report_swings(cap, periodic)
     report_stats(cap, args.group)

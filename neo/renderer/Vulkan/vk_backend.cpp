@@ -3990,6 +3990,18 @@ static void VK_RB_AssignShadowLayers(void)
             continue;
         VK_RT_ShadowBatchAddLight(vLight, VK_ComputeLightScissor(vLight));
     }
+
+    // Record here, not at submit: the 2D GUI overlay is a second RC_DRAW_VIEW with no
+    // viewLights, and its ShadowBatchBegin zeroed these before submit could read them.
+    // Max so whichever view has the lights wins regardless of view order.
+    if (VK_Prof_Active())
+    {
+        int casters = 0, batched = 0, serial = 0;
+        VK_RT_GetShadowBatchStats(&casters, &batched, &serial);
+        VK_Prof_Max(VKPROF_LIGHTS_SHADOW, (double)casters);
+        VK_Prof_Max(VKPROF_LIGHTS_BATCHED, (double)batched);
+        VK_Prof_Max(VKPROF_LIGHTS_SERIAL, (double)serial);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -6116,18 +6128,10 @@ void VK_RB_SwapBuffers()
     s_rtProfFrameCPU[submittedFrame].backendMs =
         VK_RTProfile_TicksToMs(s_rtProfFrameStart[submittedFrame], VK_RTProfile_CPUStamp());
 
-    // Read here because the batch is built during the interaction loop and reset at the
-    // start of the next view.  lights.serial is Phase 6a's discriminator.
+    // lights.shadow/batched/serial are recorded in VK_RB_AssignShadowLayers; only the
+    // frontend's view-light count belongs here.
     if (VK_Prof_Active())
-    {
-        int casters = 0, batched = 0, serial = 0;
-        if (vk.rayTracingSupported)
-            VK_RT_GetShadowBatchStats(&casters, &batched, &serial);
         VK_Prof_SetSlot((int)submittedFrame, VKPROF_LIGHTS_VIEW, (double)tr.pcLastFrame.c_viewLights);
-        VK_Prof_SetSlot((int)submittedFrame, VKPROF_LIGHTS_SHADOW, (double)casters);
-        VK_Prof_SetSlot((int)submittedFrame, VKPROF_LIGHTS_BATCHED, (double)batched);
-        VK_Prof_SetSlot((int)submittedFrame, VKPROF_LIGHTS_SERIAL, (double)serial);
-    }
 
     vk.currentFrame = (vk.currentFrame + 1) % VK_MAX_FRAMES_IN_FLIGHT;
     s_frameNeedsImageAcquireWait = false;
