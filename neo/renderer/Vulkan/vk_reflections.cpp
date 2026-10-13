@@ -30,6 +30,7 @@ of the original Doom 3 GPL Source Code release.
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_upscale.h"
 #include "renderer/Vulkan/vk_rt_emitters.h"
@@ -310,7 +311,7 @@ static void VK_RT_CreateNullGbufNormal(void)
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &tmpCmd;
         VK_CHECK(vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE));
-        vkQueueWaitIdle(vk.graphicsQueue);
+        VK_Prof_QueueWaitIdle(VKPROF_WAIT_REFLECTIONS, vk.graphicsQueue);
         vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
     }
 }
@@ -467,7 +468,7 @@ static void VK_RT_CreateReflImages(uint32_t width, uint32_t height)
                 fflush(NULL);
             }
 
-            vkQueueWaitIdle(vk.graphicsQueue);
+            VK_Prof_QueueWaitIdle(VKPROF_WAIT_REFLECTIONS, vk.graphicsQueue);
             vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
         }
     }
@@ -991,7 +992,7 @@ void VK_RT_ShutdownReflections(void)
 
 void VK_RT_ResizeReflections(uint32_t width, uint32_t height)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_REFLECTIONS);
     VK_RT_DestroyReflImages();
     VK_RT_CreateReflImages(width, height);
 
@@ -1341,8 +1342,11 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
                             &vkRT.matDescSet[vk.currentFrame], 0, NULL);
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Refl: dispatch %ux%u at (%d,%d) mode=%d maxDist=%.1f emitters=%d\n", rectW, rectH,
-                       rectX, rectY, ubo.reflMode, ubo.maxDist, ubo.emitterCount);
+        // glowTris is the separate population: additive translucent surfaces the BLAS drops,
+        // which is the only way a beam or sprite reaches a reflection as geometry.  emitters
+        // counts discs (projectiles, smoke) and says nothing about those.
+        common->Printf("VK RT Refl: dispatch %ux%u at (%d,%d) mode=%d maxDist=%.1f emitters=%d glowTris=%d\n", rectW,
+                       rectH, rectX, rectY, ubo.reflMode, ubo.maxDist, ubo.emitterCount, ubo.glowTriCount);
 
     vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion, rectW,
                       rectH, 1);

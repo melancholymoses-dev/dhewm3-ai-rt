@@ -16,6 +16,7 @@ of the original Doom 3 GPL Source Code release.
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_upscale.h"
 #include "renderer/Vulkan/vk_bloom.h"
 
@@ -500,7 +501,7 @@ void VK_RecreateSwapchain(int width, int height)
         height = (int)caps.currentExtent.height;
     }
 
-    VkResult waitResult = vkDeviceWaitIdle(vk.device);
+    VkResult waitResult = VK_Prof_DeviceWaitIdle(VKPROF_WAIT_SWAPCHAIN);
     common->Printf("VK: RecreateSwapchain vkDeviceWaitIdle result=%d\n", (int)waitResult);
     fflush(NULL);
     if (waitResult != VK_SUCCESS)

@@ -46,6 +46,7 @@ layout(set=0, binding=0) uniform GBufferParams {
     float u_SpecF0Scale;        // r_rtSpecF0Scale
     float u_SpecF0Gamma;        // r_rtSpecF0Gamma
     float u_TcClass;            // U4 T&C class, fragment-only (see gbuffer.frag)
+    float u_ViewLocal;          // view-local surface flag, fragment-only (see gbuffer.frag)
 };
 
 layout(location = 0) out vec2 vary_TexCoord_Bump;

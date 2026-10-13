@@ -12,10 +12,12 @@ Alpha carries the mask because gbufAlbedo's rgb is the only part anything reads
 channel that avoids a fifth colour attachment and the ten pipeline-creation
 sites that would come with one.
 
-The prepass writes 1.0 - tcClass, so:
+The prepass writes a three-level class (gbuffer.frag, GBuf_AlphaClass), so:
   alpha == 1.0  ->  mask 0  (ordinary surface, or a pixel the prepass never
                              wrote: sky and translucents clear to white)
-  alpha <  1.0  ->  mask 1 - alpha
+  alpha <  1.0  ->  mask 1  (0.0 = motion vectors known wrong, 0.5 = view-local
+                             geometry, which is a skinned mesh or the viewmodel
+                             and so wants the same full reactivity)
 
 FSR 2's depth-clip pass already 3x3 max-dilates whatever it is given
 (PreProcessReactiveMasks, ffx_fsr2_depth_clip.h), so no dilation happens here.
@@ -55,6 +57,8 @@ void main()
     if (coord.x >= pc.renderExtent.x || coord.y >= pc.renderExtent.y)
         return;
 
+    // Threshold, not 1 - alpha: the channel carries three levels now and every one
+    // below 1.0 is fully reactive.  Identical output to the old two-level encoding.
     float packed = texelFetch(srcAlbedo, coord, 0).a;
-    imageStore(dstMask, coord, vec4(clamp(1.0 - packed, 0.0, 1.0)));
+    imageStore(dstMask, coord, vec4(packed < 0.99 ? 1.0 : 0.0));
 }

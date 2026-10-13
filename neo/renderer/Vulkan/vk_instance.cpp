@@ -16,6 +16,7 @@ of the original Doom 3 GPL Source Code release.
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 
 #include <SDL.h>
 #include <SDL_vulkan.h>
@@ -80,6 +81,12 @@ static const char *rtDeviceExtensions[] = {
     VK_KHR_RAY_QUERY_EXTENSION_NAME, // vol_march.comp uses rayQueryEXT
 };
 static const int numRTDeviceExtensions = 10;
+
+// Optional, profiling only (A0).  A missing one disables its metric, never the device.
+static const char *optionalDeviceExtensions[] = {
+    VK_EXT_MEMORY_BUDGET_EXTENSION_NAME,
+};
+static const int numOptionalDeviceExtensions = 1;
 
 // ---------------------------------------------------------------------------
 // Queue family detection
@@ -170,12 +177,24 @@ static int VK_ScoreDevice(VkPhysicalDevice physDev, bool *outRTSupport)
 // VKimp_CreateInstance
 // ---------------------------------------------------------------------------
 
+static bool VK_CheckInstanceExtensionSupport(const char *name)
+{
+    uint32_t extCount = 0;
+    vkEnumerateInstanceExtensionProperties(NULL, &extCount, NULL);
+    VkExtensionProperties *avail = (VkExtensionProperties *)alloca(sizeof(VkExtensionProperties) * extCount);
+    vkEnumerateInstanceExtensionProperties(NULL, &extCount, avail);
+    for (uint32_t i = 0; i < extCount; i++)
+        if (strcmp(name, avail[i].extensionName) == 0)
+            return true;
+    return false;
+}
+
 static void VKimp_CreateInstance(SDL_Window *window)
 {
     // Get extensions required by SDL
     uint32_t sdlExtCount = 0;
     SDL_Vulkan_GetInstanceExtensions(window, &sdlExtCount, NULL);
-    const char **sdlExts = (const char **)alloca(sizeof(const char *) * (sdlExtCount + 1));
+    const char **sdlExts = (const char **)alloca(sizeof(const char *) * (sdlExtCount + 2));
     SDL_Vulkan_GetInstanceExtensions(window, &sdlExtCount, sdlExts);
 
     // Add debug extension if validation is enabled
@@ -186,11 +205,16 @@ static void VKimp_CreateInstance(SDL_Window *window)
         enableValidation = false;
     }
 
+    // debug_utils is also how the profiler names passes and objects for GPU tools,
+    // so enable it whenever the loader has it — not only under validation.
+    // The NULL-layer query cannot see extensions an explicit layer would add, so
+    // under validation we append it regardless; the flag is only set once
+    // vkCreateInstance has accepted the list below.
     uint32_t totalExtCount = sdlExtCount;
-    if (enableValidation)
-    {
+    const bool wantDebugUtils = enableValidation || VK_CheckInstanceExtensionSupport(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    if (wantDebugUtils)
         sdlExts[totalExtCount++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
-    }
+    vk.debugUtilsSupported = false;
 
     VkApplicationInfo appInfo = {};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -213,6 +237,10 @@ static void VKimp_CreateInstance(SDL_Window *window)
     }
 
     VK_CHECK(vkCreateInstance(&createInfo, NULL, &vk.instance));
+
+    // Past the VK_CHECK the extension list was accepted, so this is the only point
+    // where claiming debug_utils support is actually true.
+    vk.debugUtilsSupported = wantDebugUtils;
 }
 
 // ---------------------------------------------------------------------------
@@ -397,18 +425,34 @@ static void VKimp_CreateDevice(void)
                         !deviceHasVk13 ? "device reports less than Vulkan 1.3"
                                        : "separateDepthStencilLayouts not supported");
 
-    // Extension list: base + optional RT extensions
-    const char **exts;
-    int numExts;
+    // Extension list: base + optional RT extensions, then any supported profiling ones
+    const char **baseExts;
+    int numBaseExts;
     if (vk.rayTracingSupported)
     {
-        exts = rtDeviceExtensions;
-        numExts = numRTDeviceExtensions;
+        baseExts = rtDeviceExtensions;
+        numBaseExts = numRTDeviceExtensions;
     }
     else
     {
-        exts = deviceExtensions;
-        numExts = numDeviceExtensions;
+        baseExts = deviceExtensions;
+        numBaseExts = numDeviceExtensions;
+    }
+
+    const char **exts =
+        (const char **)alloca(sizeof(const char *) * (numBaseExts + numOptionalDeviceExtensions));
+    int numExts = 0;
+    for (int i = 0; i < numBaseExts; i++)
+        exts[numExts++] = baseExts[i];
+
+    vk.memoryBudgetSupported = false;
+    for (int i = 0; i < numOptionalDeviceExtensions; i++)
+    {
+        if (!VK_CheckDeviceExtensionSupport(vk.physicalDevice, &optionalDeviceExtensions[i], 1))
+            continue;
+        exts[numExts++] = optionalDeviceExtensions[i];
+        if (idStr::Cmp(optionalDeviceExtensions[i], VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0)
+            vk.memoryBudgetSupported = true;
     }
 
     // Chain RT feature structs if RT is supported
@@ -664,7 +708,8 @@ void VK_FlushPendingUploads(void)
         return;
     }
 
-    VkResult waitResult = vkWaitForFences(vk.device, 1, &s_uploadFence, VK_TRUE, UINT64_MAX);
+    VK_Prof_Add(VKPROF_UPLOAD_FLUSHES, 1.0);
+    VkResult waitResult = VK_Prof_WaitForFences(VKPROF_WAIT_UPLOAD_FLUSH, 1, &s_uploadFence, VK_TRUE, UINT64_MAX);
     if (waitResult != VK_SUCCESS)
     {
         VK_PoisonUploadBatch("vkWaitForFences", waitResult, batchId, pendingCount);
@@ -780,9 +825,12 @@ void VKimp_Init(SDL_Window *window)
     VKimp_CreateCommandPool();
     VKimp_CreateSyncObjects();
 
+    VK_Prof_InitDebugUtils();
+
     vk.currentFrame = 0;
     vk.isInitialized = true;
     common->Printf("VK: Instance initialized\n");
+    VK_Prof_LogDeviceLimits();
 }
 
 // ---------------------------------------------------------------------------
@@ -794,7 +842,8 @@ void VKimp_Shutdown(void)
     if (!vk.isInitialized)
         return;
 
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_SHUTDOWN);
+    VK_Prof_Shutdown();
 
     // Drain any deferred image/buffer deletions and free the readback buffer.
     extern void VK_Image_DrainAllGarbage(void);

@@ -57,7 +57,20 @@ layout(set=0, binding=0) uniform GBufferParams {
     // should lean less on its temporal history here.  Rides gbufAlbedo's alpha, whose only
     // consumer reads .rgb; fsr_tc_mask.comp extracts it into the R8 mask FSR 2 wants.
     float u_TcClass;
+    // 1 = view-local surface (first-person body, view weapon).  Shares the same alpha
+    // channel as a third level, read by the RT shadow/GI rgens.
+    float u_ViewLocal;
 };
+
+// gbufAlbedo alpha is a three-level class.  View-local wins over the T&C bit because
+// anything below 1.0 is fully reactive to FSR 2 anyway, so the flag costs nothing there.
+//   1.0  ordinary surface (also the attachment's clear value: sky, translucents)
+//   0.5  view-local — first-person body or view weapon
+//   0.0  motion vectors known wrong, not view-local
+float GBuf_AlphaClass() {
+    if ( u_ViewLocal > 0.5 ) return 0.5;
+    return ( u_TcClass > 0.5 ) ? 0.0 : 1.0;
+}
 
 layout(set=0, binding=1) uniform sampler2D u_BumpMap;
 // gi_albedo_target.md: the opaque pipeline now samples binding 2 too, for the
@@ -97,9 +110,7 @@ void main() {
     float f0      = clamp(pow(max(specLum, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0, 1.0);
 
     outGbuf   = vec4(nWS * 0.5 + 0.5, f0);
-    // Alpha carries 1 - tcClass so the attachment's white clear (a pixel the prepass never
-    // wrote: sky, translucents) decodes to a mask of 0 rather than 1.
-    outAlbedo = vec4(texture(u_DiffuseMap, vary_TexCoord_Diffuse).rgb, 1.0 - u_TcClass);
+    outAlbedo = vec4(texture(u_DiffuseMap, vary_TexCoord_Diffuse).rgb, GBuf_AlphaClass());
     outMotion = GBuf_MotionVector(vary_CurClip, vary_PrevClip);
     fragColor = vec4(0.0);
 }

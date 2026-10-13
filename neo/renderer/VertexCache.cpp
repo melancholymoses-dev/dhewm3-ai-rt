@@ -44,6 +44,9 @@ idCVar idVertexCache::r_vertexBufferMegs("r_vertexBufferMegs", "32", CVAR_INTEGE
 
 idVertexCache vertexCache;
 
+// dhewm3-rt: see VertexCache.h.  Decremented by the backend free paths.
+size_t vertexCacheVirtMemBytes = 0;
+
 /*
 ==============
 R_ListVertexCache_f
@@ -343,6 +346,7 @@ void idVertexCache::Alloc(void *data, int size, vertCache_t **buffer, bool index
     else
     {
         block->virtMem = Mem_Alloc(size);
+        vertexCacheVirtMemBytes += (size_t)size;
         SIMDProcessor->Memcpy(block->virtMem, data, size);
     }
 

@@ -524,6 +524,7 @@ if(WIN32)
 		iphlpapi
 		wsock32
 		ole32
+		psapi # Sys_GetProcessMemoryBytes (GetProcessMemoryInfo)
 	)
 endif()
 
@@ -675,6 +676,7 @@ endfunction()
 
 set(src_vulkan
 	renderer/Vulkan/vk_instance.cpp
+	renderer/Vulkan/vk_profile.cpp
 	renderer/Vulkan/vk_swapchain.cpp
 	renderer/Vulkan/vk_upscale.cpp
 	renderer/Vulkan/vk_buffer.cpp
@@ -818,6 +820,7 @@ set(GLSL_INCLUDES
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_light_struct.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_light_eval.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_gbuf_normal.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_player_exclude.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/vol_froxel_common.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/gi_probe_common.glsl"
 	# AMD FSR 1 (MIT) — vendored unmodified, see THIRD-PARTY-LICENSES.md.

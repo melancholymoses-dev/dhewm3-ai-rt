@@ -96,6 +96,12 @@ int Sys_GetSystemRam(void)
     return mb;
 }
 
+// dhewm3-rt: only the Vulkan profiler reads this; not implemented here.
+unsigned long long Sys_GetProcessMemoryBytes(void)
+{
+    return 0;
+}
+
 /*
 ================
 Sys_LockMemory

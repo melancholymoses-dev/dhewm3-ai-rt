@@ -116,6 +116,10 @@ struct vkState_t
     // separateDepthStencilLayouts, which FSR 2's backend needs for its depth-aspect-only
     // barriers on our combined depth+stencil buffer.  False = r_fsr 2 falls back.
     bool fsr2Supported;
+    // VK_EXT_debug_utils (instance) and VK_EXT_memory_budget (device): both optional,
+    // both profiling only.  Labels feed Nsight/RGP/RenderDoc; budget feeds mem.vram*.
+    bool debugUtilsSupported;
+    bool memoryBudgetSupported;
 
     uint32_t currentFrame;    // 0..VK_MAX_FRAMES_IN_FLIGHT-1
     uint32_t currentImageIdx; // current swapchain image index

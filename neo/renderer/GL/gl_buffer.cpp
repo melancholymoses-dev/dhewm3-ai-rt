@@ -35,5 +35,7 @@ void GL_VertexCache_Free(vertCache_t *block)
     {
         Mem_Free(block->virtMem);
         block->virtMem = NULL;
+        if (vertexCacheVirtMemBytes >= (size_t)block->size)
+            vertexCacheVirtMemBytes -= (size_t)block->size;
     }
 }

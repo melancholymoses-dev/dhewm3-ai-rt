@@ -29,6 +29,10 @@ layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 // lights can be traced back-to-back with no render-pass breaks in the interaction loop.
 layout(set = 0, binding = 1, r8) uniform image2DArray shadowMask;
 layout(set = 0, binding = 2) uniform sampler2D depthSampler;
+// gbufAlbedo from the depth prepass; only alpha is read here, as the three-level
+// surface class (gbuffer.frag, GBuf_AlphaClass).  Always a valid binding — the 1x1
+// null image when there is no G-buffer this frame, with playerClassValid 0 to match.
+layout(set = 0, binding = 4) uniform sampler2D gbufClassSampler;
 
 layout(set = 0, binding = 3) uniform ShadowParams {
     mat4  invViewProj;          // inverse view-projection to reconstruct world pos
@@ -53,8 +57,11 @@ layout(set = 0, binding = 3) uniform ShadowParams {
     vec4  lightAxisFwd;         // point-light 3rd axis; zero half-extent for projected (flat aperture)
     uint  lightKind;            // 0 = point (ellipsoid), 1 = projected (aperture rect) — informational only
     float biasFootprintCoeff;   // world units per render pixel, per unit of view distance
-    float playerExcludeRadius;  // camera-to-pixel distance below which player instances are culled
+    float playerExcludeRadius;  // fallback sphere, used only when playerClassValid == 0
+    int   playerClassValid;     // 1 = gbufClassSampler holds this frame's surface class
 } params;
+
+#include "rt_player_exclude.glsl"
 
 layout(location = 0) rayPayloadEXT float shadowFactor;
 
@@ -296,13 +303,20 @@ void main() {
     float floorTerm   = params.biasErrCoeff * camDist * camDist;
     float adaptBias   = max( baseTerm, floorTerm );
 
-    // A pixel this close to the eye is the first-person body, which stands inside the
-    // world body — rays from it hit that duplicate within a couple of units and shadow
-    // it to black.  Drop the player mask bit (0x02) for those pixels only, so the world
-    // still shadows the body and the body still shadows the floor.
-    uint cullMask = params.rayCullMask;
-    if ( params.playerExcludeRadius > 0.0 && camDist < params.playerExcludeRadius ) {
-        cullMask = 0xFDu;
+    // A view-local pixel is the first-person body, which stands inside the world body —
+    // rays from it hit that duplicate within a couple of units and shadow it to black.
+    // Drop the player mask bit (0x02) for those pixels only, so the world still shadows
+    // the body and the body still shadows the floor and any wall it is standing against.
+    bool playerExcluded = rt_PlayerExcluded( gbufClassSampler, coord, params.playerClassValid,
+                                             camDist, params.playerExcludeRadius );
+    uint cullMask = playerExcluded ? 0xFDu : params.rayCullMask;
+
+    // Debug mode 10: which pixels drop the player instances.  White should cover the
+    // first-person body and nothing else; white on a wall or floor is a pixel that has
+    // lost the player's shadow.
+    if ( params.debugMode == 10 ) {
+        storeShadow( coord, playerExcluded ? 1.0 : 0.0 );
+        return;
     }
 
     // Debug mode 9: the bias budget.  The origin bias is only *visible* (as peter-panning,

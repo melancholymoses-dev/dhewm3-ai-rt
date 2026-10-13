@@ -37,6 +37,7 @@ Code release.
 #include "renderer/tr_local.h"
 #include "renderer/RenderWorld_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 
 #include <string.h>
@@ -347,7 +348,7 @@ static bool VK_RT_AllocFroxelImage(vkFroxelGrid_t &g, uint32_t w, uint32_t h, ui
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &tmpCmd;
         vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, fence);
-        vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        VK_Prof_WaitForFences(VKPROF_WAIT_VOL, 1, &fence, VK_TRUE, UINT64_MAX);
         vkDestroyFence(vk.device, fence, NULL);
         vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
     }
@@ -390,7 +391,7 @@ static void VK_RT_DestroyFroxelImages(void)
 // Calls vkDeviceWaitIdle — init path, or the one frame a res cvar changes.
 static void VK_RT_CreateFroxelImages(void)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_VOL);
     VK_RT_DestroyFroxelImages();
 
     int32_t dim[3];

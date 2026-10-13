@@ -30,6 +30,7 @@ Code release.
 #include "renderer/tr_local.h"
 #include "renderer/RenderWorld_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 
 #include <stdlib.h>
@@ -582,6 +583,7 @@ int VK_RT_GIFastLightCount(void)
 //   int   useGbufNormal     offset 120  size  4
 //   int   checkerPhase      offset 124  size  4
 //   float playerExcludeRadius offset 128 size 4
+//   int   playerClassValid    offset 132 size 4
 //   (pad to 16-byte multiple)
 //   total: 144 bytes
 //
@@ -615,11 +617,15 @@ struct GIParamsUBO
     // frameIndex-based parity locks each slot to one fixed half of the image
     // forever (the "GI checkerboard ghost" bug).
     int32_t checkerPhase;
-    // Camera-to-pixel distance below which the player body is culled from GI rays.
-    // The fp body stands inside the world body, so without this the bounce is occluded
-    // by that duplicate and the body reads black even under a light.
+    // Fallback camera-to-pixel distance below which the player body is culled from GI
+    // rays, used only when playerClassValid is 0.  The fp body stands inside the world
+    // body, so without the exclusion the bounce is occluded by that duplicate and the
+    // body reads black even under a light.
     float playerExcludeRadius;
-    float _pad0[3]; // pad block to 16-byte multiple (144 total)
+    // 1 = binding 6 holds this frame's G-buffer surface class, so the rgen can ask per
+    // pixel whether it is the first-person body instead of guessing from distance.
+    int32_t playerClassValid;
+    float _pad0[2]; // pad block to 16-byte multiple (144 total)
 };
 static_assert(sizeof(GIParamsUBO) == 144, "GIParamsUBO size mismatch");
 
@@ -828,7 +834,7 @@ static void VK_RT_CreateGIImages(uint32_t width, uint32_t height)
             submitInfo.commandBufferCount = 1;
             submitInfo.pCommandBuffers = &tmpCmd;
             vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, fence);
-            vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+            VK_Prof_WaitForFences(VKPROF_WAIT_GI, 1, &fence, VK_TRUE, UINT64_MAX);
             vkDestroyFence(vk.device, fence, NULL);
             vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
         }
@@ -886,7 +892,8 @@ static void VK_RT_InitGIPipeline(void)
     // binding 3: GI params UBO (rgen + rchit read, dynamic)
     // binding 4: GI light list SSBO (rchit read — Option B light evaluation)
     // binding 5: G-buffer normal/F0 sampler (P9 — rgen, replaces rt_ReconstructNormal)
-    VkDescriptorSetLayoutBinding bindings[6] = {};
+    // binding 6: gbufAlbedo sampler — alpha is the surface class (rgen, player exclusion)
+    VkDescriptorSetLayoutBinding bindings[7] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -923,9 +930,15 @@ static void VK_RT_InitGIPipeline(void)
     bindings[5].descriptorCount = 1;
     bindings[5].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
+    // Binding 6: gbufAlbedo — alpha is the surface class (view-local or not).
+    bindings[6].binding = 6;
+    bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[6].descriptorCount = 1;
+    bindings[6].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 6;
+    layoutInfo.bindingCount = 7;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.giDescLayout));
 
@@ -1191,12 +1204,12 @@ static void VK_RT_InitGIPipeline(void)
                        (unsigned)(vkRT.giHitRegion.size / vkRT.giHitRegion.stride));
 
     // --- Descriptor pool and sets ---
-    // COMBINED_IMAGE_SAMPLER count is doubled: depth (binding 2) + gbufNormal
-    // (binding 5, P9) — two per frame slot.
+    // COMBINED_IMAGE_SAMPLER count is tripled: depth (binding 2), gbufNormal
+    // (binding 5, P9) and gbufAlbedo (binding 6) — three per frame slot.
     VkDescriptorPoolSize poolSizes[5] = {
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT * 2},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT * 3},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_MAX_FRAMES_IN_FLIGHT},
     };
@@ -1548,7 +1561,7 @@ void VK_RT_ShutdownGI(void)
 
 void VK_RT_ResizeGI(uint32_t width, uint32_t height)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_GI);
     VK_RT_DestroyGIImages();
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         vkRT.giDescSetLastUpdatedFrameCount[i] = -1;
@@ -2750,6 +2763,10 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // 1x1 null image it still has bound.
     ubo.useGbufNormal = (vk.gbufferSupported && r_rtGbufNormals.GetBool()) ? 1 : 0;
     ubo.playerExcludeRadius = VK_RT_PlayerExcludeRadius();
+    // Per-pixel surface class from the prepass (binding 6 below).  Zero also when the fp
+    // body isn't drawn: there is nothing to exclude, so the rgen skips the fetch.
+    const bool haveClass = vk.gbufferSupported && vkRT.gbufAlbedo[frameIdx].view != VK_NULL_HANDLE;
+    ubo.playerClassValid = (haveClass && ubo.playerExcludeRadius > 0.0f) ? 1 : 0;
     memcpy(uboMapped, &ubo, sizeof(GIParamsUBO));
 
     // Part B: publish this frame's dynamic offset for the probe trace. It shares
@@ -2812,10 +2829,17 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // vk_backend.cpp, which runs well before the GI dispatch.
     const bool haveGbuf = vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE;
     VkImageView gbufView = haveGbuf ? vkRT.gbufNormal[frameIdx].view : VK_RT_GetNullGbufNormalView();
+    // Binding 6: the same prepass's albedo target, read for its alpha (surface class).
+    // Independent validity check — the two images are created together, but the rgen's
+    // playerClassValid must describe the one it actually samples.
+    static VkImageView s_lastGIClassView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    VkImageView classView =
+        haveClass ? vkRT.gbufAlbedo[frameIdx].view : VK_RT_GetNullGbufNormalView();
 
     const bool resourceChanged =
         (s_lastGITlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) || (s_lastGIStorageView[frameIdx] != gb.view) ||
-        (s_lastGIDepthView[frameIdx] != vk.depthSampledView) || (s_lastGIGbufView[frameIdx] != gbufView);
+        (s_lastGIDepthView[frameIdx] != vk.depthSampledView) || (s_lastGIGbufView[frameIdx] != gbufView) ||
+        (s_lastGIClassView[frameIdx] != classView);
 
     bool refreshSet = (vkRT.giDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount) || resourceChanged;
     if (refreshSet)
@@ -2853,7 +2877,14 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
         gbufInfo.imageView = gbufView;
         gbufInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-        VkWriteDescriptorSet writes[6] = {};
+        // Binding 6: surface class.  Same barrier window as gbufNormal above — both are
+        // moved to SHADER_READ_ONLY once per RT block, well before this dispatch.
+        VkDescriptorImageInfo classInfo = {};
+        classInfo.sampler = vkRT.depthSampler;
+        classInfo.imageView = classView;
+        classInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkWriteDescriptorSet writes[7] = {};
 
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].pNext = &tlasWrite;
@@ -2897,12 +2928,20 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[5].pImageInfo = &gbufInfo;
 
-        vkUpdateDescriptorSets(vk.device, 6, writes, 0, NULL);
+        writes[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[6].dstSet = ds;
+        writes[6].dstBinding = 6;
+        writes[6].descriptorCount = 1;
+        writes[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[6].pImageInfo = &classInfo;
+
+        vkUpdateDescriptorSets(vk.device, 7, writes, 0, NULL);
         vkRT.giDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
         s_lastGITlasHandle[frameIdx] = vkRT.tlas[frameIdx].handle;
         s_lastGIStorageView[frameIdx] = gb.view;
         s_lastGIDepthView[frameIdx] = vk.depthSampledView;
         s_lastGIGbufView[frameIdx] = gbufView;
+        s_lastGIClassView[frameIdx] = classView;
     }
 
     // --- Dispatch ---
@@ -3184,7 +3223,7 @@ static bool VK_RT_AllocGIAtrousImage(vkRTImage_t &img, uint32_t width, uint32_t 
         submitI.commandBufferCount = 1;
         submitI.pCommandBuffers = &tmpCmd;
         vkQueueSubmit(vk.graphicsQueue, 1, &submitI, fence);
-        vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        VK_Prof_WaitForFences(VKPROF_WAIT_GI, 1, &fence, VK_TRUE, UINT64_MAX);
         vkDestroyFence(vk.device, fence, NULL);
         vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
     }
@@ -3376,7 +3415,7 @@ void VK_RT_ShutdownGIAtrous(void)
 
 void VK_RT_ResizeGIAtrous(uint32_t width, uint32_t height)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_GI);
     VK_RT_DestroyGIAtrousImages();
     VK_RT_CreateGIAtrousImages(width, height);
 

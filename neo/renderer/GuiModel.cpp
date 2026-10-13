@@ -212,6 +212,9 @@ void idGuiModel::EmitSurface(guiModelSurface_t *surf, float modelMatrix[16], flo
     // U2: a GUI surface has no history of its own, so it reports no motion.
     memcpy(guiSpace->prevModelMatrix, modelMatrix, sizeof(guiSpace->prevModelMatrix));
     guiSpace->weaponDepthHack = depthHack;
+    // dhewm3-rt: a depth-hacked GUI is painted on the view weapon, so it is view-local
+    // like the weapon itself — see viewEntity_t::viewLocal.
+    guiSpace->viewLocal = depthHack;
 
     // add the surface, which might recursively create another gui
     R_AddDrawSurf(tri, guiSpace, &renderEntity, surf->material, tr.viewDef->scissor);

@@ -61,6 +61,12 @@ typedef struct vertCache_s
     void *backendData; // backend-specific resource handle (NULL = not allocated)
 } vertCache_t;
 
+// dhewm3-rt: live bytes held by block->virtMem CPU copies.  Static geometry is
+// resident twice under Vulkan (F5 in docs/plans/20261010_vk_core_audit.md); this
+// is the number stage A4 has to move.  Maintained by the one Mem_Alloc site in
+// idVertexCache::Alloc and the two backend free paths.
+extern size_t vertexCacheVirtMemBytes;
+
 class idVertexCache
 {
   public:

@@ -415,7 +415,7 @@ idCVar pm_deadviewheight("pm_deadviewheight", "10", CVAR_GAME | CVAR_NETWORKSYNC
                          "height of player's view while dead");
 // dhewm3-rt: local first-person body (models/sp_player.md5mesh).  Off by default
 // until the artifact/perf criteria in docs/plans are met.
-idCVar pm_showFirstPersonBody("pm_showFirstPersonBody", "0", CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL,
+idCVar pm_showFirstPersonBody("pm_showFirstPersonBody", "1", CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL,
                               "show the player's own torso and legs in first person");
 // The view sits at Loneck (the spine), not at the eyes, so the body hangs symmetrically
 // around the camera and you see your own backside when looking down.  Negative = back.

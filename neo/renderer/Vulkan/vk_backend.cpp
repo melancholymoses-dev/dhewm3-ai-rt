@@ -23,6 +23,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Cinematic.h"
 #include "idlib/containers/StrList.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_image.h"
 #include "renderer/Vulkan/vk_buffer.h"
@@ -97,6 +98,16 @@ static void VK_SetRenderStage(const char *stage)
     s_stageBreadcrumbHead = (s_stageBreadcrumbHead + 1) % VK_STAGE_BREADCRUMB_MAX;
 }
 
+// A0a: pass labels for GPU capture tools, independent of timestamp profiling.
+// Declared up here because both command-buffer exits (the split submit below and
+// the frame end) have to verify the depth is back to zero before vkEndCommandBuffer.
+static bool s_rtProfLabelsThisFrame = false;
+static int s_rtProfLabelDepth = 0;
+
+// Closes any label an unbalanced phase span left open, so vkEndCommandBuffer cannot
+// fail on it.  Returns the number it had to close.
+static int VK_RTProfile_CloseStrayLabels(VkCommandBuffer cmd);
+
 static void VK_DumpStageBreadcrumbs(void)
 {
     common->Printf("VK: recent stage breadcrumbs (oldest -> newest):\n");
@@ -149,6 +160,11 @@ static bool VK_DebugSplitSubmit(VkCommandBuffer *cmdBufInOut, const char *stageT
 
     if (renderPassActive)
         vkCmdEndRenderPass(cmd);
+    // A split lands between phase spans, so the depth should already be zero; if it
+    // is not, closing here keeps vkEndCommandBuffer from failing on a stray label.
+    if (const int stray = VK_RTProfile_CloseStrayLabels(cmd))
+        common->Warning("VK PROFILE: %d debug label(s) open at split submit '%s'", stray,
+                        stageTag ? stageTag : "(null)");
     VK_CHECK(vkEndCommandBuffer(cmd));
 
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -173,7 +189,7 @@ static bool VK_DebugSplitSubmit(VkCommandBuffer *cmdBufInOut, const char *stageT
         return false;
     }
 
-    VkResult waitResult = vkQueueWaitIdle(vk.graphicsQueue);
+    VkResult waitResult = VK_Prof_QueueWaitIdle(VKPROF_WAIT_OTHER, vk.graphicsQueue);
     if (waitResult != VK_SUCCESS)
     {
         common->Printf("VK SPLIT SUBMIT: queue wait failed at stage='%s' err=%d (%s)\n", stageTag ? stageTag : "(null)",
@@ -252,11 +268,8 @@ static idCVar r_vkSerializeFrames(
     "Debug: wait for each frame's GPU work to finish before recording the next, so the CPU never "
     "writes shared host-visible buffers while a previous frame still reads them.  Artifacts that vanish "
     "with this on are CPU/GPU races.");
-static idCVar r_vkRTProfile(
-    "r_vkRTProfile", "0", CVAR_RENDERER | CVAR_INTEGER,
-    "RT GPU phase profiling with Vulkan timestamps (0=off, 1=periodic logs, 2=log every frame)");
-static idCVar r_vkRTProfileLogEvery("r_vkRTProfileLogEvery", "30", CVAR_RENDERER | CVAR_INTEGER,
-                                    "When r_vkRTProfile=1, print RT GPU phase timing once every N frames");
+// r_vkRTProfile and its window/group/CSV companions live in vk_profile.cpp, which
+// owns the aggregation.  This file only records the raw per-frame numbers.
 
 static int VK_GetEffectiveSplitSubmitMask()
 {
@@ -402,7 +415,11 @@ struct vkRTProfileFrameCPU_t
     double uploadMs; // VK_FlushPendingUploads: staging batch submit + wait
     double submitMs;
     double presentMs;
+    double backendMs; // frame fence wait through present: the wall clock `other=` is derived from
     vkRTBlasFrameStats_t blas;
+    // Frontend counters as of when this frame opened.  Snapshotted because
+    // CollectAndLog runs two frames later, where tr.pcLastFrame is a different frame.
+    performanceCounters_t pc;
 };
 
 struct vkRTProfileEvent_t
@@ -424,76 +441,38 @@ static int s_rtProfRecordedFrameCount[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
 static int s_rtProfCPURecordedFrameCount[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
 static double s_rtProfCPUMs[VK_MAX_FRAMES_IN_FLIGHT][VK_RTPROF_PHASE_COUNT] = {};
 static vkRTProfileFrameCPU_t s_rtProfFrameCPU[VK_MAX_FRAMES_IN_FLIGHT] = {};
-static int s_rtProfBLASEvent = -1;      // open BLAS GPU span, or -1
+static int s_rtProfBLASEvent = -1;        // open BLAS GPU span, or -1
+static bool s_rtProfBLASSpanOpen = false; // a BLAS span is open right now
 static bool s_rtProfBLASSpanDone = false; // one BLAS span per frame
 static uint64_t s_rtProfCPUFreq = 0;
 static float s_rtProfTimestampPeriodNs = 0.0f;
 static bool s_rtProfReady = false;
+// Stamped at the frame fence, read after present: not in the per-slot struct because
+// VK_RTProfile_BeginFrame zeroes that struct after the fence has already been waited on.
+static uint64_t s_rtProfFrameStart[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+// A table rather than a switch: the same names index the profiler's metric
+// registry (gpu.<name> / cpu.<name>) and label every pass for GPU capture tools,
+// so a phase added to the enum without a name here shows up as a hole.
+static const char *const s_rtProfPhaseNames[VK_RTPROF_PHASE_COUNT] = {
+    "TLAS",         "Shadows",      "AO",            "Refl",            "GI",
+    "GITemporal",   "GIAtrous",     "ProbeTrace",    "ProbeBlend",      "ProbeResolve",
+    "GIComposite",  "Vol",          "VolTemporal",   "VolBilateral",    "FroxelFill",
+    "FroxelIntegrate", "FroxelResolve", "VolComposite", "DepthPrepass", "Interactions",
+    "ShaderPasses", "FogLights",    "Upscale",       "Bloom",           "Tonemap",
+    "TLAS.BLAS",
+};
 
 static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
 {
-    switch (phase)
-    {
-    case VK_RTPROF_PHASE_TLAS:
-        return "TLAS";
-    case VK_RTPROF_PHASE_SHADOWS:
-        return "Shadows";
-    case VK_RTPROF_PHASE_AO:
-        return "AO";
-    case VK_RTPROF_PHASE_REFLECTIONS:
-        return "Refl";
-    case VK_RTPROF_PHASE_GI:
-        return "GI";
-    case VK_RTPROF_PHASE_GI_TEMPORAL:
-        return "GITemporal";
-    case VK_RTPROF_PHASE_GI_ATROUS:
-        return "GIAtrous";
-    case VK_RTPROF_PHASE_GI_PROBE_TRACE:
-        return "ProbeTrace";
-    case VK_RTPROF_PHASE_GI_PROBE_BLEND:
-        return "ProbeBlend";
-    case VK_RTPROF_PHASE_GI_PROBE_RESOLVE:
-        return "ProbeResolve";
-    case VK_RTPROF_PHASE_GI_COMPOSITE:
-        return "GIComposite";
-    case VK_RTPROF_PHASE_VOL:
-        return "Vol";
-    case VK_RTPROF_PHASE_VOL_TEMPORAL:
-        return "VolTemporal";
-    case VK_RTPROF_PHASE_VOL_BILATERAL:
-        return "VolBilateral";
-    case VK_RTPROF_PHASE_VOL_FROXEL_FILL:
-        return "FroxelFill";
-    case VK_RTPROF_PHASE_VOL_FROXEL_INTEGRATE:
-        return "FroxelIntegrate";
-    case VK_RTPROF_PHASE_VOL_FROXEL_RESOLVE:
-        return "FroxelResolve";
-    case VK_RTPROF_PHASE_VOL_COMPOSITE:
-        return "VolComposite";
-    case VK_RTPROF_PHASE_DEPTH_PREPASS:
-        return "DepthPrepass";
-    case VK_RTPROF_PHASE_INTERACTIONS:
-        return "Interactions";
-    case VK_RTPROF_PHASE_SHADER_PASSES:
-        return "ShaderPasses";
-    case VK_RTPROF_PHASE_FOG_LIGHTS:
-        return "FogLights";
-    case VK_RTPROF_PHASE_UPSCALE:
-        return "Upscale";
-    case VK_RTPROF_PHASE_BLOOM:
-        return "Bloom";
-    case VK_RTPROF_PHASE_TONEMAP:
-        return "Tonemap";
-    case VK_RTPROF_PHASE_BLAS:
-        return "TLAS.BLAS";
-    default:
+    if (phase < 0 || phase >= VK_RTPROF_PHASE_COUNT)
         return "Unknown";
-    }
+    return s_rtProfPhaseNames[phase];
 }
 
 static bool VK_RTProfileEnabled()
 {
-    return s_rtProfReady && vk.rayTracingSupported && (r_vkRTProfile.GetInteger() > 0);
+    return s_rtProfReady && vk.rayTracingSupported && (VK_Prof_Mode() > 0);
 }
 
 static uint64_t VK_RTProfile_CPUStamp(void)
@@ -508,9 +487,11 @@ static double VK_RTProfile_TicksToMs(uint64_t start, uint64_t end)
     return ((double)(end - start) * 1000.0) / (double)s_rtProfCPUFreq;
 }
 
+// Gated on VK_Prof_Active, not VK_RTProfileEnabled: CPU spans need no query pool,
+// so they still work on a device without timestamp support.
 static void VK_RTProfile_AccumulateCPU(vkRTProfilePhase_t phase, uint64_t startCounter)
 {
-    if (!VK_RTProfileEnabled() || s_rtProfCPUFreq == 0 || startCounter == 0)
+    if (!VK_Prof_Active() || s_rtProfCPUFreq == 0 || startCounter == 0)
         return;
 
     const uint64_t endCounter = SDL_GetPerformanceCounter();
@@ -552,20 +533,25 @@ static void VK_RTProfile_Init()
 {
     VK_RTProfile_Shutdown();
 
+    // Everything before the timestamp gate has to work without query pools: the
+    // registry the wait/upload/memory wrappers record into, and the CPU clock every
+    // span uses.  Only the GPU phase timings need s_rtProfReady.
+    VK_Prof_Init(s_rtProfPhaseNames, VK_RTPROF_PHASE_COUNT);
+
+    s_rtProfCPUFreq = SDL_GetPerformanceFrequency();
+    if (s_rtProfCPUFreq == 0)
+        common->Warning("VK RT PROFILE: SDL_GetPerformanceFrequency returned 0, CPU phase timing disabled");
+
     VkPhysicalDeviceProperties props = {};
     vkGetPhysicalDeviceProperties(vk.physicalDevice, &props);
     if (!props.limits.timestampComputeAndGraphics)
     {
-        common->Warning("VK RT PROFILE: timestampComputeAndGraphics unsupported, GPU phase profiling disabled");
+        common->Warning("VK RT PROFILE: timestampComputeAndGraphics unsupported, GPU phase timing disabled "
+                        "(CPU, wait, upload and memory metrics still report)");
         return;
     }
 
     s_rtProfTimestampPeriodNs = props.limits.timestampPeriod;
-    s_rtProfCPUFreq = SDL_GetPerformanceFrequency();
-    if (s_rtProfCPUFreq == 0)
-    {
-        common->Warning("VK RT PROFILE: SDL_GetPerformanceFrequency returned 0, CPU phase timing disabled");
-    }
 
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
@@ -576,9 +562,19 @@ static void VK_RTProfile_Init()
         VkResult res = vkCreateQueryPool(vk.device, &qpCI, NULL, &s_rtProfQueryPools[i]);
         if (res != VK_SUCCESS)
         {
-            common->Warning("VK RT PROFILE: vkCreateQueryPool failed slot=%d err=%d (%s)", i, (int)res,
-                            VK_ResultToString(res));
-            VK_RTProfile_Shutdown();
+            // Drop the pools but keep the registry and the CPU clock: a pool failure
+            // costs the GPU phase timings, not the rest of the profiler.
+            common->Warning("VK RT PROFILE: vkCreateQueryPool failed slot=%d err=%d (%s) — GPU phase timing "
+                            "disabled, other metrics still report",
+                            i, (int)res, VK_ResultToString(res));
+            for (int j = 0; j < VK_MAX_FRAMES_IN_FLIGHT; j++)
+            {
+                if (s_rtProfQueryPools[j] != VK_NULL_HANDLE)
+                {
+                    vkDestroyQueryPool(vk.device, s_rtProfQueryPools[j], NULL);
+                    s_rtProfQueryPools[j] = VK_NULL_HANDLE;
+                }
+            }
             return;
         }
     }
@@ -589,22 +585,57 @@ static void VK_RTProfile_Init()
 
 static void VK_RTProfile_BeginFrame(VkCommandBuffer cmd, int slot)
 {
+    // Latched once per frame: toggling r_vkDebugLabels mid-frame would leave an
+    // unbalanced push/pop pair in the command buffer.
+    s_rtProfLabelsThisFrame = VK_Prof_LabelsEnabled();
+    s_rtProfLabelDepth = 0;
+
+    // The slot's sample is cleared by the caller, right after CollectAndLog — doing it
+    // here discarded everything the pre-command-buffer work recorded.
+
+    // Also outside the gate: the BLAS span pairs labels, not just timestamps.
+    s_rtProfBLASEvent = -1;
+    s_rtProfBLASSpanOpen = false;
+    s_rtProfBLASSpanDone = false;
+
+    // Per-frame CPU state, cleared whether or not query pools exist.  The frontend
+    // counters are snapshotted here because CollectAndLog runs two frames later,
+    // where tr.pcLastFrame describes a different frame.
+    s_rtProfCPURecordedFrameCount[slot] = -1;
+    for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
+        s_rtProfCPUMs[slot][p] = 0.0;
+    s_rtProfFrameCPU[slot] = {};
+    s_rtProfFrameCPU[slot].pc = tr.pcLastFrame;
+
     if (!VK_RTProfileEnabled())
         return;
 
     s_rtProfEventCount[slot] = 0;
     s_rtProfNextQuery[slot] = 0;
-    s_rtProfCPURecordedFrameCount[slot] = -1;
-    for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
-        s_rtProfCPUMs[slot][p] = 0.0;
-    s_rtProfFrameCPU[slot] = {};
-    s_rtProfBLASEvent = -1;
-    s_rtProfBLASSpanDone = false;
     vkCmdResetQueryPool(cmd, s_rtProfQueryPools[slot], 0, VK_RTPROF_QUERY_COUNT);
+}
+
+static int VK_RTProfile_CloseStrayLabels(VkCommandBuffer cmd)
+{
+    const int stray = s_rtProfLabelDepth;
+    while (s_rtProfLabelDepth > 0)
+    {
+        VK_Prof_PopLabel(cmd);
+        s_rtProfLabelDepth--;
+    }
+    return stray;
 }
 
 static int VK_RTProfile_PhaseBegin(VkCommandBuffer cmd, vkRTProfilePhase_t phase)
 {
+    // Before the profiling gate: a GPU capture has to be readable with
+    // r_vkRTProfile 0, so labels do not depend on timestamp queries.
+    if (s_rtProfLabelsThisFrame)
+    {
+        VK_Prof_PushLabel(cmd, VK_RTProfilePhaseName(phase));
+        s_rtProfLabelDepth++;
+    }
+
     if (!VK_RTProfileEnabled())
         return -1;
 
@@ -630,6 +661,14 @@ static int VK_RTProfile_PhaseBegin(VkCommandBuffer cmd, vkRTProfilePhase_t phase
 
 static void VK_RTProfile_PhaseEnd(VkCommandBuffer cmd, int eventIdx)
 {
+    // Pops before the eventIdx check: PhaseBegin pushes even when it has no query
+    // slot left, and every PhaseBegin is matched by exactly one PhaseEnd.
+    if (s_rtProfLabelDepth > 0)
+    {
+        VK_Prof_PopLabel(cmd);
+        s_rtProfLabelDepth--;
+    }
+
     if (eventIdx < 0 || !VK_RTProfileEnabled())
         return;
 
@@ -643,33 +682,36 @@ static void VK_RTProfile_PhaseEnd(VkCommandBuffer cmd, int eventIdx)
     vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, s_rtProfQueryPools[slot], ev.queryEnd);
 }
 
+// Open/Done are separate flags rather than testing s_rtProfBLASEvent: with
+// timestamps off the event handle is always -1, so keying the pair off it would
+// push a label on every call and pop none.
 void VK_RTProfile_BLASGpuBegin(VkCommandBuffer cmd)
 {
-    if (s_rtProfBLASEvent >= 0 || s_rtProfBLASSpanDone)
+    if (s_rtProfBLASSpanOpen || s_rtProfBLASSpanDone)
         return;
+    s_rtProfBLASSpanOpen = true;
     s_rtProfBLASEvent = VK_RTProfile_PhaseBegin(cmd, VK_RTPROF_PHASE_BLAS);
 }
 
 // Every begun query must get its end timestamp: CollectAndLog waits on all of them.
 void VK_RTProfile_BLASGpuEnd(VkCommandBuffer cmd)
 {
-    if (s_rtProfBLASEvent < 0)
+    if (!s_rtProfBLASSpanOpen)
         return;
     VK_RTProfile_PhaseEnd(cmd, s_rtProfBLASEvent);
     s_rtProfBLASEvent = -1;
+    s_rtProfBLASSpanOpen = false;
     s_rtProfBLASSpanDone = true;
 }
 
 static void VK_RTProfile_CollectAndLog(int slot)
 {
-    if (!s_rtProfReady)
-        return;
     if (slot < 0 || slot >= VK_MAX_FRAMES_IN_FLIGHT)
         return;
 
-    // Submit stamps the slot every frame; with profiling off the event/query counts are
-    // stale, so drop the stamp instead of replaying the last enabled frame's data.
-    if (!VK_RTProfileEnabled())
+    // Submit stamps the slot every frame; with profiling off the counts are stale, so
+    // drop the stamp instead of replaying the last enabled frame's data.
+    if (!VK_Prof_Active())
     {
         s_rtProfRecordedFrameCount[slot] = -1;
         s_rtProfCPURecordedFrameCount[slot] = -1;
@@ -677,100 +719,134 @@ static void VK_RTProfile_CollectAndLog(int slot)
     }
 
     const int recordedFrame = s_rtProfRecordedFrameCount[slot];
-    const uint32_t eventCount = s_rtProfEventCount[slot];
-    const uint32_t queryCount = s_rtProfNextQuery[slot];
-    if (recordedFrame < 0 || eventCount == 0 || queryCount == 0)
-        return;
+    if (recordedFrame < 0)
+        return; // this slot has not submitted a frame yet
 
     const int recordedCPUFrame = s_rtProfCPURecordedFrameCount[slot];
     const bool haveCPU = (recordedCPUFrame == recordedFrame);
 
-    uint64_t queryValues[VK_RTPROF_QUERY_COUNT] = {};
-    VkResult qr =
-        vkGetQueryPoolResults(vk.device, s_rtProfQueryPools[slot], 0, queryCount, sizeof(uint64_t) * queryCount,
-                              queryValues, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
-    if (qr != VK_SUCCESS)
-    {
-        common->Warning("VK RT PROFILE: vkGetQueryPoolResults failed slot=%d frame=%d err=%d (%s)", slot, recordedFrame,
-                        (int)qr, VK_ResultToString(qr));
-        s_rtProfRecordedFrameCount[slot] = -1;
-        return;
-    }
+    // The GPU phase timings are the only part that needs query pools.  Without them
+    // — no timestamp support, a failed pool, or a frame that opened no spans — the
+    // frame, upload, wait and memory metrics are still collected and pushed.
+    const uint32_t eventCount = s_rtProfEventCount[slot];
+    const uint32_t queryCount = s_rtProfNextQuery[slot];
+    bool haveGPU = VK_RTProfileEnabled() && eventCount > 0 && queryCount > 0;
 
     double phaseMs[VK_RTPROF_PHASE_COUNT] = {};
-    for (uint32_t i = 0; i < eventCount; i++)
+    if (haveGPU)
     {
-        const vkRTProfileEvent_t &ev = s_rtProfEvents[slot][i];
-        if (ev.queryStart >= queryCount || ev.queryEnd >= queryCount || ev.phase >= VK_RTPROF_PHASE_COUNT)
-            continue;
-        const uint64_t t0 = queryValues[ev.queryStart];
-        const uint64_t t1 = queryValues[ev.queryEnd];
-        if (t1 <= t0)
-            continue;
+        uint64_t queryValues[VK_RTPROF_QUERY_COUNT] = {};
+        VkResult qr =
+            vkGetQueryPoolResults(vk.device, s_rtProfQueryPools[slot], 0, queryCount, sizeof(uint64_t) * queryCount,
+                                  queryValues, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+        if (qr != VK_SUCCESS)
+        {
+            common->Warning("VK RT PROFILE: vkGetQueryPoolResults failed slot=%d frame=%d err=%d (%s)", slot,
+                            recordedFrame, (int)qr, VK_ResultToString(qr));
+            haveGPU = false;
+        }
+        else
+        {
+            for (uint32_t i = 0; i < eventCount; i++)
+            {
+                const vkRTProfileEvent_t &ev = s_rtProfEvents[slot][i];
+                if (ev.queryStart >= queryCount || ev.queryEnd >= queryCount || ev.phase >= VK_RTPROF_PHASE_COUNT)
+                    continue;
+                const uint64_t t0 = queryValues[ev.queryStart];
+                const uint64_t t1 = queryValues[ev.queryEnd];
+                if (t1 <= t0)
+                    continue;
 
-        const double ns = (double)(t1 - t0) * (double)s_rtProfTimestampPeriodNs;
-        phaseMs[ev.phase] += ns * 1e-6;
+                const double ns = (double)(t1 - t0) * (double)s_rtProfTimestampPeriodNs;
+                phaseMs[ev.phase] += ns * 1e-6;
+            }
+        }
     }
 
-    const int mode = r_vkRTProfile.GetInteger();
-    const int logEvery = Max(1, r_vkRTProfileLogEvery.GetInteger());
-    if (mode >= 2 || (recordedFrame % logEvery) == 0)
+    // `total` is RT only — see the VK_RTPROF_PHASE_RT_COUNT comment.
+    double totalMs = 0.0, rasterMs = 0.0;
+    double totalCPUMs = 0.0, rasterCPUMs = 0.0, phaseCPUSum = 0.0;
+    for (int p = 0; p < VK_RTPROF_PHASE_NESTED_BEGIN; p++)
     {
-        // `total` is RT only — see the VK_RTPROF_PHASE_RT_COUNT comment.
-        double totalMs = 0.0, rasterMs = 0.0;
-        double totalCPUMs = 0.0, rasterCPUMs = 0.0;
-        for (int p = 0; p < VK_RTPROF_PHASE_NESTED_BEGIN; p++)
-        {
-            const bool isRT = (p < VK_RTPROF_PHASE_RT_COUNT);
-            (isRT ? totalMs : rasterMs) += phaseMs[p];
-            if (haveCPU)
-                (isRT ? totalCPUMs : rasterCPUMs) += s_rtProfCPUMs[slot][p];
-        }
-
-        // Enumerate the phases rather than hand-listing them: the old fixed format
-        // string silently omitted every Vol phase, so volumetric cost was measured
-        // (it counted toward total) but never shown — which is exactly the number
-        // P8 needs. A loop can't go stale when a phase is added.
-        idStr gpuLine, cpuLine;
-        for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
-        {
-            const char *name = VK_RTProfilePhaseName((vkRTProfilePhase_t)p);
-            gpuLine += va(" %s=%.3f", name, phaseMs[p]);
-            if (haveCPU)
-                cpuLine += va(" %s=%.3f", name, s_rtProfCPUMs[slot][p]);
-        }
-
-        common->Printf("VK RT PROFILE: frame=%d slot=%d GPU(total=%.3f raster=%.3f%s) CPU(total=%.3f raster=%.3f%s) "
-                       "events=%u\n",
-                       recordedFrame, slot, totalMs, rasterMs, gpuLine.c_str(), haveCPU ? totalCPUMs : 0.0,
-                       haveCPU ? rasterCPUMs : 0.0, cpuLine.c_str(), eventCount);
-
-        // Same frame as the line above: what the backend spent outside the recorded phases.
+        const bool isRT = (p < VK_RTPROF_PHASE_RT_COUNT);
+        (isRT ? totalMs : rasterMs) += phaseMs[p];
         if (haveCPU)
         {
-            const vkRTProfileFrameCPU_t &fc = s_rtProfFrameCPU[slot];
-            common->Printf("VK FRAME PROFILE: frame=%d fenceWait=%.3f acquire=%.3f drain=%.3f upload=%.3f "
-                           "submit=%.3f present=%.3f BLAS(updates=%d rebuilds=%d tris=%d dynInst=%d)\n",
-                           recordedFrame, fc.fenceWaitMs, fc.acquireMs, fc.drainMs, fc.uploadMs, fc.submitMs,
-                           fc.presentMs, fc.blas.updates, fc.blas.rebuilds, fc.blas.tris, fc.blas.dynamicInstances);
+            (isRT ? totalCPUMs : rasterCPUMs) += s_rtProfCPUMs[slot][p];
+            phaseCPUSum += s_rtProfCPUMs[slot][p];
         }
+    }
 
-        // Latest completed EndFrame, i.e. a couple of frames newer than the GPU line.
-        const performanceCounters_t &pc = tr.pcLastFrame;
-        common->Printf("VK CPU PROFILE: game=%.3f frontend=%.3f (findView=%.3f addLights=%.3f addModels=%.3f "
-                       "callbacks=%d/%.3f dynCached=%d/%.3f dynContinuous=%d/%.3f vcAlloc=%d/%dKB/%.3f vcFree=%d) "
-                       "backend=%.3f\n",
-                       pc.c_gameTicUsec * 0.001, pc.c_frontEndUsec * 0.001, pc.c_findViewUsec * 0.001,
-                       pc.c_addLightsUsec * 0.001, pc.c_addModelsUsec * 0.001, pc.c_entityDefCallbacks,
-                       pc.c_callbackUsec * 0.001, pc.c_dynCached, pc.c_dynCachedUsec * 0.001, pc.c_dynContinuous,
-                       pc.c_dynContinuousUsec * 0.001, pc.c_vcAllocs, pc.c_vcAllocBytes >> 10,
-                       pc.c_vcAllocUsec * 0.001, pc.c_vcFrees, pc.c_backEndUsec * 0.001);
+    for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
+    {
+        if (haveGPU)
+            VK_Prof_SetSlot(slot, VK_Prof_PhaseMetric(p, true), phaseMs[p]);
+        if (haveCPU)
+            VK_Prof_SetSlot(slot, VK_Prof_PhaseMetric(p, false), s_rtProfCPUMs[slot][p]);
+    }
+    if (haveGPU)
+    {
+        VK_Prof_SetSlot(slot, VKPROF_GPU_TOTAL, totalMs);
+        VK_Prof_SetSlot(slot, VKPROF_GPU_RASTER, rasterMs);
+    }
+    VK_Prof_SetSlot(slot, VKPROF_CPU_TOTAL, totalCPUMs);
+    VK_Prof_SetSlot(slot, VKPROF_CPU_RASTER, rasterCPUMs);
 
-        // vcAlloc split by caller. Cells are count/KB/ms; kind (static/cached/continuous/other) is only
-        // known for the two view-surface sites, so the other sites land entirely in "other".
-        static const char *const siteNames[VCS_COUNT] = {"UNKNOWN",     "ambient",   "indexView",  "lighting",
-                                                         "shadowPriv",  "shadowVP",  "indexLight", "indexShadow"};
+    if (haveCPU)
+    {
+        const vkRTProfileFrameCPU_t &fc = s_rtProfFrameCPU[slot];
+        VK_Prof_SetSlot(slot, VKPROF_FRAME_FENCEWAIT, fc.fenceWaitMs);
+        VK_Prof_SetSlot(slot, VKPROF_FRAME_ACQUIRE, fc.acquireMs);
+        VK_Prof_SetSlot(slot, VKPROF_FRAME_DRAIN, fc.drainMs);
+        VK_Prof_SetSlot(slot, VKPROF_FRAME_UPLOAD, fc.uploadMs);
+        VK_Prof_SetSlot(slot, VKPROF_FRAME_SUBMIT, fc.submitMs);
+        VK_Prof_SetSlot(slot, VKPROF_FRAME_PRESENT, fc.presentMs);
+        VK_Prof_SetSlot(slot, VKPROF_FRAME_BACKEND, fc.backendMs);
+
+        // What the backend spent that no span accounts for.  Measured wall clock
+        // minus the frame spans minus the per-phase CPU: a large `other=` is the
+        // cue to put a sampling profiler on VK_RB_DrawView.
+        //
+        // The readback and serialize waits sit after the present stamp but before
+        // backendMs is taken, so they belong here explicitly — otherwise a whole
+        // frame of GPU wait lands in `other` under r_vkSerializeFrames 1 or during
+        // a screenshot, which is exactly when you would be reading this number.
+        const double tailWaitMs = VK_Prof_GetSlot(slot, VK_Prof_WaitMetric(VKPROF_WAIT_READBACK, true)) +
+                                  VK_Prof_GetSlot(slot, VK_Prof_WaitMetric(VKPROF_WAIT_SERIALIZE, true));
+        const double accounted = fc.fenceWaitMs + fc.acquireMs + fc.drainMs + fc.uploadMs + fc.submitMs +
+                                 fc.presentMs + phaseCPUSum + tailWaitMs +
+                                 VK_Prof_GetSlot(slot, VKPROF_FRAME_PROFILEPRINT);
+        VK_Prof_SetSlot(slot, VKPROF_FRAME_OTHER, Max(0.0, fc.backendMs - accounted));
+
+        VK_Prof_SetSlot(slot, VKPROF_BLAS_UPDATES, (double)fc.blas.updates);
+        VK_Prof_SetSlot(slot, VKPROF_BLAS_REBUILDS, (double)fc.blas.rebuilds);
+        VK_Prof_SetSlot(slot, VKPROF_BLAS_TRIS, (double)fc.blas.tris);
+        VK_Prof_SetSlot(slot, VKPROF_BLAS_DYNINST, (double)fc.blas.dynamicInstances);
+
+        const performanceCounters_t &pc = fc.pc;
+        VK_Prof_SetSlot(slot, VKPROF_FRAME_GAME, pc.c_gameTicUsec * 0.001);
+        VK_Prof_SetSlot(slot, VKPROF_FRAME_FRONTEND, pc.c_frontEndUsec * 0.001);
+        VK_Prof_SetSlot(slot, VKPROF_FRAME_FINDVIEW, pc.c_findViewUsec * 0.001);
+        VK_Prof_SetSlot(slot, VKPROF_FRAME_ADDLIGHTS, pc.c_addLightsUsec * 0.001);
+        VK_Prof_SetSlot(slot, VKPROF_FRAME_ADDMODELS, pc.c_addModelsUsec * 0.001);
+        VK_Prof_SetSlot(slot, VKPROF_VC_ALLOCS, (double)pc.c_vcAllocs);
+        VK_Prof_SetSlot(slot, VKPROF_VC_ALLOC_KB, (double)(pc.c_vcAllocBytes >> 10));
+        VK_Prof_SetSlot(slot, VKPROF_VC_ALLOC_MS, pc.c_vcAllocUsec * 0.001);
+        VK_Prof_SetSlot(slot, VKPROF_VC_FREES, (double)pc.c_vcFrees);
+    }
+
+    VK_Prof_PushFrame(slot, recordedFrame);
+
+    // vcAlloc split by caller, printed once per window because it is a 2D table,
+    // not one value per metric.  Cells are count/KB/ms; kind (static/cached/
+    // continuous/other) is only known for the two view-surface sites, so the other
+    // sites land entirely in "other".  X3 reads this with r_rtShadows 1.
+    if (haveCPU && VK_Prof_WindowJustClosed() && (VK_Prof_Groups() & VKPROF_GRP_UPLOAD) != 0)
+    {
+        static const char *const siteNames[VCS_COUNT] = {"UNKNOWN",    "ambient",  "indexView",  "lighting",
+                                                         "shadowPriv", "shadowVP", "indexLight", "indexShadow"};
         static const char *const kindNames[VCK_COUNT] = {"static", "cached", "cont", "other"};
+        const performanceCounters_t &pc = s_rtProfFrameCPU[slot].pc;
         idStr siteLine;
         for (int s = 0; s < VCS_COUNT; s++)
         {
@@ -784,7 +860,7 @@ static void VK_RTProfile_CollectAndLog(int slot)
                 siteLine += cell;
             }
         }
-        common->Printf("VK VC SITES:%s\n", siteLine.c_str());
+        common->Printf("VK VC SITES (last frame of window):%s\n", siteLine.c_str());
     }
 
     s_rtProfRecordedFrameCount[slot] = -1;
@@ -928,7 +1004,7 @@ static void VK_DestroyDataRings(void)
 
 // Allocate 'size' bytes from the current frame's data ring, aligned to 'align'.
 // Returns the byte offset into dataRings[vk.currentFrame].buffer, or VK_WHOLE_SIZE on overflow.
-static VkDeviceSize VK_AllocDataRing(VkDeviceSize size, VkDeviceSize align)
+static VkDeviceSize VK_AllocDataRing(VkDeviceSize size, VkDeviceSize align, bool isIndex = false)
 {
     vkDataRing_t &ring = dataRings[vk.currentFrame];
     // round offset up to alignment
@@ -936,9 +1012,15 @@ static VkDeviceSize VK_AllocDataRing(VkDeviceSize size, VkDeviceSize align)
     if (aligned + size > VK_DATA_RING_SIZE)
     {
         common->Warning("VK: data ring overflow (need %llu bytes)", (unsigned long long)(aligned + size));
+        VK_Prof_Add(VKPROF_RING_OVERFLOWS, 1.0);
         return VK_WHOLE_SIZE;
     }
     ring.offset = aligned + size;
+    // F1/F8: how much geometry is re-copied per frame, and how close the ring runs
+    // to its 64 MB.  Counted after the overflow return so rejected requests, whose
+    // draw is skipped, do not show up as bytes copied.
+    VK_Prof_Add(isIndex ? VKPROF_RING_IDX_KB : VKPROF_RING_VERT_KB, (double)size / 1024.0);
+    VK_Prof_Max(VKPROF_RING_DATA_PEAK_KB, (double)(ring.offset >> 10));
     return aligned;
 }
 
@@ -1187,10 +1269,14 @@ static uint32_t VK_AllocUBO(void)
             s_overflowFrame = (int)tr.frameCount;
             common->Warning("VK: UBO ring full (>%u slots in frame %d) — clamping", VK_UBO_RING_SIZE, tr.frameCount);
         }
+        VK_Prof_Add(VKPROF_RING_OVERFLOWS, 1.0);
         return maxOff; // safe: reuse last slot, no live-slot overwrite
     }
     uint32_t off = ring.offset;
     ring.offset += ring.stride;
+    // F8: the clamp above draws wrong data silently, so the high-water mark is the
+    // number to size VK_UBO_RING_SIZE from.
+    VK_Prof_Max(VKPROF_RING_UBO_PEAK_KB, (double)(ring.offset >> 10));
     return off;
 }
 
@@ -1604,7 +1690,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     // Upload geo->indexes from the CPU array every time.
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
     VkDeviceSize idxSize = (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t);
-    VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
+    VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t), true);
     if (idxOffset == VK_WHOLE_SIZE)
         return;
     memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, geo->indexes, (size_t)idxSize);
@@ -1657,6 +1743,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineStencilLEqual);
     }
 
+    VK_Prof_Add(VKPROF_RING_DRAWS, 1.0);
     vkCmdDrawIndexed(s_cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
 
     if (forceWeaponStencilLEqual || forceWeaponStencilAlways)
@@ -1765,10 +1852,13 @@ struct VkGBufferUBO
     float specF0Scale;             // 4 bytes  — r_rtSpecF0Scale
     float specF0Gamma;             // 4 bytes  — r_rtSpecF0Gamma
     // U4 transparency-and-composition class, 0 = ordinary surface, 1 = motion vectors here
-    // are known wrong.  Written to gbufAlbedo's alpha (as 1 - tcClass) and extracted by
-    // fsr_tc_mask.comp; took over the old _pad0 slot, so the struct size is unchanged.
+    // are known wrong.  Rides gbufAlbedo's alpha, extracted by fsr_tc_mask.comp; took
+    // over the old _pad0 slot, so the struct size is unchanged.
     float tcClass;                 // 4 bytes
-}; // 368 bytes total
+    // dhewm3-rt: 1 = view-local surface (first-person body, view weapon).  Shares that
+    // alpha channel as a third level — see the encoding in gbuffer.frag.
+    float viewLocal;               // 4 bytes
+}; // 372 bytes total
 
 // Every UBO here comes out of the one ring, whose stride is sized from
 // INTERACTION_UBO_SIZE.  A struct that outgrows it would silently scribble over the
@@ -1903,7 +1993,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
         // Upload index data
         VkDeviceSize idxSize = (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t);
-        VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
+        VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t), true);
         if (idxOffset == VK_WHOLE_SIZE)
             continue;
         memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, geo->indexes, (size_t)idxSize);
@@ -2423,6 +2513,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 2, writes);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+            VK_Prof_Add(VKPROF_RING_DRAWS, 1.0);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
 
             // Keep mirror draw diagnostics concise and at higher verbosity.
@@ -2560,6 +2651,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.glassReflLayout, 0, 2, ovWrites);
         vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
         vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+        VK_Prof_Add(VKPROF_RING_DRAWS, 1.0);
         vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
     }
 }
@@ -2800,7 +2892,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
 
         // --- Index buffer ---
         VkDeviceSize idxSize = (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t);
-        VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
+        VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t), true);
         if (idxOffset == VK_WHOLE_SIZE)
             continue;
         memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, geo->indexes, (size_t)idxSize);
@@ -2894,6 +2986,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 2, writes);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+            VK_Prof_Add(VKPROF_RING_DRAWS, 1.0);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
         };
 
@@ -2948,6 +3041,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 2, writes);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+            VK_Prof_Add(VKPROF_RING_DRAWS, 1.0);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
         };
 
@@ -3047,6 +3141,10 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             const bool tcDeformed = surf->geo->deformedSurface;
             const bool tcViewmodel = surf->space->weaponDepthHack;
             ubo->tcClass = (tcDeformed || tcViewmodel) ? 1.f : 0.f;
+            // Pixels of geometry that only exists in this view, and so duplicates something
+            // already in the TLAS.  The RT shadow/GI rays leaving them must skip the player
+            // instances — see rt_player_exclude.glsl.
+            ubo->viewLocal = surf->space->viewLocal ? 1.f : 0.f;
 
             VkDescriptorImageInfo bumpInfo = {}, specInfo = {};
             if (!VK_Image_GetDescriptorInfo(bumpImage, &bumpInfo))
@@ -3109,6 +3207,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                                       writes);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+            VK_Prof_Add(VKPROF_RING_DRAWS, 1.0);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
         };
 
@@ -3682,7 +3781,7 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     // cache/source thrash on dynamic shadow geometry.
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
     VkDeviceSize idxSize = (VkDeviceSize)numDrawIndexes * sizeof(glIndex_t);
-    VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
+    VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t), true);
     if (idxOffset == VK_WHOLE_SIZE)
         return VK_NULL_HANDLE;
     memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, tri->indexes, (size_t)idxSize);
@@ -3818,6 +3917,7 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
     vkCmdBindIndexBuffer(cmd, idxBuf, idxOffset, idxType);
 
+    VK_Prof_Add(VKPROF_RING_DRAWS, 1.0);
     vkCmdDrawIndexed(cmd, (uint32_t)numDrawIndexes, 1, 0, 0, 0);
 
     return shadowPipe;
@@ -3896,6 +3996,18 @@ static void VK_RB_AssignShadowLayers(void)
         if (!VK_RB_LightDrawsInteractions(vLight))
             continue;
         VK_RT_ShadowBatchAddLight(vLight, VK_ComputeLightScissor(vLight));
+    }
+
+    // Record here, not at submit: the 2D GUI overlay is a second RC_DRAW_VIEW with no
+    // viewLights, and its ShadowBatchBegin zeroed these before submit could read them.
+    // Max so whichever view has the lights wins regardless of view order.
+    if (VK_Prof_Active())
+    {
+        int casters = 0, batched = 0, serial = 0;
+        VK_RT_GetShadowBatchStats(&casters, &batched, &serial);
+        VK_Prof_Max(VKPROF_LIGHTS_SHADOW, (double)casters);
+        VK_Prof_Max(VKPROF_LIGHTS_BATCHED, (double)batched);
+        VK_Prof_Max(VKPROF_LIGHTS_SERIAL, (double)serial);
     }
 }
 
@@ -3995,12 +4107,19 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             for (const drawSurf_t *s = vLight->localShadows; s; s = s->nextOnLight)
                 nLocalShadow++;
             const char *lName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
+            // lightId/suppressPlayer: the view muzzle flash (the flashlight beam included)
+            // carries a lightId the player's own models name in suppressShadowInLightID,
+            // meaning they must not cast shadows from it.  suppressPlayer=1 is the shadow
+            // pass actually honouring that; 0 on a flashlight means the hand shadows its
+            // own beam.  See VK_RT_PlayerSuppressesLight (vk_accelstruct.cpp).
+            extern bool VK_RT_PlayerSuppressesLight(int lightId);
+            const int lightId = vLight->lightDef->parms.lightId;
             common->Printf("VK LIGHT[%d]: shader='%s' sc=(%d,%d %u,%u) local=%d global=%d trans=%d gs=%d ls=%d rt=%d "
-                           "smLayer=%d%s\n",
+                           "lightId=%d suppressPlayer=%d smLayer=%d%s\n",
                            lightIdx, lName, (int)lightScissor.offset.x, (int)lightScissor.offset.y,
                            (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height, nLocal,
-                           nGlobal, nTrans, nGlobalShadow, nLocalShadow, VK_RTShadowsEnabled() ? 1 : 0,
-                           s_shadowMaskLayer,
+                           nGlobal, nTrans, nGlobalShadow, nLocalShadow, VK_RTShadowsEnabled() ? 1 : 0, lightId,
+                           VK_RT_PlayerSuppressesLight(lightId) ? 1 : 0, s_shadowMaskLayer,
                            (s_shadowMaskLayer < 0)                            ? " (noShadows)"
                            : (s_shadowMaskLayer == VK_RT_SHADOW_SERIAL_LAYER) ? " (serial)"
                                                                               : " (batched)");
@@ -4284,7 +4403,7 @@ static void VK_RB_DrawFogSurface(VkCommandBuffer cmd, const drawSurf_t *surf, co
 
     // Index buffer
     VkDeviceSize idxSize = (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t);
-    VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
+    VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t), true);
     if (idxOffset == VK_WHOLE_SIZE)
         return;
     memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, geo->indexes, (size_t)idxSize);
@@ -4328,6 +4447,7 @@ static void VK_RB_DrawFogSurface(VkCommandBuffer cmd, const drawSurf_t *surf, co
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
     vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+    VK_Prof_Add(VKPROF_RING_DRAWS, 1.0);
     vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
 }
 
@@ -4729,6 +4849,7 @@ void VK_RB_DrawView(const void *data)
         }
         // Frame-start CPU spans; written into the slot after VK_RTProfile_BeginFrame clears it.
         const uint64_t cpuFenceStart = VK_RTProfile_CPUStamp();
+        s_rtProfFrameStart[vk.currentFrame] = cpuFenceStart;
         VkResult fenceResult = vkWaitForFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame], VK_TRUE, UINT64_MAX);
         const uint64_t cpuFenceEnd = VK_RTProfile_CPUStamp();
         if (fenceResult != VK_SUCCESS)
@@ -4746,7 +4867,21 @@ void VK_RB_DrawView(const void *data)
 
         // Per-slot fence guarantees all previous GPU work for this slot is complete.
         // Collect RT GPU phase timings for the previously submitted frame now.
+        const uint64_t cpuCollectStart = VK_RTProfile_CPUStamp();
         VK_RTProfile_CollectAndLog((int)vk.currentFrame);
+        const double collectMs = VK_RTProfile_TicksToMs(cpuCollectStart, VK_RTProfile_CPUStamp());
+
+        // Clearing the slot here, not at command-buffer begin, is what makes the next
+        // ~40 lines of counters land in the right frame: VK_FlushPendingUploads and the
+        // garbage drain both run before the command buffer opens, so a clear down there
+        // wiped their counters (upload.flushes read 0 while frame.upload read 0.164).
+        //
+        // The collect cost has to be carried in by hand because it is paid before the
+        // slot it belongs to can be cleared.  It is real work — ~40 common->Printf calls
+        // on a window-close frame — and it was landing in frame.other, which made the
+        // profiler look like a 15-20 ms engine hitch every 30th frame.
+        VK_Prof_BeginFrameSlot((int)vk.currentFrame);
+        VK_Prof_Set(VKPROF_FRAME_PROFILEPRINT, collectMs);
 
         // --- Acquire swapchain image ---
         uint32_t imageIndex;
@@ -5875,6 +6010,14 @@ void VK_RB_SwapBuffers()
         s_readbackSubmitted = true;
     }
 
+    // Debug labels turn the PhaseBegin/PhaseEnd pairing into a hard requirement: an
+    // unmatched PhaseBegin used to cost one timing, but now leaves an open label and
+    // vkEndCommandBuffer fails.  Say which frame did it instead of surfacing a driver
+    // error from VK_CHECK below.
+    if (const int stray = VK_RTProfile_CloseStrayLabels(cmdBuf))
+        common->Warning("VK PROFILE: %d debug label(s) left open at end of frame %d — an RT phase span is unbalanced",
+                        stray, tr.frameCount);
+
     VK_CHECK(vkEndCommandBuffer(cmdBuf));
 
     // If the window mode changed this frame (Alt+Enter fullscreen toggle), the
@@ -5973,7 +6116,8 @@ void VK_RB_SwapBuffers()
     // R_ReadTiledPixels can immediately access the mapped buffer.
     if (s_readbackSubmitted)
     {
-        VkResult rbFence = vkWaitForFences(vk.device, 1, &vk.inFlightFences[submittedFrame], VK_TRUE, UINT64_MAX);
+        VkResult rbFence =
+            VK_Prof_WaitForFences(VKPROF_WAIT_READBACK, 1, &vk.inFlightFences[submittedFrame], VK_TRUE, UINT64_MAX);
         if (r_vkLogRT.GetInteger() >= 2 || r_vkLogSubmitInfo.GetInteger() >= 2)
         {
             common->Printf("VK READBACK: fence=%d (%s) frame=%u\n", (int)rbFence, VK_ResultToString(rbFence),
@@ -5986,11 +6130,22 @@ void VK_RB_SwapBuffers()
     else if (r_vkSerializeFrames.GetBool())
     {
         // Fence is not reset here; the next wait on this slot returns immediately.
-        VkResult serFence = vkWaitForFences(vk.device, 1, &vk.inFlightFences[submittedFrame], VK_TRUE, UINT64_MAX);
+        VkResult serFence = VK_Prof_WaitForFences(VKPROF_WAIT_SERIALIZE, 1, &vk.inFlightFences[submittedFrame],
+                                                  VK_TRUE, UINT64_MAX);
         if (serFence != VK_SUCCESS)
             common->Warning("VK: r_vkSerializeFrames fence wait failed: %d (%s)", (int)serFence,
                             VK_ResultToString(serFence));
     }
+
+    // Frame fence through present: the only measured wall clock the backend has,
+    // and what frame.other is derived from.
+    s_rtProfFrameCPU[submittedFrame].backendMs =
+        VK_RTProfile_TicksToMs(s_rtProfFrameStart[submittedFrame], VK_RTProfile_CPUStamp());
+
+    // lights.shadow/batched/serial are recorded in VK_RB_AssignShadowLayers; only the
+    // frontend's view-light count belongs here.
+    if (VK_Prof_Active())
+        VK_Prof_SetSlot((int)submittedFrame, VKPROF_LIGHTS_VIEW, (double)tr.pcLastFrame.c_viewLights);
 
     vk.currentFrame = (vk.currentFrame + 1) % VK_MAX_FRAMES_IN_FLIGHT;
     s_frameNeedsImageAcquireWait = false;
@@ -6154,8 +6309,9 @@ void VKimp_PreShutdown(void)
     if (!vk.isInitialized)
         return;
     VK_ShutdownUploadBatch(); // flush + free any pending uploads before device idle
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_SHUTDOWN);
     VK_RTProfile_Shutdown();
+    VK_Prof_Shutdown(); // flushes any buffered CSV rows
     if (vk.rayTracingSupported && vkRT.isInitialized)
     {
         VK_RT_Shutdown();

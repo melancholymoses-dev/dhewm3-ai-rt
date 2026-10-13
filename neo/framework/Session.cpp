@@ -2884,9 +2884,6 @@ void idSessionLocal::Draw()
     }
     else if (readDemo)
     {
-        common->Printf("Rendering demo\n");
-        fflush(NULL);
-
         rw->RenderScene(&currentDemoRenderView);
         renderSystem->DrawDemoPics();
     }

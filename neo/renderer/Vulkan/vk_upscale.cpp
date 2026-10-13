@@ -29,6 +29,7 @@ of the original Doom 3 GPL Source Code release.
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_upscale.h"
 #include "renderer/Vulkan/vk_image.h"
@@ -326,7 +327,7 @@ static void VK_RT_CreateUpscaleImage(vkRTImage_t &up, uint32_t width, uint32_t h
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &tmpCmd;
         vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, fence);
-        vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        VK_Prof_WaitForFences(VKPROF_WAIT_UPSCALE, 1, &fence, VK_TRUE, UINT64_MAX);
         vkDestroyFence(vk.device, fence, NULL);
         vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
     }
@@ -1209,7 +1210,7 @@ static void VK_RT_Fsr2DestroyContext(void)
         return;
 
     // FSR2 owns images and pipelines that in-flight frames may still be reading.
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_UPSCALE);
     ffxFsr2ContextDestroy(&s_fsr2Ctx);
     s_fsr2CtxValid = false;
 
@@ -2137,7 +2138,7 @@ void VK_RT_InitUpscale()
 
 void VK_RT_ResizeUpscale(uint32_t width, uint32_t height)
 {
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_UPSCALE);
     VK_RT_Fsr2DestroyContext();
     VK_RT_Fsr2ClearCreateFailure();
 #if defined(DHEWM3_FSR2)

@@ -33,6 +33,7 @@ Code release.
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_gbuffer.h"
 
@@ -182,7 +183,7 @@ static void VK_RT_CreateGBufferImages(uint32_t width, uint32_t height)
                 fflush(NULL);
             }
 
-            vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+            VK_Prof_WaitForFences(VKPROF_WAIT_GBUFFER, 1, &fence, VK_TRUE, UINT64_MAX);
             vkDestroyFence(vk.device, fence, NULL);
             vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
         }
@@ -245,7 +246,7 @@ void VK_RT_ResizeGBuffer(uint32_t width, uint32_t height)
         return;
     }
 
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_GBUFFER);
     VK_RT_DestroyGBufferImages();
     VK_RT_CreateGBufferImages(width, height);
 }

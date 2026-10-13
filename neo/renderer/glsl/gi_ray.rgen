@@ -40,6 +40,10 @@ layout(set = 0, binding = 2) uniform sampler2D depthSampler;
 // image when vk.gbufferSupported, otherwise a 1x1 null image with a = 0
 // (VK_RT_GetNullGbufNormalView), hence the clamped texelFetch below.
 layout(set = 0, binding = 5) uniform sampler2D gbufNormalSampler;
+// gbufAlbedo from the same prepass; only alpha is read here, as the three-level surface
+// class (gbuffer.frag, GBuf_AlphaClass).  Null 1x1 image when there is no G-buffer, with
+// playerClassValid 0 to match.
+layout(set = 0, binding = 6) uniform sampler2D gbufClassSampler;
 
 layout(set = 0, binding = 3) uniform GIParams {
     mat4  invViewProj;   // inverse view-projection for world position reconstruction
@@ -56,7 +60,8 @@ layout(set = 0, binding = 3) uniform GIParams {
     int   stochasticLights; // rchit only — declared here so the block stays in sync
     int   useGbufNormal;    // P9 — r_rtGbufNormals, and 0 when no G-buffer exists
     int   checkerPhase;     // which half of the checkerboard this dispatch traces
-    float playerExcludeRadius; // camera-to-pixel distance below which player instances are culled
+    float playerExcludeRadius; // fallback sphere, used only when playerClassValid == 0
+    int   playerClassValid;    // 1 = gbufClassSampler holds this frame's surface class
 } params;
 
 #include "gi_payload.glsl"
@@ -67,6 +72,7 @@ layout(location = 0) rayPayloadEXT GIPayload giPayload;
 // rt_WorldAnchoredSeed, rt_PixelPhiOffset
 #include "rt_indirect.glsl"
 #include "rt_gbuf_normal.glsl"
+#include "rt_player_exclude.glsl"
 
 void main()
 {
@@ -124,13 +130,14 @@ void main()
     uint  baseSeed  = rt_WorldAnchoredSeed(worldPos, params.frameIndex);
     float phiOffset = rt_PixelPhiOffset(coord, params.frameIndex);
 
-    // Same close-to-eye test as shadow_ray.rgen: this pixel is the first-person body,
+    // Same view-local test as shadow_ray.rgen: this pixel is the first-person body,
     // standing inside the world body.  Without this the bounce is occluded by that
     // duplicate too, so direct and indirect both go to zero and the body reads black.
     // 0xFD drops the player instances (mask 0x02) only.
-    uint giCullMask = 0xFFu;
-    if (params.playerExcludeRadius > 0.0 && distance(worldPos, camPos) < params.playerExcludeRadius)
-        giCullMask = 0xFDu;
+    uint giCullMask = rt_PlayerExcluded(gbufClassSampler, coord, params.playerClassValid,
+                                        distance(worldPos, camPos), params.playerExcludeRadius)
+                          ? 0xFDu
+                          : 0xFFu;
 
     vec3 accumColour = vec3(0.0);
     int  N           = max(1, params.numSamples);

@@ -23,8 +23,10 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Image.h"
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_upscale.h" // r_fsrMipBias — the FSR LOD term is baked per sampler
 
+#include <SDL.h> // SDL_GetPerformanceCounter for the lazy-load timing
 #include <math.h> // log2, floor
 #include <string.h>
 
@@ -505,7 +507,7 @@ static void VK_EnsureCinematicImage(int w, int h)
         return;
 
     // Drain before destroying — we might be in flight
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_IMAGE);
     VK_DestroyCinematicImage();
 
     const VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
@@ -1137,7 +1139,7 @@ static void VK_Image_RebuildSamplers(void)
     if (!vk.isInitialized || !globalImages)
         return;
 
-    vkDeviceWaitIdle(vk.device);
+    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_IMAGE);
 
     int rebuilt = 0;
     int failed = 0;
@@ -1244,6 +1246,19 @@ void VK_Image_Purge(idImage *img)
 // a fallback/default white texture descriptor instead).
 // ---------------------------------------------------------------------------
 
+// F3: disk read, decode, upload and a blocking flush, all mid-command-recording.
+// Timed and attributed here because it is invisible in a window average — one of
+// these owns the hitch, and the window it lands in looks normal.
+static void VK_Image_LazyLoadTimed(idImage *img)
+{
+    const uint64_t freq = SDL_GetPerformanceFrequency();
+    const uint64_t start = SDL_GetPerformanceCounter();
+    img->ActuallyLoadImage(true, true);
+    VK_FlushPendingUploads();
+    const double ms = (freq > 0) ? ((double)(SDL_GetPerformanceCounter() - start) * 1000.0) / (double)freq : 0.0;
+    VK_Prof_NoteLazyImageLoad(img->imgName.c_str(), ms);
+}
+
 bool VK_Image_GetDescriptorInfo(idImage *img, VkDescriptorImageInfo *out)
 {
     if (!img)
@@ -1256,8 +1271,7 @@ bool VK_Image_GetDescriptorInfo(idImage *img, VkDescriptorImageInfo *out)
         {
             if (img->IsHighPriorityFrontendImage())
             {
-                img->ActuallyLoadImage(true, true);
-                VK_FlushPendingUploads();
+                VK_Image_LazyLoadTimed(img);
             }
             else
             {
@@ -1270,8 +1284,7 @@ bool VK_Image_GetDescriptorInfo(idImage *img, VkDescriptorImageInfo *out)
         }
         else
         {
-            img->ActuallyLoadImage(true, true); // load on demand
-            VK_FlushPendingUploads();
+            VK_Image_LazyLoadTimed(img); // load on demand
         }
 
         if (!img->backendData)
@@ -1299,8 +1312,7 @@ bool VK_Image_GetDescriptorInfoCube(idImage *img, VkDescriptorImageInfo *out)
         {
             if (img->IsHighPriorityFrontendImage())
             {
-                img->ActuallyLoadImage(true, true);
-                VK_FlushPendingUploads();
+                VK_Image_LazyLoadTimed(img);
             }
             else
             {
@@ -1313,8 +1325,7 @@ bool VK_Image_GetDescriptorInfoCube(idImage *img, VkDescriptorImageInfo *out)
         }
         else
         {
-            img->ActuallyLoadImage(true, true); // load on demand
-            VK_FlushPendingUploads();
+            VK_Image_LazyLoadTimed(img); // load on demand
         }
 
         if (!img->backendData)

@@ -36,6 +36,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include <lmerr.h>
 #include <lmcons.h>
 #include <lmwksta.h>
+#include <psapi.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <direct.h>
@@ -58,6 +59,22 @@ int Sys_GetSystemRam(void)
     // HACK: For some reason, ullTotalPhys is sometimes off by a meg or two, so we round up to the nearest 16 megs
     physRam = (physRam + 8) & ~15;
     return physRam;
+}
+
+/*
+================
+Sys_GetProcessMemoryBytes
+
+    dhewm3-rt: working set of this process, for r_vkRTProfile's memory group.
+================
+*/
+unsigned long long Sys_GetProcessMemoryBytes(void)
+{
+    PROCESS_MEMORY_COUNTERS pmc;
+    pmc.cb = sizeof(pmc);
+    if (!::GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
+        return 0;
+    return (unsigned long long)pmc.WorkingSetSize;
 }
 
 /*

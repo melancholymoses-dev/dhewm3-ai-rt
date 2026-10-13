@@ -967,6 +967,11 @@ void VK_RT_ShadowBatchBegin(void);
 // sample no mask at all instead of a cleared-to-white one.
 int VK_RT_ShadowBatchAddLight(const viewLight_t *vLight, VkRect2D dispatchRect);
 
+// Shadow-casting lights this view, how many got a batch layer, and how many fell back
+// to the serial path.  Phase 6a's discriminator: serial time is billed to Interactions,
+// so a capture with serial=0 says nothing about the serial dispatch cost.
+void VK_RT_GetShadowBatchStats(int *outCasters, int *outBatched, int *outSerial);
+
 // Layer assigned by VK_RT_ShadowBatchAddLight, or -1 if the light casts no shadows
 // or was never added this view.
 int VK_RT_GetShadowLayerForLight(const viewLight_t *vLight);

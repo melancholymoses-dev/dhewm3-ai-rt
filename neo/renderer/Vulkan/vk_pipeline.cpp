@@ -16,7 +16,10 @@ of the original Doom 3 GPL Source Code release.
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_profile.h"
 #include "version.h"
+
+#include <SDL.h> // SDL_GetPerformanceCounter for first-use pipeline build timing
 
 PFN_vkCmdPushDescriptorSetKHR pfn_vkCmdPushDescriptorSetKHR = NULL;
 
@@ -1614,9 +1617,15 @@ VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest)
     // be enabled, not treated as an opaque surface.
     bool blend = (src != VK_BLEND_FACTOR_ONE || dst != VK_BLEND_FACTOR_ZERO);
 
+    // X4: there is no VkPipelineCache in the tree, so a first-use pipeline build is a
+    // mid-frame hitch.  Timed to show whether they stop after the first seconds of a map.
+    const uint64_t freq = SDL_GetPerformanceFrequency();
+    const uint64_t start = SDL_GetPerformanceCounter();
     VkPipeline p = VK_CreateGuiPipelineEx(vkPipes.guiLayout, blend, src, dst, src, dst, depthTest, depthOp, colorMask);
+    const double ms = (freq > 0) ? ((double)(SDL_GetPerformanceCounter() - start) * 1000.0) / (double)freq : 0.0;
     if (p == VK_NULL_HANDLE)
         return vkPipes.guiAlphaPipeline;
+    VK_Prof_NotePipelineCreate(va("guiBlend key=0x%08x", key), ms);
 
     s_blendCache[s_blendCacheCount++] = {key, p};
     return p;
@@ -1830,11 +1839,15 @@ VkPipeline VK_GetOrCreateBlendlightPipeline(int drawStateBits)
 
     VkBlendFactor src = VK_GlsSrcBlendToVk(drawStateBits);
     VkBlendFactor dst = VK_GlsDstBlendToVk(drawStateBits);
+    const uint64_t freq = SDL_GetPerformanceFrequency();
+    const uint64_t start = SDL_GetPerformanceCounter();
     VkPipeline p = VK_CreateFogPipelineEx(vkPipes.fogLayout, "glprogs/glsl/blendlight.vert.spv",
                                           "glprogs/glsl/blendlight.frag.spv", VK_COMPARE_OP_EQUAL,
                                           VK_CULL_MODE_FRONT_BIT, src, dst);
+    const double ms = (freq > 0) ? ((double)(SDL_GetPerformanceCounter() - start) * 1000.0) / (double)freq : 0.0;
     if (p == VK_NULL_HANDLE)
         return vkPipes.blendlightPipeline;
+    VK_Prof_NotePipelineCreate(va("blendlight key=0x%08x", key), ms);
 
     s_blendlightCache[s_blendlightCacheCount++] = {key, p};
     return p;

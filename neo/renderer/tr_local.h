@@ -381,6 +381,11 @@ typedef struct viewEntity_s
 
     bool isGuiSurface;
     bool weaponDepthHack;
+    // dhewm3-rt: entity drawn only in this one view (allowSurfaceInViewID) — the
+    // first-person body and the view weapon.  They duplicate geometry that is in the
+    // TLAS, so the G-buffer prepass flags their pixels and the RT shadow/GI rays
+    // leaving those pixels skip the duplicate.  See rt_player_exclude.glsl.
+    bool viewLocal;
     float modelDepthHack;
 
     float modelMatrix[16];     // local coords to global coords
