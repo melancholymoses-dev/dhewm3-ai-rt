@@ -30,6 +30,7 @@ Code release.
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_rt_emitters.h"
 
+#include <stdlib.h> // _alloca, for the light-register evaluation in CollectViewFlashEmitters
 #include <string.h>
 
 idCVar r_rtReflGlow("r_rtReflGlow", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
@@ -346,6 +347,116 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
     out.matName = chosenMat->GetName();
     out.imageName = image ? image->imgName.c_str() : "<procedural>";
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// The first-person muzzle flash (= the flashlight) as a reflection emitter.
+//
+// Its lamp face cannot reach reflections as geometry by any route: the view model
+// is excluded from the TLAS, the entity walk below skips weaponDepthHack outright,
+// and CollectGlowSurfaces only accepts DM_STATIC models while the viewflashlight is
+// an MD5. So synthesize the source instead — which is what an emitter disc is for
+// (rt_emitter.glsl: always faces the ray, so a billboard seen in a reflection is
+// oriented for the reflected view).
+//
+// Size and brightness are invented. There is no authored geometry to measure, and
+// the light's own radius describes its reach, not the lamp.
+// ---------------------------------------------------------------------------
+
+static idCVar r_rtReflFlashGlow("r_rtReflFlashGlow", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
+                                "show the first-person flashlight as a bright disc in reflections");
+static idCVar r_rtReflFlashGlowRadius("r_rtReflFlashGlowRadius", "3.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                                      "radius of that disc in world units (invented — the lamp has no geometry "
+                                      "in the TLAS to measure)");
+static idCVar r_rtReflFlashGlowGain("r_rtReflFlashGlowGain", "4.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                                    "scale on the light's own colour for that disc. Above 1 so it reads as a "
+                                    "source rather than a lit surface, and clears the bloom threshold.");
+static idCVar r_rtReflFlashGlowOffset("r_rtReflFlashGlowOffset", "0.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                                      "push the disc this far along the cone axis, out of the fixture it is "
+                                      "nominally inside and onto the lens");
+
+// vk_accelstruct.cpp — true exactly for the first-person muzzle flash, which is the
+// light the flashlight beam comes from.
+extern bool VK_RT_PlayerSuppressesLight(int lightId);
+
+static void InsertNearest(emitterCandidate_t *list, int &num, const emitterCandidate_t &c);
+
+static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_t *list, int &num, bool log)
+{
+    if (!r_rtReflFlashGlow.GetBool())
+        return;
+
+    const float gain = Max(0.0f, r_rtReflFlashGlowGain.GetFloat());
+    const float radius = Max(0.0f, r_rtReflFlashGlowRadius.GetFloat());
+    if (gain <= 0.0f || radius <= 0.0f)
+        return;
+
+    for (const viewLight_t *vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next)
+    {
+        const idRenderLightLocal *lightLocal = vLight->lightDef;
+        if (lightLocal == NULL)
+            continue;
+        const renderLight_t &p = lightLocal->parms;
+        if (!VK_RT_PlayerSuppressesLight(p.lightId))
+            continue;
+
+        // Evaluated registers, not shaderParms: Doom 3 writes light behaviour as
+        // time-driven expressions there, so parms alone give a steady lamp under a
+        // flickering one. Same derivation as the GI light upload (vk_gi.cpp).
+        float r = p.shaderParms[SHADERPARM_RED];
+        float g = p.shaderParms[SHADERPARM_GREEN];
+        float b = p.shaderParms[SHADERPARM_BLUE];
+        const idMaterial *lightShader = lightLocal->lightShader;
+        if (lightShader != NULL)
+        {
+            const int numRegs = lightShader->GetNumRegisters();
+            float *regs = (float *)_alloca(sizeof(float) * numRegs);
+            lightShader->EvaluateRegisters(regs, p.shaderParms, viewDef, p.referenceSound);
+            for (int s = 0; s < lightShader->GetNumStages(); s++)
+            {
+                const shaderStage_t *stage = lightShader->GetStage(s);
+                if (!regs[stage->conditionRegister] || !stage->texture.image)
+                    continue;
+                r = regs[stage->color.registers[0]];
+                g = regs[stage->color.registers[1]];
+                b = regs[stage->color.registers[2]];
+                break; // first passing stage, matching the GI upload's choice
+            }
+        }
+
+        idVec3 pos = lightLocal->globalLightOrigin;
+        const float offset = r_rtReflFlashGlowOffset.GetFloat();
+        if (offset != 0.0f && !p.pointLight)
+        {
+            // p.target is light-space; rotate into the world, same as the GI cone axis.
+            idVec3 toTarget = p.axis * p.target;
+            const float len = toTarget.Length();
+            if (len > 0.001f)
+                pos += (toTarget / len) * offset;
+        }
+
+        emitterCandidate_t c;
+        memset(&c, 0, sizeof(c));
+        c.e.pos[0] = pos.x;
+        c.e.pos[1] = pos.y;
+        c.e.pos[2] = pos.z;
+        c.e.radius = radius * r_rtReflGlowScale.GetFloat();
+        c.e.rgb[0] = r * gain;
+        c.e.rgb[1] = g * gain;
+        c.e.rgb[2] = b * gain;
+        c.e.texIndex = 0; // procedural falloff — no authored sprite to point at
+        c.distSq = (pos - viewDef->renderView.vieworg).LengthSqr();
+        c.ent = NULL;
+        c.matName = lightShader ? lightShader->GetName() : "<no light shader>";
+        c.imageName = "<procedural>";
+
+        if (log)
+            common->Printf("VK RT Emitter: view flash lightId=%d mtr='%s' pos=(%.0f %.0f %.0f) r=%.1f "
+                           "rgb=(%.2f %.2f %.2f)\n",
+                           p.lightId, c.matName, pos.x, pos.y, pos.z, c.e.radius, c.e.rgb[0], c.e.rgb[1], c.e.rgb[2]);
+
+        InsertNearest(list, num, c);
+    }
 }
 
 // Inserts c into list (sorted nearest first, capacity VK_RT_MAX_EMITTERS).
@@ -707,6 +818,11 @@ void VK_RT_BuildReflEmitters(const viewDef_t *viewDef)
             continue;
         InsertNearest(kept, numKept, c);
     }
+
+    // The flashlight lamp, which no entity walk can reach. Before the smoke merge so
+    // it competes on distance with the projectiles rather than for leftovers — it is
+    // in the player's own hand, so it sorts first in practice.
+    CollectViewFlashEmitters(viewDef, kept, numKept, log);
 
     // Projectiles keep priority; smoke discs fill the remaining slots, nearest first.
     const int numProjectiles = numKept;
