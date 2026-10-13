@@ -46,7 +46,8 @@ idCVar r_rtReflGlowSmoke("r_rtReflGlowSmoke", "1", CVAR_RENDERER | CVAR_BOOL | C
                          "sparks) as glows in reflections. Clustered into discs; see r_rtReflGlowSmokeMinLum.");
 static idCVar r_rtReflGlowSmokeMinLum("r_rtReflGlowSmokeMinLum", "0.3", CVAR_RENDERER | CVAR_FLOAT,
                                       "Smoke particles dimmer than this (vertex colour x stage rgb) don't glow.\n"
-                                      "Raise if dim additive smoke hazes the glass.", 0.0f, 4.0f);
+                                      "Raise if dim additive smoke hazes the glass.",
+                                      0.0f, 4.0f);
 static idCVar r_rtReflGlowSmokeCell("r_rtReflGlowSmokeCell", "32", CVAR_RENDERER | CVAR_FLOAT,
                                     "Grid size (world units) for merging smoke particles into one glow disc.", 4.0f,
                                     256.0f);
@@ -155,8 +156,7 @@ static bool PickAdditiveStage(const idMaterial *mat, const renderEntity_t &parms
         const shaderStage_t *stage = mat->GetStage(s);
         if (!regs[stage->conditionRegister] || !IsAdditiveStage(stage))
             continue;
-        idVec3 rgb(regs[stage->color.registers[0]], regs[stage->color.registers[1]],
-                   regs[stage->color.registers[2]]);
+        idVec3 rgb(regs[stage->color.registers[0]], regs[stage->color.registers[1]], regs[stage->color.registers[2]]);
         if ((stage->drawStateBits & GLS_SRCBLEND_BITS) == GLS_SRCBLEND_SRC_ALPHA)
             rgb *= regs[stage->color.registers[3]];
         rgb.x *= tint.x;
@@ -205,8 +205,8 @@ static float ParticleStageEnvelope(const idParticleStage *ps, const renderEntity
     const float lifeMs = ps->particleLife * 1000.0f;
     if (lifeMs <= 0.0f)
         return 0.0f;
-    const float ageMs = (float)viewDef->renderView.time + parms.shaderParms[SHADERPARM_TIMEOFFSET] * 1000.0f -
-                        ps->timeOffset * 1000.0f;
+    const float ageMs =
+        (float)viewDef->renderView.time + parms.shaderParms[SHADERPARM_TIMEOFFSET] * 1000.0f - ps->timeOffset * 1000.0f;
     if (ageMs < 0.0f)
         return 0.0f;
 
@@ -229,8 +229,8 @@ static float ParticleStageEnvelope(const idParticleStage *ps, const renderEntity
 // by the stage colour and age envelope, radius from the stage's particle size. Updates the
 // io values only when a stage beats ioLum.
 static bool PickParticleStage(const idDeclParticle *prt, const renderEntity_t &parms, const viewDef_t *viewDef,
-                              idVec3 &ioRgb, idImage *&ioImage, float &ioLum, const idMaterial *&ioMat,
-                              float &ioRadius, const shaderStage_t **ioStage)
+                              idVec3 &ioRgb, idImage *&ioImage, float &ioLum, const idMaterial *&ioMat, float &ioRadius,
+                              const shaderStage_t **ioStage)
 {
     bool found = false;
     for (int i = 0; i < prt->stages.Num(); i++)
@@ -241,8 +241,7 @@ static bool PickParticleStage(const idDeclParticle *prt, const renderEntity_t &p
         const float env = ParticleStageEnvelope(ps, parms, viewDef);
         if (env <= 0.0f)
             continue;
-        if (PickAdditiveStage(ps->material, parms, viewDef, ps->color.ToVec3() * env, ioRgb, ioImage, ioLum,
-                              ioStage))
+        if (PickAdditiveStage(ps->material, parms, viewDef, ps->color.ToVec3() * env, ioRgb, ioImage, ioLum, ioStage))
         {
             ioMat = ps->material;
             ioRadius = Max(ps->size.from, ps->size.to);
@@ -266,8 +265,7 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
     float radius = 0.0f;
     idVec3 pos = parms.origin;
 
-    const bool isPrt =
-        model->IsDynamicModel() == DM_CONTINUOUS && idStr::CheckExtension(model->Name(), ".prt");
+    const bool isPrt = model->IsDynamicModel() == DM_CONTINUOUS && idStr::CheckExtension(model->Name(), ".prt");
     if (isPrt)
     {
         const idDeclParticle *prt =
@@ -298,8 +296,7 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
             {
                 const idDeclParticle *prt = static_cast<const idDeclParticle *>(mat->GetDeformDecl());
                 float prtRadius = 0.0f;
-                if (prt &&
-                    PickParticleStage(prt, parms, viewDef, rgb, image, lum, chosenMat, prtRadius, &chosenStage))
+                if (prt && PickParticleStage(prt, parms, viewDef, rgb, image, lum, chosenMat, prtRadius, &chosenStage))
                 {
                     radius = prtRadius;
                     winIsParticle = true;
@@ -361,14 +358,21 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
 //
 // Size and brightness are invented. There is no authored geometry to measure, and
 // the light's own radius describes its reach, not the lamp.
+//
+// POSITION comes from the WORLD muzzle flash, not the view one. The view flash is
+// placed for first-person framing — idWeapon::UpdateFlashPosition traces it clear of
+// walls and backs it 8 units toward the eye — so a disc there floats off the
+// third-person body's chest in a mirror. Its world counterpart is put "on the end of
+// the joint, no matter what" (Weapon.cpp), i.e. the end of the model you actually see
+// reflected. The two share shaderParms, so only the geometry differs.
 // ---------------------------------------------------------------------------
 
 static idCVar r_rtReflFlashGlow("r_rtReflFlashGlow", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
                                 "show the first-person flashlight as a bright disc in reflections");
-static idCVar r_rtReflFlashGlowRadius("r_rtReflFlashGlowRadius", "3.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+static idCVar r_rtReflFlashGlowRadius("r_rtReflFlashGlowRadius", "1.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                                       "radius of that disc in world units (invented — the lamp has no geometry "
                                       "in the TLAS to measure)");
-static idCVar r_rtReflFlashGlowGain("r_rtReflFlashGlowGain", "4.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+static idCVar r_rtReflFlashGlowGain("r_rtReflFlashGlowGain", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                                     "scale on the light's own colour for that disc. Above 1 so it reads as a "
                                     "source rather than a lit surface, and clears the bloom threshold.");
 static idCVar r_rtReflFlashGlowOffset("r_rtReflFlashGlowOffset", "0.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
@@ -381,6 +385,26 @@ extern bool VK_RT_PlayerSuppressesLight(int lightId);
 
 static void InsertNearest(emitterCandidate_t *list, int &num, const emitterCandidate_t &c);
 
+// The local player's world muzzle flash, or NULL. idWeapon is the only thing that sets
+// suppressLightInViewID, and it sets it to the owner's viewID — so "suppressed in this
+// very view" names the world counterpart of this view's own muzzle flash exactly. It is
+// absent from viewDef->viewLights for that same reason, hence the world walk.
+static const idRenderLightLocal *FindWorldMuzzleFlash(const viewDef_t *viewDef)
+{
+    const idRenderWorldLocal *world = viewDef->renderWorld;
+    const int viewID = viewDef->renderView.viewID;
+    if (world == NULL || viewID == 0)
+        return NULL;
+
+    for (int i = 0; i < world->lightDefs.Num(); i++)
+    {
+        const idRenderLightLocal *light = world->lightDefs[i];
+        if (light != NULL && light->parms.suppressLightInViewID == viewID)
+            return light;
+    }
+    return NULL;
+}
+
 static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_t *list, int &num, bool log)
 {
     if (!r_rtReflFlashGlow.GetBool())
@@ -391,6 +415,10 @@ static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_
     if (gain <= 0.0f || radius <= 0.0f)
         return;
 
+    // Geometry source, found once: the view flash's world counterpart sits on the end
+    // of the third-person flashlight joint, which is the model a reflection shows.
+    const idRenderLightLocal *worldFlash = FindWorldMuzzleFlash(viewDef);
+
     for (const viewLight_t *vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next)
     {
         const idRenderLightLocal *lightLocal = vLight->lightDef;
@@ -399,6 +427,11 @@ static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_
         const renderLight_t &p = lightLocal->parms;
         if (!VK_RT_PlayerSuppressesLight(p.lightId))
             continue;
+
+        // Colour from the view light (this is the one the player sees lit); position and
+        // facing from the world one when it exists. They share shaderParms, so the split
+        // costs nothing.
+        const idRenderLightLocal *placeAt = (worldFlash != NULL) ? worldFlash : lightLocal;
 
         // Evaluated registers, not shaderParms: Doom 3 writes light behaviour as
         // time-driven expressions there, so parms alone give a steady lamp under a
@@ -424,12 +457,13 @@ static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_
             }
         }
 
-        idVec3 pos = lightLocal->globalLightOrigin;
+        const renderLight_t &pp = placeAt->parms;
+        idVec3 pos = placeAt->globalLightOrigin;
         const float offset = r_rtReflFlashGlowOffset.GetFloat();
-        if (offset != 0.0f && !p.pointLight)
+        if (offset != 0.0f && !pp.pointLight)
         {
-            // p.target is light-space; rotate into the world, same as the GI cone axis.
-            idVec3 toTarget = p.axis * p.target;
+            // target is light-space; rotate into the world, same as the GI cone axis.
+            idVec3 toTarget = pp.axis * pp.target;
             const float len = toTarget.Length();
             if (len > 0.001f)
                 pos += (toTarget / len) * offset;
@@ -451,9 +485,11 @@ static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_
         c.imageName = "<procedural>";
 
         if (log)
-            common->Printf("VK RT Emitter: view flash lightId=%d mtr='%s' pos=(%.0f %.0f %.0f) r=%.1f "
-                           "rgb=(%.2f %.2f %.2f)\n",
-                           p.lightId, c.matName, pos.x, pos.y, pos.z, c.e.radius, c.e.rgb[0], c.e.rgb[1], c.e.rgb[2]);
+            common->Printf("VK RT Emitter: view flash lightId=%d mtr='%s' placed=%s pos=(%.0f %.0f %.0f) "
+                           "viewPos=(%.0f %.0f %.0f) r=%.1f rgb=(%.2f %.2f %.2f)\n",
+                           p.lightId, c.matName, (worldFlash != NULL) ? "worldJoint" : "viewFlash(fallback)", pos.x,
+                           pos.y, pos.z, lightLocal->globalLightOrigin.x, lightLocal->globalLightOrigin.y,
+                           lightLocal->globalLightOrigin.z, c.e.radius, c.e.rgb[0], c.e.rgb[1], c.e.rgb[2]);
 
         InsertNearest(list, num, c);
     }
@@ -511,8 +547,8 @@ static void CollectSmokeEmitters(const idRenderEntityLocal *ent, const viewDef_t
         idImage *image = NULL;
         float stageLum = 0.0f;
         const shaderStage_t *stage = NULL;
-        if (!PickAdditiveStage(surf->shader, ent->parms, viewDef, idVec3(1.0f, 1.0f, 1.0f), stageRgb, image,
-                               stageLum, &stage))
+        if (!PickAdditiveStage(surf->shader, ent->parms, viewDef, idVec3(1.0f, 1.0f, 1.0f), stageRgb, image, stageLum,
+                               &stage))
             continue;
         const stageVertexColor_t vertColorMode = stage ? stage->vertexColor : SVC_IGNORE;
         // (SRC_ALPHA, ONE): the fragment's alpha scales the whole contribution.
@@ -668,8 +704,7 @@ static void CollectGlowSurfaces(const idRenderEntityLocal *ent, const viewDef_t 
     {
         const modelSurface_t *surf = model->Surface(s);
         const srfTriangles_t *tri = surf->geometry;
-        if (!tri || !tri->verts || !tri->indexes || tri->numIndexes < 3 ||
-            tri->numIndexes / 3 > VK_RT_MAX_GLOW_TRIS)
+        if (!tri || !tri->verts || !tri->indexes || tri->numIndexes < 3 || tri->numIndexes / 3 > VK_RT_MAX_GLOW_TRIS)
             continue;
         const idMaterial *mat = parms.customShader ? parms.customShader : surf->shader;
         if (parms.customSkin && mat)
@@ -736,8 +771,8 @@ static int WriteGlowTris(const glowSurfCandidate_t *list, int num, vkRTGlowTri_t
         numSurfs++;
         if (log && numSurfs <= 8)
             common->Printf("  glow surf ent=%d model='%s' mtr='%s' tris=%d rgb=(%.2f %.2f %.2f) dist=%.0f\n",
-                           c.ent->parms.entityNum, c.ent->parms.hModel->Name(), c.mat->GetName(), surfTris,
-                           c.rgb.x, c.rgb.y, c.rgb.z, idMath::Sqrt(c.distSq));
+                           c.ent->parms.entityNum, c.ent->parms.hModel->Name(), c.mat->GetName(), surfTris, c.rgb.x,
+                           c.rgb.y, c.rgb.z, idMath::Sqrt(c.distSq));
     }
     if (log)
         common->Printf("VK RT Emitter glow tris: candidates=%d surfaces=%d tris=%d\n", num, numSurfs, numTris);
@@ -805,8 +840,9 @@ void VK_RT_BuildReflEmitters(const viewDef_t *viewDef)
         if (!EvalEmitter(ent, viewDef, c))
         {
             if (log)
-                common->Printf("VK RT Emitter: skip ent=%d model='%s' — nothing glowing (no additive stage, or blast finished)\n",
-                               ent->parms.entityNum, ent->parms.hModel->Name());
+                common->Printf(
+                    "VK RT Emitter: skip ent=%d model='%s' — nothing glowing (no additive stage, or blast finished)\n",
+                    ent->parms.entityNum, ent->parms.hModel->Name());
             continue;
         }
         if (log)
