@@ -1342,8 +1342,11 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
                             &vkRT.matDescSet[vk.currentFrame], 0, NULL);
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Refl: dispatch %ux%u at (%d,%d) mode=%d maxDist=%.1f emitters=%d\n", rectW, rectH,
-                       rectX, rectY, ubo.reflMode, ubo.maxDist, ubo.emitterCount);
+        // glowTris is the separate population: additive translucent surfaces the BLAS drops,
+        // which is the only way a beam or sprite reaches a reflection as geometry.  emitters
+        // counts discs (projectiles, smoke) and says nothing about those.
+        common->Printf("VK RT Refl: dispatch %ux%u at (%d,%d) mode=%d maxDist=%.1f emitters=%d glowTris=%d\n", rectW,
+                       rectH, rectX, rectY, ubo.reflMode, ubo.maxDist, ubo.emitterCount, ubo.glowTriCount);
 
     vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion, rectW,
                       rectH, 1);

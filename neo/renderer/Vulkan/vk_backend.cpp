@@ -4107,12 +4107,19 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             for (const drawSurf_t *s = vLight->localShadows; s; s = s->nextOnLight)
                 nLocalShadow++;
             const char *lName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
+            // lightId/suppressPlayer: the view muzzle flash (the flashlight beam included)
+            // carries a lightId the player's own models name in suppressShadowInLightID,
+            // meaning they must not cast shadows from it.  suppressPlayer=1 is the shadow
+            // pass actually honouring that; 0 on a flashlight means the hand shadows its
+            // own beam.  See VK_RT_PlayerSuppressesLight (vk_accelstruct.cpp).
+            extern bool VK_RT_PlayerSuppressesLight(int lightId);
+            const int lightId = vLight->lightDef->parms.lightId;
             common->Printf("VK LIGHT[%d]: shader='%s' sc=(%d,%d %u,%u) local=%d global=%d trans=%d gs=%d ls=%d rt=%d "
-                           "smLayer=%d%s\n",
+                           "lightId=%d suppressPlayer=%d smLayer=%d%s\n",
                            lightIdx, lName, (int)lightScissor.offset.x, (int)lightScissor.offset.y,
                            (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height, nLocal,
-                           nGlobal, nTrans, nGlobalShadow, nLocalShadow, VK_RTShadowsEnabled() ? 1 : 0,
-                           s_shadowMaskLayer,
+                           nGlobal, nTrans, nGlobalShadow, nLocalShadow, VK_RTShadowsEnabled() ? 1 : 0, lightId,
+                           VK_RT_PlayerSuppressesLight(lightId) ? 1 : 0, s_shadowMaskLayer,
                            (s_shadowMaskLayer < 0)                            ? " (noShadows)"
                            : (s_shadowMaskLayer == VK_RT_SHADOW_SERIAL_LAYER) ? " (serial)"
                                                                               : " (batched)");
