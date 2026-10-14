@@ -48,7 +48,6 @@ Needs fixing if they stay in the menu: `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIR
 | `r_rtNearDynRadius` | TLAS | Off-screen dynamic entities within this radius are forced into the TLAS | 512 | A | = |
 | `r_rtTlasFallbackRadius` | TLAS | Pass-2 radius for off-screen static geometry (0 = auto from GI/vol/reflection ranges) | 0 | A | = |
 | `r_rtTlasDump` | TLAS | One-shot dump of the next TLAS build | 0 | D | = |
-| `r_vkLogBLASRebuild` | TLAS | One line per full BLAS rebuild: cause, sizes, CPU ms split (alloc/copy/sizes/record) | 0 | D | = |
 | `r_vkLogTLASSlow` | TLAS | Section breakdown of TLAS CPU time on frames over N ms (pass1/2/3, materials, bindless, build) | 0 | D | = |
 | `r_vkBLASPoolCheck` | TLAS | Validate BLAS storage/scratch/geometry pool ranges on build and refit | 0 | D | = |
 | `r_vkRTReflDataDiag` | TLAS | Reflection hit-data diagnostics | 0 | D | = |

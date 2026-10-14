@@ -46,7 +46,8 @@ static vkPoolChunk_t *VK_Pool_CreateChunk(vkBufferPool_t *pool, VkDeviceSize siz
     if (pool->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
         allocInfo.pNext = &flagsInfo;
     allocInfo.allocationSize = memReqs.size;
-    allocInfo.memoryTypeIndex = VK_FindMemoryType(memReqs.memoryTypeBits, pool->memProps);
+    const uint32_t typeIndex = VK_FindMemoryType(memReqs.memoryTypeBits, pool->memProps);
+    allocInfo.memoryTypeIndex = typeIndex;
 
     VkDeviceMemory mem = VK_NULL_HANDLE;
     void *mapped = NULL;
@@ -82,6 +83,7 @@ static vkPoolChunk_t *VK_Pool_CreateChunk(vkBufferPool_t *pool, VkDeviceSize siz
     c->buf = buf;
     c->mem = mem;
     c->mapped = (uint8_t *)mapped;
+    c->typeIndex = typeIndex;
     vkPoolRange_t all = {0, size};
     c->freeRanges.Clear();
     c->freeRanges.Append(all);
@@ -151,6 +153,11 @@ void VK_Pool_Alloc(vkBufferPool_t *pool, VkDeviceSize size, vkPoolAlloc_t *out)
         bestChunk = VK_Pool_ChunkIndex(pool, newChunk);
         bestRange = 0;
         common->Printf("VK POOL %s: new chunk %d (%d KB)\n", pool->name, bestChunk, (int)(chunkSize >> 10));
+        if (bestChunk == 0)
+        {
+            // First chunk only: memory type is fixed per pool, so one line answers "where did it land".
+            VK_LogMemoryType(pool->name, pool->chunks[0]->typeIndex);
+        }
     }
 
     vkPoolRange_t &r = pool->chunks[bestChunk]->freeRanges[bestRange];
@@ -245,6 +252,24 @@ void VK_Pool_Destroy(vkBufferPool_t *pool)
     }
     pool->chunks.Clear();
     pool->generation++;
+}
+
+void VK_LogMemoryType(const char *what, uint32_t typeIndex)
+{
+    if (typeIndex >= vk.memProperties.memoryTypeCount)
+    {
+        common->Printf("VK MEM %s: type=%u (invalid)\n", what, typeIndex);
+        return;
+    }
+    const VkMemoryType &t = vk.memProperties.memoryTypes[typeIndex];
+    const VkMemoryHeap &h = vk.memProperties.memoryHeaps[t.heapIndex];
+    common->Printf("VK MEM %s: type=%u [%s%s%s%s] heap=%u %llu MB%s\n", what, typeIndex,
+                   (t.propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) ? "DL " : "",
+                   (t.propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) ? "HV " : "",
+                   (t.propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) ? "HC " : "",
+                   (t.propertyFlags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) ? "HCa" : "", t.heapIndex,
+                   (unsigned long long)(h.size >> 20),
+                   (h.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) ? " (device-local heap)" : " (system heap)");
 }
 
 void VK_Pool_Stats(const vkBufferPool_t *pool, int *chunks, VkDeviceSize *totalBytes, VkDeviceSize *freeBytes,

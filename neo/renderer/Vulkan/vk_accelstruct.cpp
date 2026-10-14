@@ -109,27 +109,14 @@ struct vkRTBlasBuildStats_t
     int rebuildCount;
     int triCount;
     uint64_t cpuTicks;
-    uint64_t logTicks; // r_vkLogBLASRebuild print time, kept out of cpuTicks
 };
 
-static vkRTBlasBuildStats_t s_blasBuildStats = {-1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0};
+static vkRTBlasBuildStats_t s_blasBuildStats = {-1, 0, 0, 0, 0, -1, 0, 0, 0, 0};
 static int s_tlasDynamicInstances = 0;
-
-static idCVar r_vkLogBLASRebuild("r_vkLogBLASRebuild", "0", CVAR_RENDERER | CVAR_BOOL,
-                                 "Log one line per full BLAS rebuild: cause, sizes, and CPU ms split into "
-                                 "gather/alloc/copy/sizes/record. Refits are not logged.");
 
 static idCVar r_vkLogTLASSlow("r_vkLogTLASSlow", "0", CVAR_RENDERER | CVAR_FLOAT,
                               "Print a section breakdown of VK_RT_RebuildTLAS CPU time on frames where it takes "
                               "longer than this many ms (0 = off)");
-
-// Caller context for the r_vkLogBLASRebuild line; set by the TLAS passes before each build.
-struct vkBLASLogCtx_t
-{
-    const idRenderEntityLocal *ent;
-    const char *pass;
-};
-static vkBLASLogCtx_t s_blasLogCtx = {NULL, NULL};
 
 // Adds the ticks since *mark to *acc and advances the mark.
 static ID_INLINE void VK_RT_LapTicks(uint64_t *mark, uint64_t *acc)
@@ -332,7 +319,6 @@ static void VK_RT_ResetBLASBuildStatsIfNewFrame()
         s_blasBuildStats.rebuildCount = 0;
         s_blasBuildStats.triCount = 0;
         s_blasBuildStats.cpuTicks = 0;
-        s_blasBuildStats.logTicks = 0;
     }
 }
 
@@ -778,45 +764,6 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
     }
 
 fullRebuild:
-    // r_vkLogBLASRebuild: why the refit was refused, and where the rebuild's CPU time goes.
-    uint64_t lapMark = SDL_GetPerformanceCounter();
-    const uint64_t tGather = lapMark - cpuTimer.start;
-    uint64_t tAlloc = 0, tCopy = 0, tSizes = 0, tRecord = 0;
-    int logRanges = 0;
-    VkDeviceSize logGeomBytes = 0;
-    char rebuildReason[96] = "new";
-    if (r_vkLogBLASRebuild.GetBool() && prevBlas)
-    {
-        if (!prevBlas->isValid)
-            idStr::snPrintf(rebuildReason, sizeof(rebuildReason), "invalid");
-        else if (prevBlas->geomCount != (uint32_t)validCount)
-            idStr::snPrintf(rebuildReason, sizeof(rebuildReason), "surfs:%u->%d", prevBlas->geomCount, validCount);
-        else if (!prevBlas->geomPrimCounts || !prevBlas->geomVertSizes || !prevBlas->geomVertRanges)
-            idStr::snPrintf(rebuildReason, sizeof(rebuildReason), "noCpuBufs");
-        else
-        {
-            idStr::snPrintf(rebuildReason, sizeof(rebuildReason), "noScratch");
-            for (int i = 0; i < validCount; i++)
-            {
-                const srfTriangles_t *geo = validSurfs[i].geo;
-                const uint32_t prevVerts = (uint32_t)(prevBlas->geomVertSizes[i] / sizeof(idDrawVert));
-                if (prevBlas->geomPrimCounts[i] != (uint32_t)(geo->numIndexes / 3) ||
-                    prevVerts != (uint32_t)geo->numVerts)
-                {
-                    idStr::snPrintf(rebuildReason, sizeof(rebuildReason), "surf%d:tris%u->%d,verts%u->%d", i,
-                                    prevBlas->geomPrimCounts[i], geo->numIndexes / 3, prevVerts, geo->numVerts);
-                    break;
-                }
-                if (!VK_Pool_Mapped(&s_blasGeomPool, prevBlas->geomVertRanges[i]) ||
-                    !VK_Pool_Mapped(&s_blasGeomPool, prevBlas->geomIdxRanges[i]))
-                {
-                    idStr::snPrintf(rebuildReason, sizeof(rebuildReason), "surf%d:noRange", i);
-                    break;
-                }
-            }
-        }
-    }
-
     vkBLAS_t *blas = new vkBLAS_t(); // value-initialized: empty pool ranges, null handles
 
     blas->geomCount = (uint32_t)validCount;
@@ -839,7 +786,6 @@ fullRebuild:
     static VkDeviceSize vertOffsets[MAX_BLAS_SURFACES];
     static VkDeviceSize idxOffsets[MAX_BLAS_SURFACES];
 
-    lapMark = SDL_GetPerformanceCounter();
     for (int i = 0; i < validCount; i++)
     {
         const srfTriangles_t *geo = validSurfs[i].geo;
@@ -869,10 +815,8 @@ fullRebuild:
         else
         {
             // Fallback: copy AS input geometry from CPU-visible pointers into the geometry pool.
-            VK_RT_LapTicks(&lapMark, &tRecord); // descriptor fill of the previous surface
             VK_Pool_Alloc(&s_blasGeomPool, vertSize, &blas->geomVertRanges[i]);
             VK_Pool_Alloc(&s_blasGeomPool, idxSize, &blas->geomIdxRanges[i]);
-            VK_RT_LapTicks(&lapMark, &tAlloc);
             if (r_vkBLASPoolCheck.GetBool())
             {
                 VK_Pool_Check(&s_blasGeomPool, blas->geomVertRanges[i], vertSize);
@@ -880,9 +824,6 @@ fullRebuild:
             }
             memcpy(VK_Pool_Mapped(&s_blasGeomPool, blas->geomVertRanges[i]), cpuVerts, (size_t)vertSize);
             memcpy(VK_Pool_Mapped(&s_blasGeomPool, blas->geomIdxRanges[i]), cpuIdx, (size_t)idxSize);
-            VK_RT_LapTicks(&lapMark, &tCopy);
-            logRanges += 2;
-            logGeomBytes += vertSize + idxSize;
 
             vertBufs[i] = blas->geomVertRanges[i].buf;
             idxBufs[i] = blas->geomIdxRanges[i].buf;
@@ -924,7 +865,6 @@ fullRebuild:
     buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     buildInfo.geometryCount = (uint32_t)validCount;
     buildInfo.pGeometries = asGeoms;
-    VK_RT_LapTicks(&lapMark, &tRecord);
 
     VkAccelerationStructureBuildSizesInfoKHR sizeInfo = {};
     sizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
@@ -941,7 +881,6 @@ fullRebuild:
     VkDeviceSize scratchSize = sizeInfo.buildScratchSize > updateSizeInfo.updateScratchSize
                                    ? sizeInfo.buildScratchSize
                                    : updateSizeInfo.updateScratchSize;
-    VK_RT_LapTicks(&lapMark, &tSizes);
 
     VK_Pool_Alloc(&s_blasStoragePool, sizeInfo.accelerationStructureSize, &blas->storage);
 
@@ -954,8 +893,6 @@ fullRebuild:
     VK_CHECK(vkCreateAccelerationStructureKHR(vk.device, &asInfo, NULL, &blas->handle));
 
     VK_Pool_Alloc(&s_blasScratchPool, scratchSize, &blas->scratch);
-    VK_RT_LapTicks(&lapMark, &tAlloc);
-    logRanges += 2;
     if (r_vkBLASPoolCheck.GetBool())
     {
         VK_Pool_Check(&s_blasStoragePool, blas->storage, sizeInfo.accelerationStructureSize);
@@ -980,40 +917,10 @@ fullRebuild:
     addrInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
     addrInfo.accelerationStructure = blas->handle;
     blas->deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(vk.device, &addrInfo);
-    VK_RT_LapTicks(&lapMark, &tRecord);
 
     s_blasBuildStats.rebuildCount++;
-    int rebuildTris = 0, rebuildVerts = 0;
     for (int i = 0; i < validCount; i++)
-    {
-        rebuildTris += (int)primCounts[i];
-        rebuildVerts += validSurfs[i].geo->numVerts;
-    }
-    s_blasBuildStats.triCount += rebuildTris;
-
-    if (r_vkLogBLASRebuild.GetBool())
-    {
-        const double toMs = 1000.0 / (double)SDL_GetPerformanceFrequency();
-        const uint64_t tTotal = lapMark - cpuTimer.start;
-        const uint64_t tOther = tTotal - tGather - tAlloc - tCopy - tSizes - tRecord;
-        const idRenderEntityLocal *logEnt = s_blasLogCtx.ent;
-        common->Printf("VK RT BLAS REBUILD: frame=%d n=%d pass=%s ent=%d entNum=%d hModel='%s' model='%s' reason=%s "
-                       "surfs=%d tris=%d verts=%d ranges=%d geomKB=%d asKB=%d scratchKB=%d | ms total=%.3f "
-                       "gather=%.3f alloc=%.3f copy=%.3f sizes=%.3f record=%.3f other=%.3f\n",
-                       tr.frameCount, s_blasBuildStats.rebuildCount, s_blasLogCtx.pass ? s_blasLogCtx.pass : "-",
-                       logEnt ? logEnt->index : -1, logEnt ? logEnt->parms.entityNum : -1,
-                       (logEnt && logEnt->parms.hModel) ? logEnt->parms.hModel->Name() : "-", model->Name(),
-                       rebuildReason, validCount, rebuildTris, rebuildVerts, logRanges, (int)(logGeomBytes / 1024),
-                       (int)(sizeInfo.accelerationStructureSize / 1024), (int)(scratchSize / 1024), tTotal * toMs,
-                       tGather * toMs, tAlloc * toMs, tCopy * toMs, tSizes * toMs, tRecord * toMs, tOther * toMs);
-        // Keep console time out of cpu.TLAS.BLAS, which this line is meant to explain. It still
-        // lands in cpu.TLAS (~1 ms per line); r_vkLogTLASSlow reports it as log=.
-        const uint64_t printTicks = SDL_GetPerformanceCounter() - lapMark;
-        cpuTimer.start += printTicks;
-        s_blasBuildStats.logTicks += printTicks;
-    }
-    s_blasLogCtx.ent = NULL;
-    s_blasLogCtx.pass = NULL;
+        s_blasBuildStats.triCount += (int)primCounts[i];
 
     blas->isValid = true;
     return blas;
@@ -1156,7 +1063,6 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     uint64_t slowLap = slowStart;
     uint64_t tPass1 = 0, tPass2 = 0, tPass3 = 0, tDynModel = 0, tMat1 = 0, tInst = 0, tMatTable = 0, tBuild = 0;
     const uint64_t blasTicks0 = s_blasBuildStats.cpuTicks;
-    const uint64_t logTicks0 = s_blasBuildStats.logTicks;
     uint64_t blasTicks1 = blasTicks0, blasTicks3 = blasTicks0;
     bool tlasStorageRegrown = false, tlasScratchRegrown = false;
     vkRTBindlessFrameStats_t bindless0 = {};
@@ -1262,8 +1168,6 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
         if (needRebuild)
         {
-            s_blasLogCtx.ent = ent;
-            s_blasLogCtx.pass = ent->dynamicModel ? "view-dyn" : "view-static";
             if (ent->dynamicModel && ent->blas)
             {
                 // Try in-place BLAS update: reuses buffers and keeps device address
@@ -1736,8 +1640,6 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             // Rebuild the BLAS in-place so vertex positions match the current pose.
             // In-place update reuses the existing GPU buffers and device address,
             // preventing TLAS signature churn.
-            s_blasLogCtx.ent = ent;
-            s_blasLogCtx.pass = "near-dyn";
             if (ent->blas)
             {
                 vkBLAS_t *updated = VK_RT_BuildBLASForModel(model, cmd, ent->blas);
@@ -2243,12 +2145,11 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         vkRTBindlessFrameStats_t bindless1 = {};
         VK_RT_GetBindlessFrameStats(&bindless1);
         const uint64_t blasPass1 = blasTicks1 - blasTicks0, blasPass3 = blasTicks3 - blasTicks1;
-        common->Printf("VK RT TLAS SLOW: frame=%d total=%.2f log=%.2f | pass1=%.2f (blas=%.2f mat=%.2f) pass2=%.2f "
+        common->Printf("VK RT TLAS SLOW: frame=%d total=%.2f |pass1=%.2f (blas=%.2f mat=%.2f) pass2=%.2f "
                        "pass3=%.2f (blas=%.2f dynModel=%.2f) inst=%.2f (instRealloc=%d rewriteStatic=%d) "
                        "matTable=%.2f (bindlessRebuild=%.2f newSlots=%u slotsWritten=%u bgLoads=%u) "
                        "build=%.2f (storageRegrow=%d scratchRegrow=%d) | inst=%u/%u/%u geoms=%u/%u\n",
-                       tr.frameCount, (slowLap - slowStart) * toMs,
-                       (s_blasBuildStats.logTicks - logTicks0) * toMs, tPass1 * toMs, blasPass1 * toMs, tMat1 * toMs,
+                       tr.frameCount, (slowLap - slowStart) * toMs, tPass1 * toMs, blasPass1 * toMs, tMat1 * toMs,
                        tPass2 * toMs, tPass3 * toMs, blasPass3 * toMs, tDynModel * toMs, tInst * toMs,
                        instanceBufferRecreated ? 1 : 0, rewriteStatic ? 1 : 0, tMatTable * toMs,
                        bindless1.rebuildMs - bindless0.rebuildMs, bindless1.slotCount - bindless0.slotCount,
@@ -2378,8 +2279,7 @@ void VK_RT_Init(void)
     vkGetPhysicalDeviceProperties2(vk.physicalDevice, &props2);
     if (asProps.minAccelerationStructureScratchOffsetAlignment > s_blasScratchPool.align)
         s_blasScratchPool.align = asProps.minAccelerationStructureScratchOffsetAlignment;
-    common->Printf("VK RT: BLAS scratch alignment %u\n", (unsigned)s_blasScratchPool.align);
-    common->Printf("VK RT: acceleration structure support initialized\n");
+    common->Printf("VK RT: BLAS scratch alignment %u\n", (unsigned)s_blasScratchPool.align);    common->Printf("VK RT: acceleration structure support initialized\n");
 }
 
 void VK_RT_Shutdown(void)

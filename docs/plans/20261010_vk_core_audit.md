@@ -21,13 +21,13 @@ finding on a chugging section. A stage whose counter reads near zero is dropped,
 | # | Action | Risk | Why it is here |
 |---|---|---|---|
 | 1 | ~~**Stage S**~~ — **closed 2026-10-13** | — | S2 cull landed; S3 batching landed for no gain; remaining cost is ray count, handled by `r_rtShadowSamples` default 2.|
-| 2 | **BLAS rebuild burst** — pooled 2026-10-14; confirm run pending | med | BLAS on the 36-rebuild frame 133 → 0.9 ms. The ~31-37 ms "residual" was the rebuild log itself (~1 ms per line). Real remainder ~4 ms: TLAS instance/storage/scratch regrow (R8, ~2.5 ms) |
-| 3 | **B0 remaining A/Bs** — R2 serialize-frames, R7 memory type | none | Two GPU-side questions, both cheap, both gate later stages |
-| 4 | **B2** — static BLAS flags, shared scratch | med | Read an RRA capture first |
-| 5 | **B1** — zero-copy BLAS (needs A1) | med-high | Run if R2 or R7 confirmed. Removes all host-visible BLAS copies |
-| 6 | **A1** — static index buffers | med | **Only as B1's prerequisite.** Its own CPU case is dead (`cpu.raster` 0.9 ms) |
+| 2 | ~~**BLAS rebuild burst**~~ — **closed 2026-10-14** | — | Pooled: 36-rebuild frame 133 → 0.9 ms. The later ~31-37 ms "residual" was the rebuild log (~1 ms per line). ~2.5 ms of TLAS regrow (R8) left for B4 |
+| 3 | ~~**B0 A/Bs**~~ — **closed 2026-10-14** | — | R2: no visible difference serialized vs not → latent. R7: BAR placement −2.0% `gpu.total`, inside the −1.8% same-config noise → no gain |
+| 4 | **B2 remainder** — static BLAS flags, shared scratch, dynamic flags, truncation | med | Pooled storage/scratch/geometry done with row 2. Read an RRA capture first |
+| 5 | **B1** — zero-copy BLAS (needs A1) — **parked** | med-high | Gate was "R2 or R7 confirmed"; neither was. Reopen for memory/correctness only |
+| 6 | **A1** — static index buffers — **parked with B1** | med | Only ever B1's prerequisite |
 | 7 | **B3** — TLAS loop and material-table CPU | low-med | `cpu.TLAS` p50 0.6 ms every frame, 5% of a 12 ms frame |
-| 8 | **B4** — BAR memory placement, TLAS buffer churn | low | Run if the R7 A/B shows a gain |
+| 8 | **B4** — TLAS buffer regrow (R8, ~2.5 ms on burst frames), garbage fence (R9) | low | BAR placement dropped by the R7 A/B |
 | 9 | **A3** — sampler cache, texture staging | low-med | Load time and allocation-limit safety, not frame time |
 | 10 | **E2-E4** — sync, memory and upload regression audits | none | Cheap guards, no number demands them |
 | — | A2, A4, A5 parked | — | Dispatched by measurement; reopen only if a counter changes |
@@ -114,7 +114,7 @@ lever is adaptive sampling: 1 ray, refine to N only where a 3x3 neighbourhood di
 | # | Sev | Finding | Where | Effect |
 |---|---|---|---|---|
 | R1 | High | The BLAS "zero-copy" path needs both `ambientCache` and `indexCache` on the GPU. `indexCache` never exists under Vulkan (F1), so every BLAS geometry takes the fallback: its own host-visible vertex buffer (full 60-byte `idDrawVert`) and index buffer, 2 `vkAllocateMemory` + `memcpy` per geometry | `vk_accelstruct.cpp:520-523`, `766-769`, `1005-1037` | AS builds and every hit-shader vertex fetch read system RAM over PCIe. Dynamic entities pay `vkMapMemory` + full copy + unmap per geometry per frame (`876-882`). Confirmed: `VK RT BLAS SRC gpuPct=0.0` |
-| R2 | Med (verify) | Dynamic-entity BLAS geometry buffers and the AS itself are single-copy, updated in place every frame, with 2 frames in flight. Frame N's `memcpy` and `MODE_UPDATE` can overlap N-1's trace. TLAS and material tables are per slot; the BLAS is not, and no frame-start barrier orders N-1's reads before N's write | `vk_accelstruct.cpp:847-930`, `1301-1311` | Expected symptom: one-frame normal/position mismatch on skinned entities under load. Sync validation cannot see the CPU `memcpy`; confirm with an `r_vkSerializeFrames 1` A/B |
+| R2 | Low (latent) | Dynamic-entity BLAS geometry buffers and the AS itself are single-copy, updated in place every frame, with 2 frames in flight. Frame N's `memcpy` and `MODE_UPDATE` can overlap N-1's trace. TLAS and material tables are per slot; the BLAS is not, and no frame-start barrier orders N-1's reads before N's write | `vk_accelstruct.cpp:847-930`, `1301-1311` | Expected symptom: one-frame normal/position mismatch on skinned entities under load. Sync validation cannot see the CPU `memcpy`. A/B 2026-10-14 (mchq vs mchq_ser): no visible difference; serialize cost 12.1 → 15.7 ms backend from lost overlap only |
 | R3 | Med | Every BLAS is built `ALLOW_UPDATE` and keeps its scratch for life, including static world and model BLASes. Dynamic BLASes use `PREFER_FAST_TRACE` and refit in place with no periodic rebuild | `vk_accelstruct.cpp:635`, `908-911`, `1068`, `1099` | Larger, slower-to-trace static AS; scratch (about AS size) resident forever; degrading refit quality on skinned meshes |
 | R4 | Med | Per BLAS: AS buffer, scratch, plus 2 per geometry in the fallback = at least 4 `vkAllocateMemory`. Same limit exposure as F4 | `AllocASBuffer`, `vk_accelstruct.cpp:474-499` | Hundreds of cached model BLASes approach the device allocation limit; slow level load |
 | R5 | Med | Every frame, for every static instance and geometry (up to 4096 / 16384), the TLAS loop calls `VK_RT_MakeMaterialEntry` (stage walk plus up to 3 linear scans of a 4096-slot table) and hashes the signature, even when nothing changed | `vk_accelstruct.cpp:1670-1695`, `vk_material_table.cpp:126-154`, `635-726` | Worst case millions of compares per frame. The result is only needed when `rewriteStatic` is true. `cpu.TLAS` p50 0.6 ms |
@@ -163,13 +163,13 @@ identical; BLAS GPU ms not worse.
 |---|---|
 | Static BLAS flags | No `ALLOW_UPDATE` for BLASes built from static models; free scratch after the build completes (deferred with the BLAS garbage clock) |
 | Dynamic BLAS flags | `PREFER_FAST_BUILD` for per-frame updated BLASes; full rebuild every N updates |
-| Rebuild burst — **pooled 2026-10-14** | Cause was allocation, not build work: 2N+2 `vkAllocateMemory` per rebuild at ~0.28 ms each; frame 15770 of r2r spent 129 of 133 ms allocating (35 first-sight BLASes). `vk_buffer_pool` (vertex-cache allocator, generalized) now backs AS storage (256 align), scratch (device scratch align) and host-mapped geometry (64 align). Cap dropped |
+| Rebuild burst — **done 2026-10-14** | Cause was allocation, not build work: 2N+2 `vkAllocateMemory` per rebuild at ~0.28 ms each; frame 15770 of r2r spent 129 of 133 ms allocating (35 first-sight BLASes). `vk_buffer_pool` (vertex-cache allocator, generalized) now backs AS storage (256 align), scratch (device scratch align) and host-mapped geometry (64 align). Cap dropped |
 | Shared transient scratch | Still open: scratch is pooled but kept per BLAS for life. One scratch per frame slot sized to the largest build would cut the scratch total |
 | Pooled AS storage — **done** with the rebuild-burst row | — |
 | Truncation | Raise `MAX_BLAS_SURFACES` or split the model into several BLASes; keep the log |
 
 Check: live RT allocations < 100 after level load; VRAM drops by the scratch total;
-`r_vkLogBLASRebuild 1` shows `alloc` near 0 except on `VK POOL ... new chunk` frames;
+`r_vkLogTLASSlow 5` shows `blas=` under 2 ms on first-sight burst frames;
 BLAS count and trace time (AO/shadow ms) not worse on static scenes.
 
 ## Stage B3 — CPU in the TLAS loop and material table (R5, R6)

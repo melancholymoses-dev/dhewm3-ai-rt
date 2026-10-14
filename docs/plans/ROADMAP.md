@@ -33,7 +33,7 @@ this says *when*.
 | 3 | 8b glass crease fix | 8b | Small, bounded; adds refl debug modes 9/10 |
 | 4 | Cleanup 1a + 5a | 8e | Unblocked; land whenever convenient |
 | 5 | Cleanup 1b (+ Stage S4 serial-path deletion) | 8e | Unblocked — Stage S closed |
-| 6 | Optimization B0/B2/B1, BLAS rebuild burst | 8 | GPU-side; everything CPU-side is parked |
+| 6 | Optimization B0/B2/B1 (BLAS rebuild burst closed 2026-10-14) | 8 | GPU-side; everything CPU-side is parked |
 | 7 | 8d roughness Stages 1-5 | 8d | Denoiser first. Decide go/no-go on the 20-40% frame cost before Stage 4 |
 | 8 | Cleanup 1c + Phase 2 | 8e | Needs the reflection arc resolved — **2c is irreversible** |
 | 9 | Cleanup 3, 4 | 8e | Biggest surgery, 0.001 ms gain. Last of the code changes |

@@ -33,6 +33,7 @@ struct vkPoolChunk_t
     VkDeviceMemory mem;
     VkDeviceSize size;
     uint8_t *mapped; // persistent mapping, NULL unless the pool is host-mapped
+    uint32_t typeIndex; // memory type the chunk landed in
     idList<vkPoolRange_t> freeRanges; // sorted by offset, coalesced
 };
 
@@ -79,6 +80,10 @@ bool VK_Pool_Check(const vkBufferPool_t *pool, const vkPoolAlloc_t &a, VkDeviceS
 void VK_Pool_TrimEmpty(vkBufferPool_t *pool);
 // Destroys every chunk; outstanding allocations become stale.
 void VK_Pool_Destroy(vkBufferPool_t *pool);
+// One line naming the memory type and heap an allocation landed in, e.g.
+// "VK MEM blasGeom: type=1 [HV HC] heap=1 16338 MB (system heap)". Printed per pool on first chunk.
+void VK_LogMemoryType(const char *what, uint32_t typeIndex);
+
 void VK_Pool_Stats(const vkBufferPool_t *pool, int *chunks, VkDeviceSize *totalBytes, VkDeviceSize *freeBytes,
                    VkDeviceSize *largestFree);
 

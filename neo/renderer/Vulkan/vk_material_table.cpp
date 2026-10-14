@@ -286,6 +286,7 @@ void VK_RT_InitMaterialTable(void)
     const VkDeviceSize matSSBOSize = (VkDeviceSize)VK_MAT_MAX_GEOMS * sizeof(VkMaterialEntry);
     const VkDeviceSize addrSSBOSize = (VkDeviceSize)VK_MAT_MAX_GEOMS * sizeof(uint64_t);
 
+    // System RAM is fine for these: the R7 A/B (2026-10-14) found no gain from BAR placement.
     const VkBufferUsageFlags ssboUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     const VkMemoryPropertyFlags hostFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 

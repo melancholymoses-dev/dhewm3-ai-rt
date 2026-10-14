@@ -231,6 +231,21 @@ BLAS rebuild cause, 2026-10-13 r2r with r_vkLogBLASRebuild 1 (2600 / 9070 XT):
   Reasons: almost all "new" (first sight). surfs:2->1 on zsec zombies after weapon drop.
   No repeated rebuilds of one entity. Fix: pooled storage/scratch/geometry (vk_buffer_pool).
 
+R2 A/B, 2026-10-14 (9070 XT, mchq.csv vs mchq_ser.csv), 13 dynamic BLAS/frame p50:
+  backend p50 12.08 -> 15.65, p95 15.19 -> 21.02; GPU 8.65+3.25 vs 9.01+3.46; wait.serialize
+  p50 12.31. The slowdown is lost CPU/GPU overlap. No visible artifact difference on
+  character shadows or reflections. R2 latent, not visible.
+
+R7 A/B, 2026-10-14 (mchq_bar0 vs mchq_bar1, r_vkRTPreferBAR via vid_restart):
+  Default: matTable / addr tables / blasGeom in type 1 [HV HC], system heap. BAR: type 2
+  [DL HV HC], 256 MB heap (no Resizable BAR on this machine; ~11 MB of tables fits easily).
+  gpu.total p50 8.65 -> 8.48 (-2.0%). Same-config repeat earlier read -1.8%: noise.
+  Per pass: Shadows -6.7%, AO -3.1%, TLAS -10% (0.07 ms) but Interactions.Shadows +17.6%
+  with lights.view 16 -> 18 (route variance). Refl p95 3.02 -> 3.59. No measurable gain:
+  per-hit reads over PCIe are not a cost here. B4 BAR placement dropped; B1 parked.
+  Side note: mem.rssMB 210 -> 614 after the vid_restart. Not BAR (tables are ~11 MB);
+  a vid_restart leak or reload footprint. E3 territory.
+
 One-off: r2r frame 32426 waited 125.8 ms on the upload fence. GPU passes on it read
   20.0 + 12.8 ms and the neighbours ~30 ms, so the stall is outside any timed pass
   (driver or present). n=1, near capture start (RSS 143 MB).
