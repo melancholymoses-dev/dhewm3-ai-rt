@@ -30,8 +30,20 @@ Plans live in docs/plans/*.md.  **Start with docs/plans/ROADMAP.md** — it owns
 ordering/status and links the live design docs.  Finished or superseded plans are in
 docs/plans/completed/ (including the original rt refactor phase docs).
 
+One subject per doc.  ROADMAP holds order and status only; features get their own doc.  
+Do not add an order table to a feature doc.
+
+## Rules and aesthetics
+**Read docs/rt_engine_rules.md before writing or reviewing RT code.**  It holds the taste
+contract (what the renderer is trying to be), the correctness rules from debugging,
+ settled conclusions, and symptom→cause discriminators.  
+ Add to it when a new rule is earned. 
+ Keep entries short — the war story goes in a memory file, not in that doc.
+
 ## Procedure
-If there are complex options, favour generating logs and debugging over theoretical discussions.  We can figure it out if we can see a log.  This goes for bugs, as well as analyzing graphical errors.  For graphical/GPU debugging suggest a way of outputting color coding for the relevant objects to allow visual inspection.
+If there are complex options, favour generating logs and debugging over theoretical discussions.  
+We can figure it out if we can see a log.  This goes for bugs, as well as analyzing graphical errors.  
+For graphical/GPU debugging suggest a way of outputting color coding for the relevant objects to allow visual inspection.
 
 When adding new shaders update CMakelists.  For glsl files add them to the GLSL_INCLUDES.
 
@@ -44,7 +56,7 @@ The main doom3 assets have been unzipped and are accessible at build_rt/pak_asse
 Most are text files despite the odd file suffixes.  Check this with a head command first.
 
 neo/game/ and neo/d3xp/ are near-identical; changes must be mirrored across both.  
-Game is for the base game, d3xp is the expansion pack.
+game is for the base game, d3xp is the expansion pack.
 
 ## Action to Avoid
 Do not attempt to configure or build the project.  A separate process will handle that. 

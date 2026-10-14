@@ -1,9 +1,19 @@
-# Vulkan Core Audit: buffers, uploads, raster path, RT uploads
+# Optimization: Vulkan core, RT uploads, shadow dispatch
 
-Code review only, no telemetry, no edits made. Part 1 (F1-F13, stages A0-A5): `vk_buffer.cpp`, upload batch in `vk_instance.cpp`, `vk_image.cpp`, raster draw path in `vk_backend.cpp`, `VertexCache.cpp`, `Vulkan/VKBackend.cpp`. Part 2 (R1-R10, stages B0-B4): `vk_accelstruct.cpp`, `vk_material_table.cpp` and the buffers RT passes read.
-Feeds Phase 6 of `20261010_cleanup_optimization.md`. Each finding is a code-read claim; Stage 0 and A0/B0 turn them into numbers before any fix.
+**This doc owns all performance work.** Measurement, findings, fix stages and the
+optimization order live here; `20261010_cleanup_polish.md` owns deletion and polish and
+contains no optimization. ROADMAP owns which arc runs when.
 
-Gate: no fix stage (A1-A5, B1-B4) starts until Stage 0 shows its finding on a chugging section. A stage whose counter reads near zero is dropped, not deferred.
+Part 1 (F1-F13, stages A0-A5): `vk_buffer.cpp`, upload batch in `vk_instance.cpp`,
+`vk_image.cpp`, raster draw path in `vk_backend.cpp`, `VertexCache.cpp`,
+`Vulkan/VKBackend.cpp`. Part 2 (R1-R10, stages B0-B4): `vk_accelstruct.cpp`,
+`vk_material_table.cpp` and the buffers RT passes read. Part 3 (Stage S): RT shadow
+dispatch, the largest measured GPU item.
+
+F/R findings are code-read claims; A0/B0 turn them into numbers before any fix.
+
+Gate: no fix stage starts until a counter shows its finding on a chugging section. A stage
+whose counter reads near zero is dropped, not deferred.
 
 ## Findings
 
@@ -259,6 +269,106 @@ Check: TLAS gather CPU ms (B0 counter) drops; descriptor writes per rebuild drop
 
 Check: per-buffer memory type log shows the BAR type on this machine; RT pass GPU ms on the 4070 Ti Super and the 9070 XT compared against B0; machine without ReBAR still runs (force the fallback with a debug cvar and confirm).
 
+---
+
+# Part 3: RT shadow dispatch (Stage S)
+
+Moved here 2026-10-13 from the cleanup doc's Phase 6a — it is optimization, not cleanup.
+**Code comments in `vk_raytracing.h:971` and `vk_shadows.cpp:1465` call this "Phase 6a";
+both names refer to this section.** Steps keep their S0-S7 labels.
+
+Top GPU item. First seen 2026-10-11 (`r_vkLogRT 1`, Mars City 2 corner, 2560x1440, 25 view
+lights, 21 shadow-casting); **confirmed 2026-10-12 across 2978 frames** of the Mars City
+Walkthrough with `lights.serial` in the CSV:
+
+| `lights.serial` | frames | `gpu.Interactions` | `gpu.Shadows` | casters |
+|---|---|---|---|---|
+| 0 | 780 | 0.08 | 2.48 | 6 |
+| 5 | 229 | 5.03 | 2.18 | 12 |
+| 10 | 92 | 7.56 | 1.08 | 17 |
+| 15 | 40 | 10.40 | 0.31 | 22 |
+| 20 | 31 | 7.49 | 0.10 | 27 |
+
+`Interactions` +7.41 ms while `Shadows` −2.38 ms: work moves out of the batched dispatch and
+reappears in the interaction loop. Total GPU 6.50 → 13.13 ms. `lights.batched` pins to
+exactly 7 and **74% of frames overflow the cap**, so this is not a corner case. `python
+tools/vk_profile_report.py mchq.csv` reproduces the table.
+
+The `lights.*` counters read **zero** until 2026-10-12: the 2D GUI overlay is a second
+`RC_DRAW_VIEW` and its `ShadowBatchBegin` zeroed them before the read. Three earlier
+captures therefore looked like they had no shadow casters at all. Any new per-frame counter
+is exposed to the same trap.
+
+| Finding | Evidence | Where |
+|---|---|---|
+| Only 7 lights are batched; the rest trace one at a time inside the interaction loop, each with a render-pass break, depth round-trip and its own blur | 7 batched, 14 serial | `vk_backend.cpp:4107`, `vk_shadows.cpp:1248` |
+| Serial shadow time is reported as `Interactions` (raster), so `Shadows` reads near zero when the cost is highest | `Shadows=0.16 Interactions=12.97` | span at `vk_backend.cpp:5419` |
+| Layers go out in list order; the batch got 1.9 M pixels, the serial path 31.9 M (8.6 screens, 128 M rays at 4 samples) | `VK RT TRACE dims=` lines | `VK_RT_ShadowBatchAddLight` |
+| Dispatch rect is the light scissor, full screen when the camera is inside the light volume. Four full-screen lights touch 2-4 surfaces each | lights 20-23 | `VK_ComputeLightScissor` |
+| No per-pixel volume test. The only cull is a sphere of the box diagonal, point lights only, and off by default (`r_rtShadowDistanceCutoff 0`) | every pixel in the rect traces | `shadow_ray.rgen:173`, `vk_shadows.cpp:982` |
+| Stencil is cleared per light although no stencil volumes are drawn with RT shadows | — | `vk_backend.cpp:4126` |
+
+No leftover GI "reach" extension was found in this path; the full-screen rects are stock
+scissor behaviour plus the missing volume test.
+
+| Step | Change | Check |
+|---|---|---|
+| S0 Measure | Mars City Walkthrough: `r_rtShadowSamples 1`, then `r_rtShadowBlurEnable 0`. Also sweep `r_vkRTShadowBatchMax` if it is a cvar (else raise `VK_RT_SHADOW_BATCH_MAX` and rebuild) — the cheapest possible win if break overhead dominates | `--baseline mchq.csv` per variant; notes record ray vs blur vs break overhead |
+| S1 Label | Close the `Interactions` span around any mid-loop shadow dispatch and open a `Shadows` span for it | `Shadows` + `Interactions` sum unchanged; `Interactions` under ~1.5 ms in the corner |
+| S2 Pixel cull | In `shadow_ray.rgen`, before tracing: point light = test world pos against the light's oriented box; projected = against the frustum planes. Outside stores 1.0 and returns. Replaces `r_rtShadowDistanceCutoff` | Debug mode tinting culled pixels; shadows identical inside volumes; `Shadows` ms drops |
+| S3 Looped batches | Assign shadow lights to batch `k = n / W`. Batch 0 traces where it does today. On reaching the first light of batch k>0: end pass, clear used layers, trace + blur the batch, resume. Lights are additive, so order within the loop is free | 21 lights = 2 breaks at W=8 (was 14); log line per batch |
+| S4 Delete serial path | Remove `VK_RT_DispatchShadowRaysForLight`, `VK_RT_SHADOW_SERIAL_LAYER`, `r_rtShadowBatch`, overflow log; the scratch layer becomes a batch layer (W=8) | `grep -r ShadowBatch\b` clean; settings doc row removed |
+| S5 Rect shrink | Dispatch rect = light scissor ∩ screen rect of (lit surface bounds ∩ light bounds). Blur and interaction scissor use the same rect | Traced pixels per frame logged; corner drops well below 32 M |
+| S6 Stencil clear | Skip the per-light stencil clear when RT shadows are on, after confirming the pass starts with stencil 128 | Screenshots identical; stencil-shadow fallback (`r_rtShadows 0`) unchanged |
+| S7 Layer count (optional) | W=16 only if S0/S3 show break overhead still matters. First share one mask + blur-temp pair across frame slots (mask has no history), which makes 16 layers VRAM-neutral | VRAM logged before/after; no flicker with 2 frames in flight |
+
+Order: S0, S1, S2, S3+S4, S5, S6, S7. One commit each, numbers in
+`notes/20261011_shadow_dispatch.txt`.
+
+| Risk | Guard |
+|---|---|
+| S2 box test disagrees with the light's falloff texture at the edges, giving a lit rim | Pad the box by a few units; compare against the tinted debug view |
+| S3 layer reused before the previous batch's draws executed | Barrier fragment-read → RT-write at each batch start; sync validation |
+| S5 rect too tight when surface bounds are stale (animated models) | Use the same bounds the frontend culled with; fall back to light scissor when unsure |
+| S7 shared mask across slots | Only after sync validation is clean on S3 |
+
+Exit: on `mchq.csv`'s route, `SHADOW DISPATCH` shows `Interactions` flat against
+`lights.serial` instead of climbing, `Interactions + Shadows` p50 at serial≥10 at most half
+of today's 8.6-10.7 ms, and GPU p50 under 9.17 ms.
+
+---
+
+## RT budget history
+
+Moved from ROADMAP 2026-10-13 — measurement belongs here. `r_vkRTProfile 1`, Mars City,
+median GPU ms per phase, **fast machine** (5950X / 4070 Ti Super / 2560×1440).
+
+| | GI | Refl | Vol | AO | Shadows | TLAS | **total** |
+|---|---|---|---|---|---|---|---|
+| 2026-09-11 (pre-arc-1/2) | 4.41 | 3.24 | 1.53 | 1.17 | — | 0.15 | **11.93** |
+| 2026-09-19 (arc 2 closed) | ~1.3 | ~0.8 | 0.29 | 1.9 | — | 0.12 | **~7-8** |
+| 2026-09-23 MC2, scale 1.00 | 1.29 | ~0 | 0.52 | 1.27 | 1.80 | 0.17 | **5.05** |
+| 2026-09-23 MC2, scale 0.67 | 0.54 | ~0 | 0.37 | 0.49 | 0.68 | 0.14 | **2.22** |
+| 2026-10-10 MC 1440p, scale 1.00, vol_fix 1-4,6 (76 samples, `r_rtTlasFallbackRadius 0`) | 1.72 | ~0 (p90 1.8 with glass) | 0.82 | 2.05 | 2.93 | 0.46 (0.12 TLAS + 0.34 BLAS) | **~8.0** RT |
+| 2026-10-12 MC entrance, **A0 window p50** (17 windows x 30 frames) | 0.82 | 0.67 | 0.83 | 1.57 | 0.17 | 0.18 (incl. 0.08 BLAS) | **4.27** RT / **6.07** raster |
+| **2026-10-12 baseline, `com_fixedTic 1`, three scenarios** (p50, CSV) | 0.00 | 0.00-1.11 | 0.50-1.13 | 1.69-2.51 | 1.33-4.07 | 0.17 | **5.07-9.68** RT / **3.47-6.56** raster |
+
+Slow machine (2600X / 9070 XT), 2026-10-10 MC 1440p, after the particle-upload CPU fix:
+GI 1.72, Refl ~0, Vol 0.82, AO 2.05, Shadows 2.93, TLAS 0.46 — **~8.0 ms** RT.
+
+**Every row but the last is capped at 62.5 fps** (`USERCMD_MSEC` is integer `1000/60`), so
+GPU cost beyond ~16 ms was invisible. Do not compare a capped row against the baseline.
+
+**The `Shadows` column understates shadows in every row** — only 7 lights batch and the rest
+are billed to `Interactions`, which this table does not show. Part 3 has the breakdown; a
+`Shadows` reading near zero is the signature of the cost being highest, not lowest.
+
+**Render scale below 0.67 currently buys ~0.1 ms** (`completed/20260918_fsr_upscaling.md`
+§12). Arc 2 left a ~0.73 ms world-space floor — TLAS, probe trace/blend, froxel
+fill/integrate — that screen resolution cannot touch. **Conditional, not a rule:** that floor
+is itself optimization surface, so re-measure the scale sweep after any B-stage or probe/
+froxel work lands before quoting this.
+
 ## Measured 2026-10-12 (three scenarios, `com_fixedTic 1`, full CSV)
 
 Numbers and method: `notes/20261010_vk_core_baseline.txt`. 5950X / 4070 Ti Super, 1440p,
@@ -295,7 +405,7 @@ p50 0.6 ms every frame is 5% of a 12 ms frame), R7 (needs the B0 A/B).
 
 | Result | Numbers | Consequence |
 |---|---|---|
-| Largest GPU cost is RT shadows traced serially and reported as `Interactions` | 14 of 21 shadow lights serial, 31.9 M pixels | Own chunk: `20261010_cleanup_optimization.md` Phase 6a. Runs before A1-B4 |
+| Largest GPU cost is RT shadows traced serially and reported as `Interactions` | 14 of 21 shadow lights serial, 31.9 M pixels | Part 3, Stage S. Runs before A1-B4 |
 | F2 confirmed: every frame flushes and waits; `fenceWait` ~0, `upload` 9-18 ms live on heavy frames | Frame time = GPU + CPU, no overlap | A2 moves up. Cause is 7-27 `ambient.cached` static allocs per frame; first try routing per-frame dynamic geometry to the frame ring |
 | Demo playback rebuilds every dynamic BLAS each frame (live: in-place updates) | `TLAS.BLAS` CPU 3-4.5 ms + `drain` 3-5 ms vs 0.2 / 0.005 | Fix before using timedemo for CPU numbers. A rebuild costs ~3 ms (R4) |
 | Raster CPU is small | 0.4-1.6 ms per frame | F1 and A5 drop in priority |
@@ -340,7 +450,7 @@ are GPU-bound by 4-7x.
 | Stage | Risk | Gate / expected gain |
 |---|---|---|
 | 0, A0, B0 (counters) | none | Done. A0 landed and is validated; B0's counter list is next |
-| Phase 6a (cleanup doc) | med | **Confirmed, runs first.** 74% of mchq frames overflow the 7-layer batch; the overflow costs ~0.37 ms per light billed to `Interactions` |
+| **S** (Part 3) | med | **Confirmed, runs first.** 74% of mchq frames overflow the 7-layer batch; the overflow costs ~0.37 ms per light billed to `Interactions` |
 | BLAS rebuild burst | med | New. 36 rebuilds in one frame = 49 ms. Cap and spread the per-frame count; overlaps B2's flag work |
 | B0 (remaining A/Bs) | none | R2 serialize-frames A/B and R7 memory-type A/B — both answer GPU-side questions |
 | B2 | med | Static BLAS flags and shared scratch. RRA read first |
@@ -350,6 +460,13 @@ are GPU-bound by 4-7x.
 | B4 | low | Run if the R7 A/B shows a gain |
 | A3 (sampler cache, staging) | low-med | Load time and allocation-limit safety, not frame time |
 | A2, A4, A5 | — | Parked, see the dispatched table. Reopen only if a counter changes |
+| E2 sync audit | none | Confirm no per-frame `vkQueueWaitIdle`/`vkWaitForFences`: `vk_ao.cpp:257`, `vk_bloom.cpp:340`, `vk_gbuffer.cpp:185`, `vk_gi.cpp:831/3187`, `vk_gi_probe.cpp:545`, plus `vkDeviceWaitIdle` in resize/cvar paths. A0's tagged wait wrapper answers this directly |
+| E3 memory audit | none | 3 map loads + 10 min play; create-vs-destroy counts at shutdown (use `r_vkLogBufferGarbage` **before** Phase 1b removes it); validation leak report at exit |
+| E4 upload audit | none | Full-buffer re-uploads of unchanged data (light tables, material table, instance data); write-combined reads; host-visible buffers not per-frame-slotted; BLAS rebuild vs update |
+
+E2-E4 arrived from the cleanup doc's deleted Phase 6 on 2026-10-13. They are regression
+guards, not fixes — cheap, and no number demands them. One change per commit with
+before/after numbers in the notes file.
 
 B1 cannot start before A1 lands the static index buffers. One change per commit with before/after numbers in the notes file.
 

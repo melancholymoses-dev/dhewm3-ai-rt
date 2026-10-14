@@ -1,0 +1,156 @@
+# Surface roughness in reflections
+
+Extend reflections past glass to opaque surfaces by giving them a roughness lobe instead of
+a mirror. Settled conclusion (`../rt_engine_rules.md`): sharp mirror reflection is *why* opaque geometry
+looked wrong, so no F0 threshold can fix it — thresholds cull from the bottom while the
+worst artifacts are the highest-F0 pixels. Roughness changes the reflection's character
+rather than its magnitude, which is the only lever that can work.
+
+Two blockers sit in front of the lobe itself, and they set the stage order.
+
+| Blocker | State |
+|---|---|
+| Reflections have **no temporal or spatial filter** | AO has `temporal_resolve.comp`, GI has `gi_temporal_resolve.comp`, vol reuses GI's. `reflImage` is traced and composited in the same frame, no history |
+| At high roughness a specular lobe **is** the diffuse hemisphere | Probe GI already integrates that. Adding both double-counts indirect light and lifts the noise floor of dark regions (`../rt_engine_rules.md` pillar 2) |
+
+A sharp mirror is a deterministic one-ray query — no estimator, no variance. A lobe is
+importance-sampled, so one ray per pixel is a noise field with nothing downstream to resolve
+it. Tuning lobe constants through un-denoised noise fits the constants to the variance.
+
+## F0 stays
+
+F0 is reflectance at normal incidence; roughness is lobe width. GGX needs both. Per-material
+F0 (T3) was dropped because sharp mirrors made classification pointless — the condition
+roughness removes. **Do not run cleanup Phase 2b/2c before this lands**: 2c reclaims the
+G-buffer alpha that holds F0, and that is the one irreversible step.
+
+---
+
+## Stage 1 — Reflection denoiser (still glass-only)
+
+Required regardless of how roughness is sourced, and independently useful: it lets glass
+trade rays for filtering, or affords a second bounce.
+
+| File | Change |
+|---|---|
+| `vk_reflections.cpp` | Per-slot `reflHistory` rgba16f at render res + `reflMoments` for variance. Follow `vk_temporal.cpp`'s AO pattern |
+| `glsl/refl_temporal_resolve.comp` | **New.** Reproject by `motionVectors`, EMA with variance-driven alpha, disocclusion reject on depth + normal |
+| `CMakeLists.txt` | New shader |
+| `vk_backend.cpp` | Dispatch after `VK_RT_DispatchReflections`, before the composite |
+| `vk_reflections.cpp` | `r_rtReflDenoise` (0 off / 1 temporal / 2 temporal+spatial), `r_rtReflDenoiseAlpha` |
+
+Alpha must be adaptive from the start, not a fixed low value — a fixed EMA denoises the
+estimator *and* low-passes the scene, and glass reflections move with the camera.
+
+Debug mode 11: history age / rejection mask. A binary reject map rendering as a gradient
+means the composite is filtering the overlay.
+
+**Check:** `r_rtReflDenoise 0` is bit-identical to today. Mode 1 on Mars City glass shows no
+added lag on a fast strafe and no ghosting on the player reflection. Cost ≤ 0.3 ms at 1440p.
+
+---
+
+## Stage 2 — Roughness source
+
+Doom 3 has **zero** per-material gloss: specular is a global NdotH lookup table
+(`interaction.frag:35`), the same curve for concrete, steel and glass. The specular map's
+RGB is already fully consumed synthesizing F0, so sourcing roughness from it collapses F0
+and roughness onto one curve — polished dark metal and rough aluminium become
+inexpressible.
+
+Use **bump-map normal variance** instead (Toksvig/LEAN): the shortening of the filtered
+normal in a bumpmap's mip chain measures sub-pixel normal variance, which converts directly
+to roughness. Doom 3 ships bumpmaps for nearly everything, so this is per-pixel, spatially
+varying, and independent of F0. It also fixes specular aliasing rather than causing it —
+high-frequency normal detail under a delta BRDF is the pathological case.
+
+Channel: both G-buffers are `R8G8B8A8_UNORM`, and both alphas are taken (`gbufNormal.a` =
+F0, `gbufAlbedo.a` = 3-level surface class).
+
+| Option | Cost | Verdict |
+|---|---|---|
+| Pack class (2 bits) + roughness (6 bits) into `gbufAlbedo.a` | free; 2 consumers to migrate (`rt_player_exclude.glsl`, `fsr_tc_mask.comp`) | **Recommended.** 64 roughness levels is ample for a lobe width |
+| Split `gbufNormal.a` 4+4 F0/roughness | free | F0 drops to 16 levels and shifts the `f0 < 1/255` early-out |
+| New `R8_UNORM` attachment | ~10 pipeline sites | Last resort; the project has paid this before |
+| Widen `gbufNormal` to RGBA16 | bandwidth on GPU-bound frames | No. Roughness smears the 8-bit normal error anyway |
+
+The class migration changes "threshold the alpha" to "extract the top 2 bits" — mechanical,
+but it invalidates the current `never 1 - alpha` rule, so update it with the code.
+
+**Check:** debug mode 12 — roughness as greyscale. Rough concrete bright, polished trim and
+glass dark, and the gradient tracks visible surface detail rather than the diffuse texture.
+
+---
+
+## Stage 3 — GGX lobe, glass still sharp
+
+| File | Change |
+|---|---|
+| `glsl/reflect_ray.rgen` | Sample a GGX VNDF lobe around `reflDir` using roughness; roughness 0 reduces to today's exact mirror ray |
+| `glsl/reflect_ray.rgen` | Replace the `grazingGain`/`grazingMax`/smoothstep stack (lines 309-311) with real Schlick-GGX. That hack exists only because opaque surfaces were once in this pass |
+| `vk_reflections.cpp` | `r_rtReflRoughnessScale`; retire `r_rtSpecGrazingMax/Gain` |
+
+Glass takes roughness 0 and keeps its current path — a delta BRDF is physically right for a
+pane, and it is the cheap case.
+
+**Check:** glass screenshots identical to Stage 1's output. A forced `r_rtReflRoughnessScale`
+sweep on glass shows the lobe widening smoothly with no energy change at grazing angles.
+
+---
+
+## Stage 4 — Open to opaque surfaces
+
+| Item | Detail |
+|---|---|
+| `r_rtReflectionMode 3` | New: glass + opaque-with-roughness. Mode 1 (glass-only) stays the fallback |
+| Launch grid | Full-screen again; the R6 glass rect and the `sceneHasGlass` early-out no longer apply in mode 3 |
+| **Roughness ceiling** | `r_rtReflRoughnessMax` (default ~0.5). Above it the surface takes GI only, no reflection ray. This is structural, not a tuning knob — it is what prevents double-counting |
+| GI handoff | Confirm `gi_albedo_mod.comp`'s contribution is not also being delivered by the lobe. Debug mode 13: tint pixels taking reflection vs GI vs both |
+
+**Check:** `r_rtReflRoughnessMax 0` reproduces mode 1 exactly. Sweeping it up, total scene
+brightness must stay flat — any rise is double-counting. Dark corridors must not gain a noise
+floor; compare against the GI-only capture at the same spot.
+
+---
+
+## Stage 5 — Retune and ship
+
+`reflBlend`, `minWeight` and the F0 remap were all fitted with glass as the sole consumer, so
+the first all-surface build will look worse than glass-only even where the math is better —
+tuned constants absorb the old estimator's error. Retune from the debug overlays, not the
+composite.
+
+Then: menu entries (mode combo, roughness scale, ceiling, denoise), `r_rtQuality` preset
+rows, `Dhewm3-AI-RT-Settings.md`, and cleanup Phase 1c becomes safe to run.
+
+---
+
+## Cost
+
+| | Refl p50 |
+|---|---|
+| Now (glass-only, rect-limited) | 0.00-1.11 ms |
+| 2026-09-11 full-screen, pre-arc-1 | 3.24 ms |
+
+3.24 ms understates mode 3: per-ray cost has grown since with emitter discs and arc 8c's
+volumetric marching per reflected segment. Plus Stage 1's denoiser and its history images.
+Against a total GPU p50 of 9.17-14.94 ms, all three scenarios GPU-bound by 4-7x, budget
+20-40% frame time for mode 3 at scale 1.0. Mode 3 should not be a default on the low presets.
+
+## Gates
+
+| Stage | Exit |
+|---|---|
+| 1 | `r_rtReflDenoise 0` bit-identical; no ghosting on glass; ≤0.3 ms |
+| 2 | Mode 12 roughness tracks surface detail; class migration leaves FSR T&C and player-exclude unchanged |
+| 3 | Glass identical to Stage 1; grazing energy flat |
+| 4 | `r_rtReflRoughnessMax 0` ≡ mode 1; scene brightness flat under the sweep; no noise floor in dark corridors |
+| 5 | Presets include mode 3 only at High/Ultra |
+
+## Not doing
+
+Per-material authored roughness. No source data, and `.mtr` edits at that scale are map
+editing by another name (rules doc, pillar 5).
+
+Roughness on the glass path. A pane is a delta BRDF; widening it would be wrong and would
+cost the one reflection case that is currently cheap and correct.

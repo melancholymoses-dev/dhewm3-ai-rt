@@ -1,27 +1,13 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-10-12 · **Arc 8 (cleanup + optimization) is current; start at 8a**
+**Status reviewed:** 2026-10-13 · **Next action: optimization Stage S** (`20261010_vk_core_audit.md` Part 3)
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
-designs live in the linked docs. Prior cycle: `completed/202609_ROADMAP.md`.
+designs live in the linked docs. Prior cycle: `completed/202610a_ROADMAP.md`.
 
----
+Rules, pillars and settled conclusions moved to `../rt_engine_rules.md` on 2026-10-13 —
+they are things to check code against, not things to schedule.
 
-## Design pillars (the taste contract)
-
-Every stage below serves these; anything that fights them gets cut or demoted.
-
-1. **Shadows are the feature.** Soft, shaped, from more lights. This is where
-   "dynamic lighting" actually lives.
-2. **Darkness stays black.** GI may tint lit regions; it must never lift the noise
-   floor of dark ones.
-3. **Light the air sparingly.** Volumetrics from hero lights only.
-4. **Reflections are set dressing.** Glass and mirrors, plus the odd hero surface by
-   explicit opt-in.  The assets carry no PBR data; don't pretend they do.
-5. **No map editing.** Engine-side rules + budgets + debug overlays. Small def-file
-   mods are allowed.
-6. **Debug visualization before tuning.** Every feature ships with an overlay mode;
-   constants get tuned from the overlay, not by eye on the final composite.
 
 ---
 
@@ -29,108 +15,71 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 
 | # | Item | Doc | Status |
 |---|---|---|---|
-| 1 | **Reflection gating rework** — glass-only instead of a flat per-pixel rate over the whole screen | `completed/20260911_reflection_gating.md` | ✅ Closed 2026-09-18 |
-| 1b | **Reflection brightness** — reflections dim, player self-shadowing in glass | `completed/20260918_reflection_brightness.md` | ✅ Closed 2026-09-19. B2 dropped (GI/vol were over-**bright**; settled in tuning) |
-| 1c | **Stale dynamic-model normals in RT** — skinned meshes reached the TLAS with bind-pose normals | `completed/20260919_dynamic_model_normals.md` | ✅ Closed 2026-09-19. 0.16 ms with 12 characters on screen |
-| 2 | **Froxel volumetrics + probe GI** — vol/GI sampling moved into world-space caches | `completed/20260906_froxel_probe_gi.md` | ✅ **Closed 2026-09-19.** Both default (`r_rtVolFroxel 1`, `r_rtGIProbes 1`); old paths kept as A/B. Vol 1.63 → 0.29 ms, GI 4.41 → ~1.3 ms |
-| 3 | **FSR upscaling** — render resolution decoupled from display; FSR 1/2 resolve | `completed/20260918_fsr_upscaling.md` | ✅ **Closed 2026-09-30.** U0-U4 landed and validated in-game: `r_fsrRenderScale`, FSR 1 (`r_fsr 1`), motion vectors + Halton jitter, FSR 2.2.1 (`r_fsr 2`) with reactive and T&C masks, texture LOD bias. U4 denoiser retune dropped (~0.1-0.2 ms, no visible double-accumulation). 0.67 scale saves ~2.8 ms of RT at 1440p; arc 2's ~0.7 ms world-space floor caps further gains. U3b (RT texture LOD) and U5 (menu, FSR 3.1, dynamic res, skinned MVs) moved to backlog |
-| 3b | **AO / GI refinement** — AO distance falloff; AO moved from direct light onto GI | `completed/20260930_AO_GI_refine.md` | ✅ Closed 2026-10-02. Two open checks not run (viewmodel AO in debug mode 2, AO cost) |
-| 4 | **Reflection Emitters** - Show emitted particles in reflections | `completed/20261002_reflection_emitters.md | Completed 2026-10-6 | 
-| 5 | **Bloom** - Add lighting bloom around emissive sources| `completed/20260906_bloom_plan.md` | Completed 2026-10-7. |
-| 6 | **Player Body** - Add visible body from first person | `completed/20261001_see_first_person_player_model.md` | ✅ Closed 2026-10-10. Lit, animating, RT-excluded, `rtPlayer` mask verified; ladder sink fixed (body lift, ladder leg anim, foot-IK void fix). Stairs and slopes still dip slightly, accepted |
-| 7 | **TLAS build defects** — (a) pass-2 distance cull holds only the view-visible set, so vol shadow rays miss off-screen occluders and in-scatter flips on a pure yaw; (b) instance mask/SBT key off `noSelfShadow` not the player, breaking breakable-glass reflections | `completed/20261009_vol_fix.md` | ✅ Closed 2026-10-10. Pass-2 bounds cull (free: TLAS build 0.12 ms), vol gain/falloff, `rtPlayer` mask bit (breakable glass fixed), vertex-cache sub-allocator. 7.4 (per-frame upload wait) conditional |
-| 8 | **Cleanup + optimization** — debug trim, drop F0/legacy reflection path, screen-space GI and non-froxel vol, presets + reset, comment sweep | `20261010_cleanup_optimization.md` | Phase 0 baseline measured 2026-10-12 (three scenarios, uncapped, CSV). FP-body default and screenshots outstanding. Phases 1-5, 7 unstarted; the dead GI/vol paths are confirmed at 0.001 ms |
-| 8a | **RT shadow dispatch** — only 7 shadow lights batch; the rest trace serially inside the interaction loop and are billed to `Interactions`. Steps S0-S7 | `20261010_cleanup_optimization.md` §6a | **Confirmed on 2978 frames 2026-10-12** and promoted ahead of 8's phases 1-5: 74% of frames overflow the cap, costing up to 10 ms. **Runs next.** S0 should sweep the batch cap first |
-| 8c | **Volumetrics in reflections** — the flashlight beam is absent from glass; march the reflected segment through `froxelScatter`. Stages 1-4 | `20261013_reflection_volumetrics.md` | Stages 1-3 landed 2026-10-13, not yet validated in-game. Froxel fill now runs ahead of the reflection dispatch; phase angle stays the camera's (documented limit). Stage 4 is the debug overlay + menu entries |
-| 8b | **Vulkan core audit** — buffers, uploads, raster path, BLAS/TLAS, material table. 23 findings (F1-F13, R1-R10), stages A0-A5 / B0-B4 | `20261010_vk_core_audit.md` | A0 landed and validated. **9 findings dispatched by measurement** (F3, F5, F6, F7, F8, F11, F12, X1, X4) and A2/A4/A5 parked — all three scenarios are GPU-bound. Stage order re-cut around B1/B2/B4 plus a new BLAS-rebuild-burst item (36 rebuilds = 49 ms) |
+| 8 | **Optimization** — Vulkan core (F1-F13/A0-A5), RT uploads (R1-R10/B0-B4), and **Stage S** RT shadow dispatch (was cleanup Phase 6a) | `20261010_vk_core_audit.md` | **Current.** Owns all perf work. Stage S runs first: 74% of frames overflow the 7-light batch, up to 10 ms. 9 findings dispatched by measurement; A2/A4/A5 parked — all three scenarios are GPU-bound by 4-7x |
+| 8b | **Glass reflection normals** — Mars City windows focus and invert; the panes are piecewise-flat Bezier patches whose 26.57° crease `GenerateNormals` smooths into a cylindrical mirror. Stages 1-3 | `20261013_glass_geometric_normal.md` | Unstarted. Small and bounded. Cause confirmed by hand calculation + a census of all 27 stock maps (718 glass patches: 6 `CREASE`, 21 real `ARC`, 153 `MIXED`) |
+| 8c | **Volumetrics in reflections** — the flashlight beam is absent from glass; march the reflected segment through `froxelScatter`. Stages 1-4 | `20261013_reflection_volumetrics.md` | Stages 1-3 landed 2026-10-13, **not yet validated in-game**. Stage 4 is the debug overlay + menu entries |
+| 8d | **Surface roughness in reflections** — extend past glass to opaque surfaces with a GGX lobe. Blocked on a reflection denoiser (the only RT pass without one) and a roughness ceiling to avoid double-counting probe GI. Stages 1-5 | `20261013_reflection_roughness.md` | Unstarted. Budget 20-40% frame time for the all-surface mode; **gates cleanup Phase 2b/2c**, which would otherwise reclaim the G-buffer alpha that F0 needs |
+| 8e | **Cleanup + polish** — debug/cvar trim (1a/1b/1c), dead-path deletion, resets, presets, comment sweep | `20261010_cleanup_polish.md` | Reordered 2026-10-13: deletion runs *after* the gaining work, since the dead GI/vol paths measure 0.001 ms. 1a and 5a are unblocked and can land any time |
+
+### Execution order
+
+Interleaved across arcs, gaining work first, deletion last. The arc table above says *what*;
+this says *when*.
+
+| # | Step | From | Gate to clear |
+|---|---|---|---|
+| 1 | **Stage S** — shadow dispatch S0-S7 | 8 | Only double-digit measured GPU item (up to 10 ms, 74% of frames) |
+| 2 | 8c Stage 4 + validate 1-3 in-game | 8c | Already landed, unvalidated. Finish before stacking more reflection work |
+| 3 | 8b glass crease fix | 8b | Small, bounded; adds refl debug modes 9/10 |
+| 4 | Cleanup 1a + 5a | 8e | Unblocked; land whenever convenient |
+| 5 | Cleanup 1b | 8e | Needs Stage S closed |
+| 6 | Optimization B0/B2/B1, BLAS rebuild burst | 8 | GPU-side; everything CPU-side is parked |
+| 7 | 8d roughness Stages 1-5 | 8d | Denoiser first. Decide go/no-go on the 20-40% frame cost before Stage 4 |
+| 8 | Cleanup 1c + Phase 2 | 8e | Needs the reflection arc resolved — **2c is irreversible** |
+| 9 | Cleanup 3, 4 | 8e | Biggest surgery, 0.001 ms gain. Last of the code changes |
+| 10 | Cleanup 5b presets, then Phase 7 comments | 8e | Needs the final cvar set |
+
+If 8d is abandoned, step 8 unblocks immediately and Phase 2 can delete the F0 path outright.
+
+
 
 
 ### Measured RT budget
 
-`r_vkRTProfile 1`, Mars City, median GPU ms per phase. **CPU: Ryzen 9 5950X, GPU: RTX 4070 Ti Super, 2560×1440.**
-**These are all from the fast card.** 
-| | GI | Refl | Vol | AO | Shadows | TLAS | **total** |
-|---|---|---|---|---|---|---|---|
-| 2026-09-11 (pre-arc-1/2) | 4.41 | 3.24 | 1.53 | 1.17 | — | 0.15 | **11.93** |
-| 2026-09-19 (arc 2 closed) | ~1.3 | ~0.8 | 0.29 | 1.9 | — | 0.12 | **~7-8** |
-| 2026-09-23 MC2, scale 1.00 | 1.29 | ~0 | 0.52 | 1.27 | 1.80 | 0.17 | **5.05** |
-| 2026-09-23 MC2, scale 0.67 | 0.54 | ~0 | 0.37 | 0.49 | 0.68 | 0.14 | **2.22** |
-| 2026-10-10 MC 1440p, scale 1.00, vol_fix 1-4,6 (76 samples, `r_rtTlasFallbackRadius 0`) | 1.72 | ~0 (p90 1.8 with glass) | 0.82 | 2.05 | 2.93 | 0.46 (0.12 TLAS + 0.34 BLAS) | **~8.0** RT |
-| 2026-10-12 MC entrance, 1440p scale 1.00, **A0 window p50** (17 windows x 30 frames) | 0.82 | 0.67 | 0.83 | 1.57 | 0.17 | 0.18 (incl. 0.08 BLAS) | **4.27** RT / **6.07** raster |
-| **2026-10-12 baseline, `com_fixedTic 1`, three scenarios** (p50, CSV) | 0.00 | 0.00-1.11 | 0.50-1.13 | 1.69-2.51 | 1.33-4.07 | 0.17 | **5.07-9.68** RT / **3.47-6.56** raster |
+Orientation only — current numbers so the arc table has a scale. Method, history and
+per-phase detail: `20261010_vk_core_audit.md` and `notes/20261010_vk_core_baseline.txt`.
 
-Every row above the last is capped at 62.5 fps (`USERCMD_MSEC` is integer `1000/60`), so
-GPU cost beyond ~16 ms was invisible. The baseline row is uncapped; numbers, method and
-the three scenario routes are in `notes/20261010_vk_core_baseline.txt` and
-`20261010_cleanup_optimization.md` §0. Total GPU p50: mchq 9.17 ms (109 fps), r2r 11.63
-(86), commfire 14.94 (67). All three are GPU-bound by 4-7x — CPU recording is 1.4-1.7 ms.
+**Test machines**
 
-**The `Shadows` column understates shadows, and by more than previously thought.** Only 7
-lights batch; the rest trace one at a time inside the interaction loop and are billed to
-`Interactions`. Bucketing 2978 Mars City frames by `lights.serial`: `Interactions` climbs
-0.08 → 10.40 ms while `Shadows` falls 2.48 → 0.31, and total GPU doubles (6.50 → 13.13).
-**74% of frames overflow the 7-layer cap**, so this is the default case, not a corner.
-Arc 8a owns it. The `lights.*` counters read zero until 2026-10-12 (the 2D GUI overlay is
-a second `RC_DRAW_VIEW` and its `ShadowBatchBegin` zeroed them before the read), which is
-why three earlier captures looked like they had no shadow casters at all.
+| | CPU | GPU | Notes |
+|---|---|---|---|
+| Fast | Ryzen 9 5950X | RTX 4070 Ti Super | Default for all captures unless stated |
+| Slow | Ryzen 5 2600X | AMD 9070 XT | Weaker RT card — this is what motivated the upscaling work. ~60 fps after the particle-upload CPU fix |
 
-**Not every remaining pass is screen-resolution** — arc 2 left a ~0.73 ms floor (TLAS,
-probe trace/blend, froxel fill/integrate) that render scale cannot touch, so 0.50 saves
-only 0.1 ms more than 0.67. See `completed/20260918_fsr_upscaling.md` §12.
+**Current baseline** — 2026-10-12, `com_fixedTic 1` (uncapped), 1440p, no upscaling, three
+scenarios, p50 GPU ms from CSV:
 
-Also recorded on a slower CPU Ryzen 5 2600x and AMD 9070XT, which had previously shown worse performance.  It is a weaker RT card, which motivated the upscale work.  
-This is after fixing big CPU drops due to particle uploads.  FPS closer to 60 now. 
-| | GI | Refl | Vol | AO | Shadows | TLAS | **total** |
-|---|---|---|---|---|---|---|---|
-| 2026-10-10 MC 1440p | 1.72 | ~0 (p90 1.8 with glass) | 0.82 | 2.05 | 2.93 | 0.46 (0.12 TLAS + 0.34 BLAS) | **~8.0** RT |
+| | GI | Refl | Vol | AO | Shadows | TLAS | RT total | raster |
+|---|---|---|---|---|---|---|---|---|
+| mchq / r2r / commfire | 0.00 | 0.00-1.11 | 0.50-1.13 | 1.69-2.51 | 1.33-4.07 | 0.17 | **5.07-9.68** | 3.47-6.56 |
 
+Total GPU p50: mchq 9.17 ms (109 fps), r2r 11.63 (86), commfire 14.94 (67). **All three are
+GPU-bound by 4-7x** — CPU recording is 1.4-1.7 ms, so no CPU-side work can show up as frame
+time. This is why optimization parks every CPU stage and Stage S runs first.
 
-
-
-### Engine-wide rules
-
-Each of these cost a debugging session. They apply to any new RT code.
-
-| Rule | Because |
-|---|---|
-| A ray origin from `rt_ReconstructWorldPos` must floor its bias at `d²·ulp/znear` | A fixed bias is a distance-limited bias. `r_znear` is game-owned and drops to 1.0 in cinematics |
-| A shadow ray's cull mask is a parameter, never a constant | `noSelfShadow` is instance mask `0x01`; `0xFF` made the player self-shadow in reflections only |
-| A light's *current* value comes from `EvaluateRegisters()` + the stage's `color.registers[]` | Doom 3 puts flicker in material expressions. `shaderParms` is the constant amplitude — 74 animated materials were pinned at peak |
-| A mapped buffer the CPU **reads** needs `HOST_CACHED`, and should be memcpy'd out before use | `HOST_VISIBLE\|HOST_COHERENT` alone is write-combined; scalar reads cost ~200 ns each. Worth 3.26 → 0.03 ms on the probe classifier |
-| A mapped buffer (or descriptor set) the CPU **writes** while recording needs one copy per frame slot, indexed by `vk.currentFrame` | The previous frame is still on the GPU. The shared material table caused white/black triangles on the 9070 XT only (GPU-bound, CPU a frame ahead); `r_vkSerializeFrames 1` is the check |
-| Doom 3 winds front faces opposite to GL/Vulkan — use the vertex normal, not `gl_HitKindEXT` | Every visible surface reports back-facing |
-| A pixel-skipping pattern keys off a per-slot counter, never `tr.frameCount` | Caused the GI checkerboard ghost |
-| Shared GLSL that compute shaders include must be **pipeline-agnostic** — no ray payload, no `traceRayEXT`, no TLAS. `rt_light_struct.glsl` is that home; `rt_light_eval.glsl` is not | An RT-only built-in pulled into a compute shader silently killed all volumetric lighting once |
-
-### Standing decisions
-
-- **Reflections are glass-only** (`r_rtReflectionMode 1`). Per-material F0 (T3) is
-  **dropped** — with opaque geometry never reflecting there is nothing to classify.
-  Threshold tuning cannot help: the worst artifacts are the *highest*-F0 pixels while any
-  threshold culls from the bottom.
-- **Albedo is the volumetric lever**, not extinction and not the tonemap toe. It cuts
-  in-scatter while leaving attenuation intact, so the medium darkens more than it glows and
-  lit-vs-unlit contrast goes *up*. Per-class radiance gains carry punch (6:1 point:directed in play); 
-- **Do not "fix" RT direct lighting being half the raster path's.** True at the source
-  (`r_lightScale` = 2 is not applied to the RT upload), but the downstream gains overshot
-  it — GI and vol read *over*-bright. This was a tuning matter, not a plumbing fix.
-- **The tonemap toe has two regimes.** At `r_rtTonemapToe 2.7` slope is <0.33 below
-  luminance 0.07 but *exceeds 1.0* between 0.12 and 0.3. Evaluate the whole curve before
-  blaming tonemapping.
-- **Reflected surfaces get no indirect light** — GI modulates by the *primary* G-buffer
-  albedo. Structural, not a tuning miss.
-- **Using same light falloff as raster** - Keep reach = 1.  Get benefit of art,
-while new lighting techniques enhance without fighting too much.
-
----
+`com_fixedTic 1` matters: Doom 3 otherwise caps at 62.5 fps (`USERCMD_MSEC` is integer
+`1000/60`), which hid all GPU cost beyond ~16 ms in every capture before this one.
 
 ## Live documents
 
 | Doc | Owns |
 |---|---|
-| `20261010_cleanup_optimization.md` | **Arc 8.** Phase order, the per-phase rules (cvar+UBO+shader+menu deleted together), and §6a shadow dispatch S0-S7 |
-| `20261010_vk_core_audit.md` | **Arc 8b.** The finding list (F1-F13, R1-R10), stage order A0-A5 / B0-B4, the 2026-10-11 measurements, Windows profiling tooling, and the not-yet-audited list (X1-X8) |
+| `20261010_vk_core_audit.md` | **All optimization.** Findings (F1-F13, R1-R10, X1-X8), stages A0-A5 / B0-B4, **Stage S** shadow dispatch, the baseline measurements, profiling tooling, and the optimization order |
+| `20261010_cleanup_polish.md` | **All deletion and polish, no optimization.** Phase order 1a/1b/1c, the per-phase rules (cvar+UBO+shader+menu deleted together), presets and resets, comment sweep |
+| `20261013_glass_geometric_normal.md` | Glass crease fix; the stock-map glass-patch census |
+| `20261013_reflection_roughness.md` | Roughness/GGX reflections, the denoiser, and the GI handoff ceiling |
 | `../Dhewm3-AI-RT-Settings.md` | Cvar inventory and tiers; the source for arc 8 phase 1 (trim) and phase 5 (presets) |
+| `../rt_engine_rules.md` | **Not a plan.** Taste contract, correctness rules, settled conclusions, debugging posture. Check new RT code against it |
 | `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine. Load it before chasing any AMD-vs-NVIDIA or device-lost bug. |
 
 ---
@@ -172,6 +121,6 @@ All in `completed/`.
 | AO/GI open checks | `completed/20260930_AO_GI_refine.md` | Dark viewmodel in `r_rtAODebug 2`; AO cost of closest-hit vs first-hit traversal |
 | FSR U5 polish | `completed/20260918_fsr_upscaling.md` U5 | `r_fsrQuality` in the video menu, FSR 3.1 evaluation, dynamic resolution. Skinned-MV double-buffering only on the reopen trigger listed in U5 |
 | RT texture LOD (U3b) | `completed/20260918_fsr_upscaling.md` U3b | RT fetches sample mip 0 at any distance. Real, but not the grating artifact |
-| Adaptive probe hysteresis (was G5 fix 2) | `completed/20260906_froxel_probe_gi.md` | Boost alpha when a probe's new value differs | Roughness-blurred reflections | — | Now the *only* route to reflective non-glass surfaces: sharp mirror reflection is why opaque geometry looks wrong, so "dimmer" can't fix it. Affordable for the first time now the traced pixel set is tiny. Not scheduled. |
+| Adaptive probe hysteresis (was G5 fix 2) | `completed/20260906_froxel_probe_gi.md` | Boost alpha when a probe's new value differs |
 | Runtime emissive-state lights | `completed/20260810_auto_relight.md` | v2 of auto-relight - Skip |
 | Translucent square borders over reflections | `completed/20260423_reflection_enhancements.md` | Option A (deferred glass overlays) is in `VK_RB_DrawShaderPasses`; re-check in-game, likely closable |
