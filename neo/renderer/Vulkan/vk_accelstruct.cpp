@@ -109,14 +109,19 @@ struct vkRTBlasBuildStats_t
     int rebuildCount;
     int triCount;
     uint64_t cpuTicks;
+    uint64_t logTicks; // r_vkLogBLASRebuild print time, kept out of cpuTicks
 };
 
-static vkRTBlasBuildStats_t s_blasBuildStats = {-1, 0, 0, 0, 0, -1, 0, 0, 0, 0};
+static vkRTBlasBuildStats_t s_blasBuildStats = {-1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0};
 static int s_tlasDynamicInstances = 0;
 
 static idCVar r_vkLogBLASRebuild("r_vkLogBLASRebuild", "0", CVAR_RENDERER | CVAR_BOOL,
                                  "Log one line per full BLAS rebuild: cause, sizes, and CPU ms split into "
                                  "gather/alloc/copy/sizes/record. Refits are not logged.");
+
+static idCVar r_vkLogTLASSlow("r_vkLogTLASSlow", "0", CVAR_RENDERER | CVAR_FLOAT,
+                              "Print a section breakdown of VK_RT_RebuildTLAS CPU time on frames where it takes "
+                              "longer than this many ms (0 = off)");
 
 // Caller context for the r_vkLogBLASRebuild line; set by the TLAS passes before each build.
 struct vkBLASLogCtx_t
@@ -327,6 +332,7 @@ static void VK_RT_ResetBLASBuildStatsIfNewFrame()
         s_blasBuildStats.rebuildCount = 0;
         s_blasBuildStats.triCount = 0;
         s_blasBuildStats.cpuTicks = 0;
+        s_blasBuildStats.logTicks = 0;
     }
 }
 
@@ -1000,8 +1006,11 @@ fullRebuild:
                        rebuildReason, validCount, rebuildTris, rebuildVerts, logRanges, (int)(logGeomBytes / 1024),
                        (int)(sizeInfo.accelerationStructureSize / 1024), (int)(scratchSize / 1024), tTotal * toMs,
                        tGather * toMs, tAlloc * toMs, tCopy * toMs, tSizes * toMs, tRecord * toMs, tOther * toMs);
-        // Keep console time out of cpu.TLAS.BLAS, which this line is meant to explain.
-        cpuTimer.start += SDL_GetPerformanceCounter() - lapMark;
+        // Keep console time out of cpu.TLAS.BLAS, which this line is meant to explain. It still
+        // lands in cpu.TLAS (~1 ms per line); r_vkLogTLASSlow reports it as log=.
+        const uint64_t printTicks = SDL_GetPerformanceCounter() - lapMark;
+        cpuTimer.start += printTicks;
+        s_blasBuildStats.logTicks += printTicks;
     }
     s_blasLogCtx.ent = NULL;
     s_blasLogCtx.pass = NULL;
@@ -1137,6 +1146,21 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         common->Printf("VK RT TLAS: begin rebuild — frame=%u frameCount=%d\n", vk.currentFrame, tr.frameCount);
         fflush(NULL);
     }
+
+    // r_vkLogTLASSlow: section laps. BLAS ticks are read as deltas of the build timer, which
+    // resets on the first build of a frame, hence the explicit reset first.
+    const float slowLogMs = r_vkLogTLASSlow.GetFloat();
+    const bool slowLog = slowLogMs > 0.0f;
+    VK_RT_ResetBLASBuildStatsIfNewFrame();
+    const uint64_t slowStart = SDL_GetPerformanceCounter();
+    uint64_t slowLap = slowStart;
+    uint64_t tPass1 = 0, tPass2 = 0, tPass3 = 0, tDynModel = 0, tMat1 = 0, tInst = 0, tMatTable = 0, tBuild = 0;
+    const uint64_t blasTicks0 = s_blasBuildStats.cpuTicks;
+    const uint64_t logTicks0 = s_blasBuildStats.logTicks;
+    uint64_t blasTicks1 = blasTicks0, blasTicks3 = blasTicks0;
+    bool tlasStorageRegrown = false, tlasScratchRegrown = false;
+    vkRTBindlessFrameStats_t bindless0 = {};
+    VK_RT_GetBindlessFrameStats(&bindless0);
 
     // Count and collect instances in static/dynamic buckets.
     // Static instances can be cached and skipped when unchanged.
@@ -1313,6 +1337,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         // instanceCustomIndex will be set to baseGeomIdx so that shaders can compute
         //   matIdx = gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT
         // giving one correct VkMaterialEntry per geometry slot.
+        const uint64_t matStart = slowLog ? SDL_GetPerformanceCounter() : 0;
         {
             const uint32_t geomCount = ent->blas ? ent->blas->geomCount : 0;
             if (isDynamicInstance)
@@ -1463,6 +1488,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                 }
             }
         }
+        if (slowLog)
+            tMat1 += SDL_GetPerformanceCounter() - matStart;
 
         if (!isDynamicInstance)
         {
@@ -1478,6 +1505,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
 
     passStats.pass1 = staticCount + dynamicCount;
+    VK_RT_LapTicks(&slowLap, &tPass1);
+    blasTicks1 = s_blasBuildStats.cpuTicks;
 
     // Second pass: include static, already-cached entities that were portal/frustum
     // culled from viewEntitys but whose BLASes are already built.  This ensures GI
@@ -1647,6 +1676,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
 
     passStats.pass2 = staticCount + dynamicCount - passStats.pass1;
+    VK_RT_LapTicks(&slowLap, &tPass2);
 
     // Third pass: include nearby off-screen dynamic entities (enemies, characters) so
     // they appear in RT reflections and cast RT shadows when outside the view frustum.
@@ -1696,7 +1726,10 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             // up-to-date every frame regardless of frustum visibility, so this gives
             // the correct posed mesh for the current game tick even though the entity
             // isn't in viewEntitys.
+            const uint64_t dynModelStart = slowLog ? SDL_GetPerformanceCounter() : 0;
             idRenderModel *model = R_EntityDefDynamicModel(ent);
+            if (slowLog)
+                tDynModel += SDL_GetPerformanceCounter() - dynModelStart;
             if (!model || model->NumSurfaces() == 0)
                 continue;
 
@@ -1780,6 +1813,9 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             dynamicGeomCount += geomCount;
         }
     }
+
+    VK_RT_LapTicks(&slowLap, &tPass3);
+    blasTicks3 = s_blasBuildStats.cpuTicks;
 
     // All BLAS builds are recorded by now; end the GPU span before the TLAS build.
     VK_RTProfile_BLASGpuEnd(cmd);
@@ -2057,10 +2093,13 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         vkRT.sceneHasGlass = hasGlass;
     }
 
+    VK_RT_LapTicks(&slowLap, &tInst);
+
     // Upload material table entries: one entry per geometry slot (not per instance).
     VK_RT_UploadMatTableFrame(staticMatEntries, staticGeomCount, rewriteStatic, dynamicMatEntries, dynamicGeomCount,
                               s_staticGeomVtxAddrs, s_staticGeomIdxAddrs, staticGeomCount, s_dynGeomVtxAddrs,
                               s_dynGeomIdxAddrs, dynamicGeomCount, rewriteStatic);
+    VK_RT_LapTicks(&slowLap, &tMatTable);
 
     tlas.instanceCount = instanceCount;
 
@@ -2143,6 +2182,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             tlas.memory = VK_NULL_HANDLE;
             tlas.bufferSize = 0;
         }
+        tlasStorageRegrown = true;
 
         AllocASBuffer(sizeInfo.accelerationStructureSize, 0, &tlas.buffer, &tlas.memory);
 
@@ -2167,6 +2207,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             tlas.scratchMemory = VK_NULL_HANDLE;
             tlas.scratchBufferSize = 0;
         }
+        tlasScratchRegrown = true;
         AllocASBuffer(sizeInfo.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &tlas.scratchBuffer,
                       &tlas.scratchMemory);
         tlas.scratchBufferSize = sizeInfo.buildScratchSize;
@@ -2194,6 +2235,27 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     tlas.deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(vk.device, &addrInfo);
     tlas.isValid = true;
     tlas.lastBuiltFrameCount = tr.frameCount;
+
+    VK_RT_LapTicks(&slowLap, &tBuild);
+    const double toMs = 1000.0 / (double)SDL_GetPerformanceFrequency();
+    if (slowLog && (slowLap - slowStart) * toMs > slowLogMs)
+    {
+        vkRTBindlessFrameStats_t bindless1 = {};
+        VK_RT_GetBindlessFrameStats(&bindless1);
+        const uint64_t blasPass1 = blasTicks1 - blasTicks0, blasPass3 = blasTicks3 - blasTicks1;
+        common->Printf("VK RT TLAS SLOW: frame=%d total=%.2f log=%.2f | pass1=%.2f (blas=%.2f mat=%.2f) pass2=%.2f "
+                       "pass3=%.2f (blas=%.2f dynModel=%.2f) inst=%.2f (instRealloc=%d rewriteStatic=%d) "
+                       "matTable=%.2f (bindlessRebuild=%.2f newSlots=%u slotsWritten=%u bgLoads=%u) "
+                       "build=%.2f (storageRegrow=%d scratchRegrow=%d) | inst=%u/%u/%u geoms=%u/%u\n",
+                       tr.frameCount, (slowLap - slowStart) * toMs,
+                       (s_blasBuildStats.logTicks - logTicks0) * toMs, tPass1 * toMs, blasPass1 * toMs, tMat1 * toMs,
+                       tPass2 * toMs, tPass3 * toMs, blasPass3 * toMs, tDynModel * toMs, tInst * toMs,
+                       instanceBufferRecreated ? 1 : 0, rewriteStatic ? 1 : 0, tMatTable * toMs,
+                       bindless1.rebuildMs - bindless0.rebuildMs, bindless1.slotCount - bindless0.slotCount,
+                       bindless1.slotsWritten - bindless0.slotsWritten, bindless1.bgLoads - bindless0.bgLoads,
+                       tBuild * toMs, tlasStorageRegrown ? 1 : 0, tlasScratchRegrown ? 1 : 0, passStats.pass1,
+                       passStats.pass2, passStats.pass3, staticGeomCount, dynamicGeomCount);
+    }
 }
 
 // ---------------------------------------------------------------------------

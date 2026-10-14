@@ -69,6 +69,7 @@ Symptom → where to look. The general "log and colour-code before theorising" p
 
 | Symptom | Look at |
 |---|---|
+| A CPU span grows by ~1 ms per event while a per-event log is on | The log. Each console line costs ~1 ms here (log file under OneDrive); recapture with the per-event log off before blaming the span |
 | A knob "does nothing" | Whether it reaches the pass at all. RT stages have no derivatives, so material fetches are mip 0 through `matSampler` — unreachable by any sampler cvar |
 | A debug overlay reads as a gradient when it should be binary | Something downstream is blurring or EMA-ing it |
 | An effect flips on a pure yaw at a fixed position | Per-frame view-dependent scene data, i.e. the TLAS — not the shader |

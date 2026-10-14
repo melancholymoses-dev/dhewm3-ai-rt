@@ -21,7 +21,7 @@ finding on a chugging section. A stage whose counter reads near zero is dropped,
 | # | Action | Risk | Why it is here |
 |---|---|---|---|
 | 1 | ~~**Stage S**~~ — **closed 2026-10-13** | — | S2 cull landed; S3 batching landed for no gain; remaining cost is ray count, handled by `r_rtShadowSamples` default 2.|
-| 2 | **BLAS rebuild burst** — pooling landed 2026-10-14, needs recapture | med | Log showed `alloc` = 96-98% of every rebuild (~0.28 ms per `vkAllocateMemory`). Storage, scratch and geometry now come from `vk_buffer_pool`. Cap dropped |
+| 2 | **BLAS rebuild burst** — pooled 2026-10-14; confirm run pending | med | BLAS on the 36-rebuild frame 133 → 0.9 ms. The ~31-37 ms "residual" was the rebuild log itself (~1 ms per line). Real remainder ~4 ms: TLAS instance/storage/scratch regrow (R8, ~2.5 ms) |
 | 3 | **B0 remaining A/Bs** — R2 serialize-frames, R7 memory type | none | Two GPU-side questions, both cheap, both gate later stages |
 | 4 | **B2** — static BLAS flags, shared scratch | med | Read an RRA capture first |
 | 5 | **B1** — zero-copy BLAS (needs A1) | med-high | Run if R2 or R7 confirmed. Removes all host-visible BLAS copies |

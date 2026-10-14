@@ -1166,6 +1166,16 @@ void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t st
 // must call this afterward or the new slot stays unwritten until next frame.
 void VK_RT_FlushBindlessTextures(void);
 
+// Running bindless totals for r_vkLogTLASSlow (read as before/after deltas).
+struct vkRTBindlessFrameStats_t
+{
+    uint32_t slotCount;    // slots assigned now (not cumulative)
+    uint32_t slotsWritten; // descriptors written by rebuilds
+    uint32_t bgLoads;      // slots written while their image had no Vulkan data yet
+    double rebuildMs;      // CPU time inside RebuildBindlessDescriptors
+};
+void VK_RT_GetBindlessFrameStats(vkRTBindlessFrameStats_t *out);
+
 // ---------------------------------------------------------------------------
 // Volumetric Lighting (Phase 7.2)
 // ---------------------------------------------------------------------------

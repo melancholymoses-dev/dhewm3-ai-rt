@@ -43,6 +43,7 @@ of the original Doom 3 GPL Source Code release.
 #include "framework/DeclManager.h"
 
 #include <string.h>
+#include <SDL.h>
 
 // ---------------------------------------------------------------------------
 // Forward declarations
@@ -170,11 +171,21 @@ uint32_t VK_RT_GetOrAssignTexIndex(idImage *img)
 // Called when s_bindlessDirty[vk.currentFrame] is set.
 // ---------------------------------------------------------------------------
 
+// Running totals for r_vkLogTLASSlow, which reads them as before/after deltas.
+static vkRTBindlessFrameStats_t s_bindlessStats = {};
+
+void VK_RT_GetBindlessFrameStats(vkRTBindlessFrameStats_t *out)
+{
+    *out = s_bindlessStats;
+    out->slotCount = s_bindlessCount;
+}
+
 static void RebuildBindlessDescriptors(void)
 {
     if (!vkRT.matTableInitialized || s_bindlessCount == 0)
         return;
     const uint32_t frame = vk.currentFrame;
+    const uint64_t rebuildStart = SDL_GetPerformanceCounter();
 
     // Build one VkDescriptorImageInfo per assigned slot.
     // Stack-allocate for the expected common case; heap for overflow.
@@ -198,6 +209,8 @@ static void RebuildBindlessDescriptors(void)
         // ValidateBindlessSlots picks each one up once the raster path reuploads it.
         if (img && (img->backendData || i >= s_bindlessWritten))
         {
+            if (!img->backendData)
+                s_bindlessStats.bgLoads++; // takes VK_Image_GetDescriptorInfo's load path
             VkDescriptorImageInfo tmp = {};
             if (VK_Image_GetDescriptorInfo(img, &tmp))
             {
@@ -220,6 +233,9 @@ static void RebuildBindlessDescriptors(void)
     write.pImageInfo = infos;
 
     vkUpdateDescriptorSets(vk.device, 1, &write, 0, NULL);
+    s_bindlessStats.slotsWritten += s_bindlessCount;
+    s_bindlessStats.rebuildMs +=
+        (double)(SDL_GetPerformanceCounter() - rebuildStart) * 1000.0 / (double)SDL_GetPerformanceFrequency();
 
     if (r_vkLogRT.GetInteger() >= 2)
     {
