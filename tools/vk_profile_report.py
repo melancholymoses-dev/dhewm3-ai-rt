@@ -329,7 +329,11 @@ def report_shadow_dispatch(cap: Capture) -> None:
     over = sum(1 for s in serial if s > 0)
     print("  batch cap appears to be %d layers; %d of %d frames (%.0f%%) overflow it"
           % (batched_cap, over, cap.n, 100.0 * over / cap.n))
-    print("  %8s %6s %9s %9s %9s %9s" % ("serial", "n", "Interact", "Shadows", "Int+Shad", "casters"))
+    # gpu.Interactions.Shadows (nested in Interactions) splits in-loop trace + blur from
+    # per-light shading; absent in captures before the span existed.
+    loop = cap.has("gpu.Interactions.Shadows")
+    print("  %8s %6s %9s %9s %9s %9s%s" % ("serial", "n", "Interact", "Shadows", "Int+Shad", "casters",
+                                          "  InLoopSh   Shading" if loop else ""))
 
     buckets: Dict[int, List[int]] = {}
     for i, s in enumerate(serial):
@@ -343,8 +347,12 @@ def report_shadow_dispatch(cap: Capture) -> None:
     for s in shown:
         idxs = buckets[s]
         it, sh = med(idxs, "gpu.Interactions"), med(idxs, "gpu.Shadows")
-        print("  %8d %6d %9.2f %9.2f %9.2f %9.0f"
-              % (s, len(idxs), it, sh, it + sh, med(idxs, "lights.shadow")))
+        extra = ""
+        if loop:
+            ls = med(idxs, "gpu.Interactions.Shadows")
+            extra = " %9.2f %9.2f" % (ls, it - ls)
+        print("  %8d %6d %9.2f %9.2f %9.2f %9.0f%s"
+              % (s, len(idxs), it, sh, it + sh, med(idxs, "lights.shadow"), extra))
 
     if len(shown) >= 2:
         lo, hi = buckets[shown[0]], buckets[shown[-1]]

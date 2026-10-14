@@ -403,6 +403,7 @@ enum vkRTProfilePhase_t
     // Nested sub-spans of a phase above: printed, but excluded from total=/raster=.
     VK_RTPROF_PHASE_NESTED_BEGIN,
     VK_RTPROF_PHASE_BLAS = VK_RTPROF_PHASE_NESTED_BEGIN, // inside TLAS
+    VK_RTPROF_PHASE_SHADOWS_LOOP,                        // inside Interactions: in-loop shadow dispatch
     VK_RTPROF_PHASE_COUNT
 };
 
@@ -460,7 +461,7 @@ static const char *const s_rtProfPhaseNames[VK_RTPROF_PHASE_COUNT] = {
     "GIComposite",  "Vol",          "VolTemporal",   "VolBilateral",    "FroxelFill",
     "FroxelIntegrate", "FroxelResolve", "VolComposite", "DepthPrepass", "Interactions",
     "ShaderPasses", "FogLights",    "Upscale",       "Bloom",           "Tonemap",
-    "TLAS.BLAS",
+    "TLAS.BLAS",    "Interactions.Shadows",
 };
 
 static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
@@ -4225,7 +4226,13 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         if (shadowBatch > shadowBatchDone)
         {
             vkCmdEndRenderPass(cmd);
+            // Nested span: splits shadow trace + blur out of gpu.Interactions, which
+            // otherwise cannot tell ray cost from per-light shading cost.
+            const uint64_t cpuLoopShadowStart = VK_RTProfile_CPUStamp();
+            const int profLoopShadow = VK_RTProfile_PhaseBegin(cmd, VK_RTPROF_PHASE_SHADOWS_LOOP);
             VK_RT_DispatchShadowBatchInLoop(cmd, backEnd.viewDef, shadowBatch);
+            VK_RTProfile_PhaseEnd(cmd, profLoopShadow);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_SHADOWS_LOOP, cpuLoopShadowStart);
             shadowBatchDone = shadowBatch;
             VK_Prof_Add(VKPROF_SHADOW_BREAKS, 1.0);
             VK_ResumeHdrRenderPass(cmd, &lightScissor);
@@ -4239,7 +4246,11 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         {
             vkCmdEndRenderPass(cmd);
             VK_Prof_Add(VKPROF_SHADOW_BREAKS, 1.0);
+            const uint64_t cpuLoopShadowStart = VK_RTProfile_CPUStamp();
+            const int profLoopShadow = VK_RTProfile_PhaseBegin(cmd, VK_RTPROF_PHASE_SHADOWS_LOOP);
             VK_RT_DispatchShadowRaysForLight(cmd, backEnd.viewDef, vLight, lightScissor, s_shadowMaskLayer);
+            VK_RTProfile_PhaseEnd(cmd, profLoopShadow);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_SHADOWS_LOOP, cpuLoopShadowStart);
             // This light's scissor, not the view's — the interaction draws that follow are
             // confined to it.
             VK_ResumeHdrRenderPass(cmd, &lightScissor);
