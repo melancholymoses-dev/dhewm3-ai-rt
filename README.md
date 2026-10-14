@@ -70,9 +70,9 @@ Now running properly and leads to darkening in the corners.  This is fairly subt
 
 4. Ray traced Reflections
 
-![Ray Traced Reflection](docs/img/screenshots/20260415_reflection.jpg)
-Ray Traced reflections are going.  With `g_showplayershadow` toggled on, the third person player model is visible and can be reflected.  Animations not perfectly in sync between third person and first person, but that was already a problem with mirrors.   Working on including muzzle flash and particles in here.  Animated entities are visible behind you!  This could be fun for horror applications - though comes with a performance cost.  This is perhaps the biggest improvement, but could be possible without RT.
-Currently reflections are just in glass, but the project intends to try and add diffuse reflections back with roughness corrections. 
+![Ray Traced Reflection](docs/img/screenshots/20261013_reflection.jpg)
+Ray Traced reflections are going.  With `g_showplayershadow` toggled on, the third person player model is visible and can be reflected.  Animations not perfectly in sync between third person and first person, but that was already a problem with mirrors.   Animated entities are visible behind you!  This could be fun for horror applications - though comes with a performance cost.  This is perhaps the biggest improvement, but could be possible without RT.
+Currently reflections are just in glass, but the project intends to try and add diffuse reflections back with roughness corrections. Working on including muzzle flash and particles in here.  
 
 5. Global Illumination
 This adds one-bounce global illumination.  Reflected surfaces can share luminance (e.g. light bouncing off a red wall illuminates a shadow with red light).  This is potentially most helpful in other games (like Quake4) where the harsh lighting of Doom 3 clashes with the outdoor spaces (pitch black under bridges at midday).  
