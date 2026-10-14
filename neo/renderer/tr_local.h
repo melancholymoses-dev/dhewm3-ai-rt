@@ -309,7 +309,7 @@ class idRenderEntityLocal : public idRenderEntity
     bool needsPortalSky;
 
     // Per-entity Bottom-Level Acceleration Structure (Vulkan RT).
-    // Allocated by VK_RT_BuildBLAS() when the entity is first seen; freed on FreeRenderEntity().
+    // Allocated by VK_RT_BuildBLASForModel() when the entity is first seen; freed on FreeRenderEntity().
     struct vkBLAS_t *blas; // NULL until built; rebuilt each frame for animated models
     int blasFrameCount;    // frame number when blas was last built
 };

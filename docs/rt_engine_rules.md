@@ -41,6 +41,7 @@ Each cost a debugging session. They apply to any new RT code.
 | A pixel-skipping pattern keys off a per-slot counter, never `tr.frameCount` | Frames in flight desynchronise the pattern from the resource it writes |
 | Shared GLSL that compute shaders include stays pipeline-agnostic — no ray payload, no `traceRayEXT`, no TLAS | `rt_light_struct.glsl` is that home; `rt_light_eval.glsl` is not. An RT-only built-in in a compute shader fails silently |
 | Validate bindless descriptors against `backendData`; reset append-only slot tables on level load | An `idImage*` survives a purge but its `VkImageView` does not |
+| Per-object GPU buffers come from a `vk_buffer_pool`, never their own `vkAllocateMemory` | ~0.3 ms per call on Windows regardless of size; per-surface allocation made a 35-BLAS first-sight frame cost 133 ms |
 | `neo/game` and `neo/d3xp` are mirrored | Near-identical trees; a one-sided change is a latent expansion-pack bug |
 
 ---

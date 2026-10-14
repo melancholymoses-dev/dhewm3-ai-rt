@@ -224,6 +224,13 @@ BLAS rebuild hitch, larger on this machine and not linear in count:
   rebuilds costing 10-28 ms, coinciding with blas.tris jumping, so cost tracks the mesh
   being built, not the count. 33128 is a 141 ms frame.
 
+BLAS rebuild cause, 2026-10-13 r2r with r_vkLogBLASRebuild 1 (2600 / 9070 XT):
+  alloc is 96-98% of every rebuild. ~0.28 ms per vkAllocateMemory, flat in size, so cost =
+  0.28 x (2 x surfaces + 2). World areas (12-31 surfaces) are the 7-18 ms single rebuilds.
+  Frame 15770: 35 rebuilds, 133 ms total, 129 ms alloc (7 _areaN = 86 ms).
+  Reasons: almost all "new" (first sight). surfs:2->1 on zsec zombies after weapon drop.
+  No repeated rebuilds of one entity. Fix: pooled storage/scratch/geometry (vk_buffer_pool).
+
 One-off: r2r frame 32426 waited 125.8 ms on the upload fence. GPU passes on it read
   20.0 + 12.8 ms and the neighbours ~30 ms, so the stall is outside any timed pass
   (driver or present). n=1, near capture start (RSS 143 MB).

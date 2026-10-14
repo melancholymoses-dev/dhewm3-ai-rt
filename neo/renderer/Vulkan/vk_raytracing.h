@@ -16,6 +16,7 @@ of the original Doom 3 GPL Source Code release.
 #define __VK_RAYTRACING_H__
 
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_buffer_pool.h"
 
 // ---------------------------------------------------------------------------
 // RT extension function pointers (always loaded at runtime via vkGetDeviceProcAddr)
@@ -98,19 +99,15 @@ static_assert(sizeof(VkMaterialEntry) == 36, "VkMaterialEntry size mismatch");
 struct vkBLAS_t
 {
     VkAccelerationStructureKHR handle;
-    VkBuffer buffer;
-    VkDeviceMemory memory;
+    vkPoolAlloc_t storage; // AS storage range in the BLAS storage pool
     VkDeviceAddress deviceAddress;
-    // Per-surface geometry buffers for the AS build input.
-    // Arrays of length geomCount — kept alive until VK_RT_DestroyBLAS because they
-    // must outlive the command buffer submission in which the BLAS build was recorded.
+    // Per-surface geometry ranges in the host-mapped BLAS geometry pool, length geomCount.
+    // buf == VK_NULL_HANDLE for zero-copy geometry read straight from the vertex cache.
+    // Released with the BLAS, after every command buffer that read them has retired.
     uint32_t geomCount;
-    VkBuffer *geomVertBufs;
-    VkDeviceMemory *geomVertMems;
-    VkBuffer *geomIdxBufs;
-    VkDeviceMemory *geomIdxMems;
+    vkPoolAlloc_t *geomVertRanges;
+    vkPoolAlloc_t *geomIdxRanges;
     // Per-surface geometry sizes — used to validate reuse for BLAS update.
-    // NULL for GPU-cache-backed geometry (zero-copy path, no owned buffers).
     VkDeviceSize *geomVertSizes;
     VkDeviceSize *geomIdxSizes;
     // Per-surface primitive counts — must match exactly for MODE_UPDATE to be valid.
@@ -125,9 +122,8 @@ struct vkBLAS_t
     // Used by the TLAS loop to write per-surface VkMaterialEntry values.
     // idMaterial* pointers are stable for the lifetime of a map session.
     const idMaterial **geomShaders; // [geomCount], may hold NULLs for missing shaders
-    // Scratch buffer used during build (freed at destroy time).
-    VkBuffer scratchBuf;
-    VkDeviceMemory scratchMem;
+    // Build/update scratch range in the BLAS scratch pool (freed at destroy time).
+    vkPoolAlloc_t scratch;
     bool isValid;
     // Set when the model BLAS cache owns this entry.
     // VK_RT_DestroyBLAS is a no-op for cached BLASes; only the cache clear
@@ -811,10 +807,6 @@ const int REFL_DEBUG_MAX_MODE = 8; // 8 = projectile emitter discs (vk_rt_emitte
 // debug visualization replaces rather than adds onto the lit scene.
 void VK_RT_CompositeReflections(VkCommandBuffer cmd);
 
-// Build/update BLAS for a single mesh (single-surface, kept for external use).
-// cmd must be a command buffer currently recording outside a render pass.
-vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool isPerforated = false,
-                          bool isTranslucent = false);
 void VK_RT_DestroyBLAS(vkBLAS_t *blas);
 
 // Build a multi-geometry BLAS covering all non-translucent surfaces of a model.

@@ -680,6 +680,7 @@ set(src_vulkan
 	renderer/Vulkan/vk_swapchain.cpp
 	renderer/Vulkan/vk_upscale.cpp
 	renderer/Vulkan/vk_buffer.cpp
+	renderer/Vulkan/vk_buffer_pool.cpp
 	renderer/Vulkan/vk_shader.cpp
 	renderer/Vulkan/vk_image.cpp
 	renderer/Vulkan/vk_pipeline.cpp

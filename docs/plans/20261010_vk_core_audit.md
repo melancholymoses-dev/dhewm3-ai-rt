@@ -20,8 +20,8 @@ finding on a chugging section. A stage whose counter reads near zero is dropped,
 
 | # | Action | Risk | Why it is here |
 |---|---|---|---|
-| 1 | ~~**Stage S**~~ — **closed 2026-10-13** | — | S2 cull landed; S3 batching landed for no gain; remaining cost is ray count, handled by `r_rtShadowSamples` default 2. S4 moved to cleanup 1b |
-| 2 | **BLAS rebuild burst** — cap and spread rebuilds per frame | med | 36 rebuilds in one frame = 49 ms backend. Overlaps B2's flag work |
+| 1 | ~~**Stage S**~~ — **closed 2026-10-13** | — | S2 cull landed; S3 batching landed for no gain; remaining cost is ray count, handled by `r_rtShadowSamples` default 2.|
+| 2 | **BLAS rebuild burst** — pooling landed 2026-10-14, needs recapture | med | Log showed `alloc` = 96-98% of every rebuild (~0.28 ms per `vkAllocateMemory`). Storage, scratch and geometry now come from `vk_buffer_pool`. Cap dropped |
 | 3 | **B0 remaining A/Bs** — R2 serialize-frames, R7 memory type | none | Two GPU-side questions, both cheap, both gate later stages |
 | 4 | **B2** — static BLAS flags, shared scratch | med | Read an RRA capture first |
 | 5 | **B1** — zero-copy BLAS (needs A1) | med-high | Run if R2 or R7 confirmed. Removes all host-visible BLAS copies |
@@ -163,13 +163,14 @@ identical; BLAS GPU ms not worse.
 |---|---|
 | Static BLAS flags | No `ALLOW_UPDATE` for BLASes built from static models; free scratch after the build completes (deferred with the BLAS garbage clock) |
 | Dynamic BLAS flags | `PREFER_FAST_BUILD` for per-frame updated BLASes; full rebuild every N updates |
-| Rebuild burst | Cap rebuilds per frame and spread the rest over following frames. Measured: ~0.9-1.2 ms CPU each, linear, arriving in bursts; worst frame 36 rebuilds = 42.6 ms in `cpu.TLAS.BLAS`, 49 ms backend |
-| Shared transient scratch | One scratch per frame slot sized to the largest build, reused with a barrier between builds, replacing a scratch per BLAS |
-| Pooled AS storage | Suballocate AS storage from large blocks (256-byte AS alignment) instead of one allocation per BLAS |
+| Rebuild burst — **pooled 2026-10-14** | Cause was allocation, not build work: 2N+2 `vkAllocateMemory` per rebuild at ~0.28 ms each; frame 15770 of r2r spent 129 of 133 ms allocating (35 first-sight BLASes). `vk_buffer_pool` (vertex-cache allocator, generalized) now backs AS storage (256 align), scratch (device scratch align) and host-mapped geometry (64 align). Cap dropped |
+| Shared transient scratch | Still open: scratch is pooled but kept per BLAS for life. One scratch per frame slot sized to the largest build would cut the scratch total |
+| Pooled AS storage — **done** with the rebuild-burst row | — |
 | Truncation | Raise `MAX_BLAS_SURFACES` or split the model into several BLASes; keep the log |
 
-Check: live RT allocations < 100 after level load; VRAM drops by the scratch total; no frame
-over ~5 rebuilds; BLAS count and trace time (AO/shadow ms) not worse on static scenes.
+Check: live RT allocations < 100 after level load; VRAM drops by the scratch total;
+`r_vkLogBLASRebuild 1` shows `alloc` near 0 except on `VK POOL ... new chunk` frames;
+BLAS count and trace time (AO/shadow ms) not worse on static scenes.
 
 ## Stage B3 — CPU in the TLAS loop and material table (R5, R6)
 
@@ -301,6 +302,7 @@ Guards, not fixes. Cheap; no number demands them.
 | A3 | Image memory pools | `bufferImageGranularity`, fragmentation, free-by-range racing the garbage drain | Sampler cache and staging ring first; pools last |
 | B1 | Dynamic geometry ring, per-slot BLAS | Address tables pointing at the other slot; TLAS static signature churn (the update path relies on a stable device address) | Per-slot address tables verified with the R2 A/B; watch TLAS rebuild count |
 | B2 | Shared scratch | Builds in one command buffer overlap on scratch; updates need scratch too | Offsets within the shared buffer per build, or dynamic BLASes keep their own |
+| B2 | BLAS pools | Range overrun corrupts a neighbouring BLAS silently (validation can't see inside a buffer); refit writes a range still read by the previous frame (R2, unchanged) | `r_vkBLASPoolCheck 1`; ranges freed only via the BLAS garbage clock |
 | B3 | Cached material entries | Stale after a skin/material swap or a bindless generation bump | Invalidate on generation; `vid_restart` and level-change screenshots |
 | B4 | BAR memory type | ~256 MB heap without Resizable BAR; data rings alone are 128 MB; any CPU read-back from write-combined memory | Fallback on allocation failure; small buffers first, rings last |
 | S | — | Closed 2026-10-13 |
