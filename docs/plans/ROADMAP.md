@@ -28,7 +28,7 @@ this says *when*.
 
 | # | Step | From | Gate to clear |
 |---|---|---|---|
-| 1 | **Stage S** — shadow dispatch S0-S7 | 8 | Only double-digit measured GPU item (up to 10 ms, 74% of frames) |
+| 1 | **Stage S** — shadow dispatch S2-S7 | 8 | Only double-digit measured GPU item (up to 10 ms, 74% of frames). S0/S1 dropped 2026-10-13: steps read live off a `shadow.pixels` counter instead of a capture each |
 | 2 | 8c Stage 4 + validate 1-3 in-game | 8c | Already landed, unvalidated. Finish before stacking more reflection work |
 | 3 | 8b glass crease fix | 8b | Small, bounded; adds refl debug modes 9/10 |
 | 4 | Cleanup 1a + 5a | 8e | Unblocked; land whenever convenient |

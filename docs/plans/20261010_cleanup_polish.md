@@ -167,7 +167,7 @@ Both were optimization and now live in `20261010_vk_core_audit.md`:
 
 | Was | Now |
 |---|---|
-| Phase 6a, RT shadow dispatch, steps S0-S7 | Part 3, **Stage S**. Code comments in `vk_raytracing.h:971` and `vk_shadows.cpp:1465` still say "Phase 6a" — both names mean Stage S |
+| Phase 6a, RT shadow dispatch, steps S0-S7 | Part 3, **Stage S** (S0/S1 since dropped; S2-S7 remain). Code comments in `vk_raytracing.h:971` and `vk_shadows.cpp:1465` still say "Phase 6a" — both names mean Stage S |
 | Phase 6 E1-E5, Vulkan efficiency | Stages A0-A5 / B0-B4 owned the fixes already; the E2/E3/E4 audits moved to that doc's order table as regression guards |
 
 Nothing was dropped. This section is a forwarding note; delete it once no reader is looking
