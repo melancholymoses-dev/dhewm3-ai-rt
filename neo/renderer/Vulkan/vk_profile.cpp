@@ -156,6 +156,7 @@ static const vkProfMetricDesc_t s_fixedDesc[VKPROF_FIXED_COUNT] = {
     {"lights.shadow", VKPROF_GRP_FRAME, 0},
     {"lights.batched", VKPROF_GRP_FRAME, 0},
     {"lights.serial", VKPROF_GRP_FRAME, 0},
+    {"shadow.Mpix", VKPROF_GRP_FRAME, 2},
 };
 
 static const char *const s_waitTagNames[VKPROF_WAIT_COUNT] = {

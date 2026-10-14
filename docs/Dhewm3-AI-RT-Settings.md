@@ -66,7 +66,7 @@ Needs fixing if they stay in the menu: `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIR
 | `r_rtShadowSoftRadiusMin` | Shadows | Min soft-shadow source radius | 0.0 | D | = |
 | `r_rtShadowSoftRadiusMax` | Shadows | Max soft-shadow source radius | 6.0 | D | = |
 | `r_rtShadowMinSamples` | Shadows | Floor on shadow rays/pixel | 1 | D | = |
-| `r_rtShadowDistanceCutoff` | Shadows | Spherical distance cutoff for point lights | 0 | D | = |
+| `r_rtShadowVolumeCull` | Shadows | Skip shadow rays outside the light volume (debug mode 11 shows the cull) | 1 | D | = |
 | `r_rtShadowTemporalJitter` | Shadows | Vary sample pattern per frame | 1 | D | = |
 | `r_rtShadowTemporalJitterMinSamples` | Shadows | Min samples before temporal jitter applies | 4 | D | = |
 | `r_rtShadowStablePattern` | Shadows | Stable per-light jitter seed | 0 | D | = |

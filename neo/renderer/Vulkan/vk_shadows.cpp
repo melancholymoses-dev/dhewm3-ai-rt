@@ -20,6 +20,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
+#include "renderer/Vulkan/vk_profile.h"
 
 #include <string.h>
 
@@ -31,7 +32,7 @@ struct ShadowParamsUBO
 {
     float invViewProj[16];    // column-major 4x4,  offset   0
     float lightOrigin[4];     // xyz = pos, w = legacy isotropic radius (max axis), offset  64
-    float lightFalloffRadius; // offset  80
+    float _pad0;              // was lightFalloffRadius (r_rtShadowDistanceCutoff, replaced by lightPlanes) // offset  80
     int numSamples;           // offset  84
     uint32_t frameIndex;      // offset  88
     float rayBias;            // offset  92
@@ -67,10 +68,14 @@ struct ShadowParamsUBO
     // 1 = binding 4 holds this frame's G-buffer surface class, so the rgen can ask
     // per pixel whether it is the first-person body instead of guessing from distance.
     int32_t playerClassValid; // was _pad1 // offset 188
+    // Stage S2: idRenderLightLocal::frustum, global space, positive side outside, d already
+    // padded.  A pixel outside any plane gets no light from the interaction, so needs no ray.
+    float lightPlanes[6][4]; // offset 192
 };
 // Must stay within the shared RT UBO ring stride (384 bytes, sized off VkInteractionUBO
 // in vk_backend.cpp) and match the std140 layout of ShadowParams in shadow_ray.rgen exactly.
-static_assert(sizeof(ShadowParamsUBO) == 192, "ShadowParamsUBO size mismatch — check std140 alignment/padding");
+static_assert(sizeof(ShadowParamsUBO) == 288, "ShadowParamsUBO size mismatch — check std140 alignment/padding");
+static_assert(sizeof(ShadowParamsUBO) <= 384, "ShadowParamsUBO exceeds the RT UBO ring stride");
 
 // ---------------------------------------------------------------------------
 // Push-constant block for shadow_blur.comp.  Must match its layout exactly.
@@ -118,9 +123,13 @@ static idCVar r_rtShadowSoftRadiusMax("r_rtShadowSoftRadiusMax", "6.0", CVAR_REN
 static idCVar r_rtShadowMinSamples(
     "r_rtShadowMinSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
     "minimum RT shadow rays per pixel (default 1 keeps baseline behavior; raise only for diagnostics)");
-static idCVar r_rtShadowDistanceCutoff(
-    "r_rtShadowDistanceCutoff", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-    "apply RT spherical distance cutoff for point lights (diagnostic: keep 0 unless debugging)");
+static idCVar r_rtShadowVolumeCull(
+    "r_rtShadowVolumeCull", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+    "skip RT shadow rays for pixels outside the light volume (1); 0 traces every pixel in the "
+    "light scissor, for A/B. r_rtShadowDebugMode 11 shows what is culled");
+// World units the light volume is grown by before culling, so the plane test can never
+// clip a pixel the falloff/projection textures still light.
+static const float VK_RT_SHADOW_CULL_PAD = 4.0f;
 static idCVar r_rtShadowTemporalJitter(
     "r_rtShadowTemporalJitter", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
     "vary RT shadow sampling pattern per frame (0 = stable pattern for shimmer diagnostics)");
@@ -214,6 +223,8 @@ static idCVar r_rtShadowDebugMode(
     "10=player-body exclusion (white = this pixel drops the player instances from its shadow "
     "rays; should cover the first-person body and nothing else — view it with "
     "r_rtShadowBlurEnable 0 so the blur doesn't soften the boundary), "
+    "11=light-volume cull (traced pixels black, culled pixels lit: every RT-shadowed light should "
+    "vanish; any light still visible is a pixel the cull skipped but the light reaches), "
     "7=anisotropic cone half-angle sin(U) (tangent-plane 'right' axis), "
     "8=anisotropic cone half-angle sin(V) (tangent-plane 'up/fwd' axis) — 7/8 together show the "
     "elliptical soft-shadow cone shape (Phase 9 Stage 1); a spherical point light shows 7==8, an "
@@ -1090,12 +1101,18 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         ubo.lightAxisFwd[3] = axisFwdHalf;
         ubo.lightKind = lightKind;
         const float softRadius = ubo.lightOrigin[3]; // kept for the existing debug log line below
-        // Projected lights are not spherical; their attenuation is handled by light projection/falloff textures
-        // in the interaction shader, so RT shadow rays should not early-out by distance for them.
-        if (r_rtShadowDistanceCutoff.GetBool() && light.pointLight)
-            ubo.lightFalloffRadius = light.lightRadius.Length();
-        else
-            ubo.lightFalloffRadius = 0.0f;
+        // Stage S2: the same 6 planes the frontend culls interactions with, built from the
+        // lightProject the interaction attenuates by, so point and projected lights agree.
+        // Cull off writes (0,0,0,-1): every pixel is then 1 unit inside every plane.
+        const bool volumeCull = r_rtShadowVolumeCull.GetBool();
+        for (int p = 0; p < 6; p++)
+        {
+            const idPlane &pl = vLight->lightDef->frustum[p];
+            ubo.lightPlanes[p][0] = volumeCull ? pl[0] : 0.0f;
+            ubo.lightPlanes[p][1] = volumeCull ? pl[1] : 0.0f;
+            ubo.lightPlanes[p][2] = volumeCull ? pl[2] : 0.0f;
+            ubo.lightPlanes[p][3] = volumeCull ? pl[3] - VK_RT_SHADOW_CULL_PAD : -1.0f;
+        }
         const int requestedSamples = Max(1, r_rtShadowSamples.GetInteger());
         const int minSamples = Max(1, r_rtShadowMinSamples.GetInteger());
         ubo.numSamples = requestedSamples;
@@ -1185,13 +1202,13 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         {
             const char *lightName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
             common->Printf("VK RT LIGHT DBG: frame=%d light='%s' point=%d origin=(%.2f,%.2f,%.2f) rad=(%.2f,%.2f,%.2f) "
-                           "cutoff=%.3f samples=%d reqSamples=%d minSamples=%d bias=%.4f jitter=%d effJitter=%d "
+                           "volCull=%d samples=%d reqSamples=%d minSamples=%d bias=%.4f jitter=%d effJitter=%d "
                            "jitterMinSamples=%d stable=%d seed=%u softRadius=%.3f kind=%u axisHalf=(%.3f,%.3f,%.3f) "
                            "blurEn=%d blurRad=%d depthAware=%d depthTh=%.5f "
                            "mask=%ux%u layer=%d\n",
                            tr.frameCount, lightName, light.pointLight ? 1 : 0, shadowOrigin.x, shadowOrigin.y,
                            shadowOrigin.z, light.lightRadius.x, light.lightRadius.y, light.lightRadius.z,
-                           ubo.lightFalloffRadius, ubo.numSamples, requestedSamples, minSamples, ubo.rayBias,
+                           volumeCull ? 1 : 0, ubo.numSamples, requestedSamples, minSamples, ubo.rayBias,
                            r_rtShadowTemporalJitter.GetBool() ? 1 : 0, allowTemporalJitter ? 1 : 0, jitterMinSamples,
                            r_rtShadowStablePattern.GetBool() ? 1 : 0, ubo.frameIndex, softRadius, ubo.lightKind,
                            axisRightHalf, axisUpHalf, axisFwdHalf, r_rtShadowBlurEnable.GetBool() ? 1 : 0,
@@ -1221,6 +1238,10 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
                 (int)ubo.shadowLayer, ubo.rayBias, ubo.frameIndex, ubo.numSamples, allowTemporalJitter ? 1 : 0);
             fflush(NULL);
         }
+
+        // Launch area, batched and serial alike.  S2 culls inside this area, so it moves
+        // gpu time but not this counter; S5's rect shrink is what lowers it.
+        VK_Prof_Add(VKPROF_SHADOW_MPIX, (double)dispatchW * (double)dispatchH * 1e-6);
 
         vkCmdTraceRaysKHR(cmd, &vkRT.rgenRegion, &vkRT.missRegion, &vkRT.hitRegion, &vkRT.callRegion, dispatchW,
                           dispatchH, 1);

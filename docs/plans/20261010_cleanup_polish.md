@@ -61,7 +61,7 @@ shipped.
 
 | Remove | Because |
 |---|---|
-| `r_rtShadowStablePattern`, `r_rtShadowDistanceCutoff`, `r_rtShadowMinSamples`, `r_rtShadowTemporalJitterMinSamples` | Diagnostic switches whose defaults are the shipped behaviour — but they are the knobs Stage S tunes against, and S2 explicitly *replaces* `r_rtShadowDistanceCutoff`. `r_rtShadowDebugMode` stays |
+| `r_rtShadowStablePattern`, `r_rtShadowVolumeCull`, `r_rtShadowMinSamples`, `r_rtShadowTemporalJitterMinSamples` | Diagnostic switches whose defaults are the shipped behaviour — but they are the knobs Stage S tunes against. S2 replaced `r_rtShadowDistanceCutoff` with `r_rtShadowVolumeCull` (A/B switch). `r_rtShadowDebugMode` stays |
 | `r_vkLogBufferGarbage` | Optimization E3 says use it before removing it |
 
 ### 1c — after the reflection arc closes

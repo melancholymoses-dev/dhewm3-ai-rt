@@ -72,9 +72,10 @@ GI "reach" extension in this path.
 
 ## Instrument
 
-One counter, added before S2 and used by every step: shadow pixels launched per frame,
-summed over all dispatches, reset in `VK_RT_ShadowBatchBegin`, reported as `shadow.pixels`
-next to `lights.serial`. Today's route reads 33.8 M (1.9 batched + 31.9 serial).
+One counter, added with S2 and used by every step: shadow-ray launch area per frame,
+summed over all dispatches (batched and serial), reported as `shadow.Mpix` next to
+`lights.serial`. Today's route reads 33.8 M (1.9 batched + 31.9 serial). It counts launches,
+so S2's in-shader cull moves GPU time, not this counter; S5 is the step that lowers it.
 
 Steps are read live off that counter plus the frame time in the corner. No per-step CSV
 capture: if `shadow.pixels` collapses and `Interactions + Shadows` does not, break overhead
@@ -88,10 +89,10 @@ one number. Numbering stays S2-S7 — the labels are cited elsewhere.
 
 | Step | Change | Check |
 |---|---|---|
-| S2 Pixel cull | In `shadow_ray.rgen`, before the normal reconstruction: test world pos against the light's 6 planes, pad a few units, outside stores 1.0 and returns. Replaces `r_rtShadowDistanceCutoff` | Debug mode tinting culled pixels; shadows identical inside volumes; `shadow.pixels` drops |
+| S2 Pixel cull — **implemented, awaiting check** | `shadow_ray.rgen` tests world pos against `lightDef->frustum[6]` (padded 4 units) right after reconstruction; outside stores 1.0 and returns. `r_rtShadowVolumeCull` (default 1) replaces `r_rtShadowDistanceCutoff` | `r_rtShadowDebugMode 11`: every shadowed light should vanish, any light left is a wrong cull; shadows identical with `r_rtShadowVolumeCull 0/1`; `gpu.Interactions + gpu.Shadows` drops at equal `shadow.Mpix` |
 | S3 Looped batches | Assign shadow lights to batch `k = n / W`. Batch 0 traces where it does today. On reaching the first light of batch k>0: end pass, clear used layers, trace + blur the batch, resume. Lights are additive, so order within the loop is free | 21 lights = 2 breaks at W=8 (was 14); log line per batch |
 | S4 Delete serial path | Remove `VK_RT_DispatchShadowRaysForLight`, `VK_RT_SHADOW_SERIAL_LAYER`, `r_rtShadowBatch`, overflow log; the scratch layer becomes a batch layer (W=8) | `grep -r ShadowBatch\b` clean; settings doc row removed |
-| S5 Rect shrink | Dispatch rect = light scissor ∩ screen rect of (lit surface bounds ∩ light bounds). Blur and interaction scissor use the same rect | `shadow.pixels` well below the post-S2 figure in the corner |
+| S5 Rect shrink | Dispatch rect = light scissor ∩ screen rect of (lit surface bounds ∩ light bounds). Blur and interaction scissor use the same rect | `shadow.Mpix` well below the post-S2 figure in the corner |
 | S6 Stencil clear | Skip the per-light stencil clear when RT shadows are on, after confirming the pass starts with stencil 128 | Screenshots identical; stencil-shadow fallback (`r_rtShadows 0`) unchanged |
 | S7 Layer count (optional) | W=16 only if S3 shows break overhead still matters. First share one mask + blur-temp pair across frame slots (mask has no history), which makes 16 layers VRAM-neutral | VRAM logged before/after; no flicker with 2 frames in flight |
 
@@ -123,7 +124,7 @@ when the rect genuinely is the screen.
 | S5 rect too tight when surface bounds are stale (animated models) | Use the same bounds the frontend culled with; fall back to light scissor when unsure |
 | S7 shared mask across slots | Only after sync validation is clean on S3 |
 
-Exit: `shadow.pixels` under ~8 M on the mchq route, `Interactions` flat against
+Exit: `shadow.Mpix` under ~8 on the mchq route, `Interactions` flat against
 `lights.serial` instead of climbing, and GPU p50 under 9.17 ms. One confirming capture at the
 end of the stage, not per step.
 

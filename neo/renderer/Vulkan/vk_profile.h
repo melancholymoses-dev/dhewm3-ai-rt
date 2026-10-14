@@ -104,6 +104,7 @@ enum vkProfMetric_t
     VKPROF_LIGHTS_SHADOW,
     VKPROF_LIGHTS_BATCHED,
     VKPROF_LIGHTS_SERIAL,
+    VKPROF_SHADOW_MPIX, // shadow-ray launch area, all dispatches, megapixels
 
     VKPROF_FIXED_COUNT
 };

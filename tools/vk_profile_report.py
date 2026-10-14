@@ -67,7 +67,7 @@ ACCOUNTED_PHASE_CPU = ["cpu.total", "cpu.raster"]
 # monitoring but must not be mixed into a table you scan for expensive passes.
 NON_TIME = ("KB", "MB", ".draws", ".allocs", ".frees", ".blocks", "staticBlocks", ".tris",
             "lights.", ".flushes", ".n", ".updates", ".rebuilds", ".dynInst", ".overflows",
-            ".imageLoads", ".pipelines")
+            ".imageLoads", ".pipelines", "Mpix")
 
 
 def percentile(sorted_vals: Sequence[float], q: float) -> float:
