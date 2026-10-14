@@ -104,6 +104,8 @@ enum vkProfMetric_t
     VKPROF_LIGHTS_SHADOW,
     VKPROF_LIGHTS_BATCHED,
     VKPROF_LIGHTS_SERIAL,
+    VKPROF_SHADOW_MPIX,   // shadow-ray launch area, all dispatches, megapixels
+    VKPROF_SHADOW_BREAKS, // render-pass breaks for in-loop shadow dispatch (S3 batches or serial lights)
 
     VKPROF_FIXED_COUNT
 };

@@ -32,8 +32,7 @@ bool rt_IsViewLocalClass( float alpha )
     return abs( alpha - RT_GBUF_CLASS_VIEWLOCAL ) < 0.2;
 }
 
-// classValid is 0 when no G-buffer was written this frame (no prepass, or the shadow
-// pass took its serial path, where gbufAlbedo is still a colour attachment).  Then
+// classValid is 0 when no G-buffer was written this frame (no prepass).  Then
 // fall back to the legacy camera-distance sphere rather than silently losing the
 // exclusion, which would black out the body.
 bool rt_PlayerExcluded( sampler2D gbufAlbedo, ivec2 coord, int classValid,

@@ -59,7 +59,7 @@ window-size change). Treat the first window after any cvar change in earlier log
 
 Capture 2: Communications fire, 4171 frames, full CSV (base/a0.csv)
 -------------------------------------------------------------------
-Same machine. Many lights, shadows, particles. The area that chugs on the 2600X/9070XT.
+Same machine. Many lights, shadows, particles. The area that chugs on the 2600/9070XT.
 It does NOT chug here: gpu.total p50 4.79, frame.backend p50 1.72.
 
 ARTIFACT FOUND FIRST, everything below is after discounting it.
@@ -90,7 +90,7 @@ What the capture settles
     upload.flushes=1 and wait.uploadFlush 1.46 ms. Not periodic. Worth one look, not a stage.
 
 Not answerable by more logging
-  Why this area chugs on the 2600X/9070XT and not here. That needs the same CSV captured on
+  Why this area chugs on the 2600/9070XT and not here. That needs the same CSV captured on
   that machine. No additional counters would help.
 
 =====================================================================================
@@ -171,6 +171,63 @@ CORRECTED: frame.upload / wait.uploadFlush is not an upload cost (capture 2 read
   across quintiles (62-74x bottom to top). Fixing the blocking flush moves the wait; it
   does not recover the time while GPU-bound. F2's real cost is vc.allocMs p50 0.014 ms.
 
+=====================================================================================
+BASELINE, 2026-10-13. Ryzen 5 2600 / RX 9070 XT. Same three routes, same recipe.
+All three captures postdate the light-counter fix, so light counts are valid everywhere.
+2560x1440, com_fixedTic 1 — same as the 4070 runs.
+=====================================================================================
+Scenario files (base/*.csv)       mchq          r2r         commfire     vs 4070 Ti S
+  frames                          2228          4545          1068
+  GPU p50 (RT + raster)           14.31         15.12         19.66       1.56 / 1.30 / 1.32x
+  frame.backend p50 = fps     15.6 / 64     16.4 / 61     20.4 / 49
+  frame.backend p95 = fps     21.1 / 47     22.9 / 44     34.2 / 29     commfire p95 ~same
+  CPU busy p50 (waits removed)     3.60          3.95          3.85       1.6-1.8x
+  gpu.total (RT) p50               8.87          7.23         11.41
+  gpu.raster p50                   5.43          7.90          8.25
+  gpu.Interactions p50 / p95   4.55 / 10.8   7.13 / 12.1   7.45 / 20.1
+  gpu.Shadows p50 / p95        2.07 / 6.83   2.14 / 6.52   4.78 / 8.83
+  gpu.AO p50                       2.30          2.02          2.66
+  gpu.ProbeResolve p50             1.42          1.09          1.04
+  gpu.FroxelFill p50               0.76          0.81          1.19
+  gpu.Refl p50 / p95           0.00 / 2.64   0.00 / 1.50   0.62 / 1.42
+  cpu.TLAS p50                     1.52          0.72          0.68
+  lights.view / casting p50       16 / 12       42 / 19       21 / 11
+  frames overflowing batch (7)      79%           89%           96%
+  RSS MB                        243 -> 247    139 -> 254    192 -> 203
+  VRAM MB (of 15448)               2276          2113          2234
+  Spans close in all three (|residual - frame.other| = 0). No VRAM pressure, no
+  mid-frame image loads. frame.profilePrint p50 0.26 every frame (CSV write).
+
+Still GPU-bound everywhere, by 4-5x. The 2600 costs 1.6-1.8x CPU but the CPU is never
+the frame. CPU-side stages only matter here for hitches.
+
+Serial shadow dispatch, re-checked per scenario (tools/vk_profile_report.py):
+                      lights.serial p50/max   Interactions climb     per serial light
+  mchq                     5 / 21            +10.46 (Shadows -3.67)    0.50 ms
+  r2r                     12 / 20            +11.77 (Shadows -4.33)    0.59 ms
+  commfire                 4 / 14            +17.86 (Shadows +0.77)    1.79 ms
+  mchq and r2r reproduce the 4070 handoff (0.37 ms/light there). commfire fails the
+  script's handoff test because Shadows does not fall, but Interactions still climbs
+  steeply with serial count (0.32 ms at 0 -> 18.17 ms at 10). Casters also rise 7 -> 17,
+  so this capture cannot split serial dispatch from more lit surface.
+  commfire's p95 tail (gpu.Interactions 20.1, backend 34.2) matches the 4070 (21.0 /
+  34.6). The commfire chug is Interactions on both machines, not a 9070 XT effect.
+
+BLAS rebuild hitch, larger on this machine and not linear in count:
+  frame        rebuilds  cpu.TLAS.BLAS  blas.tris (vs neighbours)
+  r2r 33128       36       130.84 ms    21383 (12665)   + vc.allocs 244
+  r2r 32246        2        23.31 ms     6280 (5078)
+  r2r 32815        9        22.24 ms     6310
+  r2r 33343        1         9.70 ms    15568
+  commfire 45544   1        28.36 ms     8478 (4074)
+  Typical single rebuild is 1.3-2.2 ms (vs ~1.0 on the 5950X). The outliers are single
+  rebuilds costing 10-28 ms, coinciding with blas.tris jumping, so cost tracks the mesh
+  being built, not the count. 33128 is a 141 ms frame.
+
+One-off: r2r frame 32426 waited 125.8 ms on the upload fence. GPU passes on it read
+  20.0 + 12.8 ms and the neighbours ~30 ms, so the stall is outside any timed pass
+  (driver or present). n=1, near capture start (RSS 143 MB).
+
 Next capture
 ------------
 The only capture recipe. r_vkRTProfileGroups is a console filter and is always left at 63;
@@ -191,8 +248,10 @@ Then, before reading any individual frame:
 
 Outstanding
 -----------
-  Recapture r2r and commfire with the light-counter fix. Only the CONDITIONS and
-  SHADOW DISPATCH blocks are needed; their timings above stand.
+  Recapture r2r and commfire with the light-counter fix on the 4070 machine. Done on
+  the 9070 XT (2026-10-13 block), which already confirms the serial handoff in r2r.
+  BLAS rebuild outliers: log per-rebuild tri count and entity name to see which meshes
+  cost 10-28 ms on their own.
   The MC2 corner, to check the 2026-10-11 "14 of 21 serial" reading against the fixed
   counter. mchq already satisfies Phase 6a's condition, so this is confirmation only.
   One-off, not a stage: a0.csv frame 8181 spent 21.6 ms in cpu.ShaderPasses, once in

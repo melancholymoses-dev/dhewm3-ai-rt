@@ -37,7 +37,7 @@ layout(set = 0, binding = 4) uniform sampler2D gbufClassSampler;
 layout(set = 0, binding = 3) uniform ShadowParams {
     mat4  invViewProj;          // inverse view-projection to reconstruct world pos
     vec4  lightOrigin;          // xyz = world pos, w = legacy isotropic radius (max axis)
-    float lightFalloffRadius;   // point light falloff range
+    float _pad0;                // was lightFalloffRadius; replaced by lightPlanes
     int   numSamples;           // shadow rays per pixel (1 = hard, 4+ = soft)
     uint  frameIndex;           // for temporal jitter
     float rayBias;              // ray origin bias (world units)
@@ -59,6 +59,9 @@ layout(set = 0, binding = 3) uniform ShadowParams {
     float biasFootprintCoeff;   // world units per render pixel, per unit of view distance
     float playerExcludeRadius;  // fallback sphere, used only when playerClassValid == 0
     int   playerClassValid;     // 1 = gbufClassSampler holds this frame's surface class
+    // Stage S2: light volume, global space, positive side outside, pre-padded.
+    // All (0,0,0,-1) when r_rtShadowVolumeCull is 0, so nothing is culled.
+    vec4  lightPlanes[6];
 } params;
 
 #include "rt_player_exclude.glsl"
@@ -171,16 +174,29 @@ void main() {
     // Reconstruct world position
     vec3 worldPos = reconstructWorldPos( coord, size );
 
-    // Light direction and distance
-    vec3  toLight = params.lightOrigin.xyz - worldPos;
-    float dist    = length( toLight );
+    // Stage S2: outside the light volume the interaction adds nothing, so skip the
+    // normal reconstruction and the trace.  Stored as lit so the mask stays neutral.
+    bool outsideVolume = false;
+    for ( int i = 0; i < 6; i++ ) {
+        if ( dot( params.lightPlanes[i].xyz, worldPos ) + params.lightPlanes[i].w > 0.0 ) {
+            outsideVolume = true;
+        }
+    }
 
-    // Beyond light range — fully lit (the light interaction code handles attenuation).
-    // For projected lights, lightFalloffRadius may be zero; treat that as "no cutoff".
-    if ( params.lightFalloffRadius > 0.0 && dist >= params.lightFalloffRadius ) {
+    // Debug mode 11: traced pixels black, culled pixels lit.  The light should vanish
+    // entirely; anything it still lights was culled wrongly.
+    if ( params.debugMode == 11 ) {
+        storeShadow( coord, outsideVolume ? 1.0 : 0.0 );
+        return;
+    }
+    if ( outsideVolume ) {
         storeShadow( coord, 1.0 );
         return;
     }
+
+    // Light direction and distance
+    vec3  toLight = params.lightOrigin.xyz - worldPos;
+    float dist    = length( toLight );
 
     vec3 lightDir = toLight / dist;
 

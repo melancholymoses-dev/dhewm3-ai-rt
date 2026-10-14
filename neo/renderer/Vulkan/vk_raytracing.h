@@ -163,18 +163,12 @@ struct vkTLAS_t
 // ---------------------------------------------------------------------------
 // Shadow mask layer budget (P1b — batched shadow masks, rt_optimization_tuning.md)
 //
-// The shadow mask is an R8_UNORM 2D *array*: one layer per shadow-casting light.
-// All batched lights are traced back-to-back in one block outside the render
-// pass, so the interaction loop runs with zero render-pass breaks — each light's
-// draw samples its own layer via u_ShadowMaskLayer.
-//
-// The final layer is reserved as a serial scratch layer: it is reused, one light
-// at a time, by the legacy per-light path (r_rtShadowBatch 0) and by any lights
-// that overflow the batch budget.  Those lights still cost a render-pass break.
+// The shadow mask is an R8_UNORM 2D *array*: one layer per shadow-casting light
+// in a batch.  Batch 0 is traced back-to-back outside the render pass; each later
+// batch reuses the same layers and costs one render-pass break (Stage S3).  Each
+// light's draw samples its own layer via u_ShadowMaskLayer.
 // ---------------------------------------------------------------------------
 #define VK_RT_SHADOW_LAYERS 8
-#define VK_RT_SHADOW_SERIAL_LAYER (VK_RT_SHADOW_LAYERS - 1)
-#define VK_RT_SHADOW_BATCH_MAX (VK_RT_SHADOW_LAYERS - 1)
 
 // Shadow mask buffer (R8 UNORM 2D array, one pixel per screen pixel, one layer per light)
 struct vkShadowMask_t
@@ -858,15 +852,6 @@ void VK_RTProfile_BLASGpuEnd(VkCommandBuffer cmd);
 // Callable from the frontend; gates work that only RT geometry requires.
 bool VK_RT_TLASActive(void);
 
-// Dispatch shadow rays for a single light into `layer` of the shadow mask array.
-// Must be called outside a render pass.  Depth must be in DEPTH_STENCIL_ATTACHMENT_OPTIMAL on entry;
-// this function transitions depth to READ_ONLY_OPTIMAL for the dispatch then back before returning.
-// The shadow mask is kept in VK_IMAGE_LAYOUT_GENERAL throughout (no layout transition).
-// This is the *serial* path (one render-pass break per light) — used by the legacy
-// r_rtShadowBatch 0 mode and by lights that overflow the batch budget.
-void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight,
-                                      VkRect2D dispatchRect, int layer);
-
 // Resize shadow mask when resolution changes
 void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height);
 
@@ -950,14 +935,12 @@ inline float VK_RT_EffectiveZNear(const viewDef_t *viewDef)
 //   2. VK_RT_ShadowBatchAddLight(vLight, rect) × L  — assign one layer per light,
 //      in the same order and with the same filters as the interaction loop
 //   3. VK_RT_ShadowBatchClearLayers(cmd)            — clear only the layers in use
-//   4. VK_RT_DispatchShadowBatch(cmd, viewDef)      — trace + blur every batched
-//      light with a single depth round-trip and no render-pass breaks
-//   5. interaction loop: VK_RT_GetShadowLayerForLight(vLight) picks the layer;
-//      a light on VK_RT_SHADOW_SERIAL_LAYER still needs the per-light break.
+//   4. VK_RT_DispatchShadowBatch(cmd, viewDef)      — trace + blur batch 0 with a
+//      single depth round-trip and no render-pass breaks
+//   5. interaction loop: VK_RT_GetShadowLayerForLight(vLight) picks the layer.
+//      S3: when VK_RT_GetShadowBatchForLight rises, end the pass and call
+//      VK_RT_DispatchShadowBatchInLoop for that batch (one break per batch).
 // ---------------------------------------------------------------------------
-
-// True when batching is enabled and usable this frame (r_rtShadowBatch).
-bool VK_RT_ShadowBatchEnabled(void);
 
 // Reset the per-view layer assignment table.
 void VK_RT_ShadowBatchBegin(void);
@@ -967,9 +950,9 @@ void VK_RT_ShadowBatchBegin(void);
 // sample no mask at all instead of a cleared-to-white one.
 int VK_RT_ShadowBatchAddLight(const viewLight_t *vLight, VkRect2D dispatchRect);
 
-// Shadow-casting lights this view, how many got a batch layer, and how many fell back
-// to the serial path.  Phase 6a's discriminator: serial time is billed to Interactions,
-// so a capture with serial=0 says nothing about the serial dispatch cost.
+// Shadow-casting lights this view, how many are in batch 0, and how many are in later
+// batches (reported as lights.serial).  In-loop dispatch time is timed by the nested
+// Interactions.Shadows span, so a capture with serial=0 says nothing about its cost.
 void VK_RT_GetShadowBatchStats(int *outCasters, int *outBatched, int *outSerial);
 
 // Layer assigned by VK_RT_ShadowBatchAddLight, or -1 if the light casts no shadows
@@ -980,9 +963,20 @@ int VK_RT_GetShadowLayerForLight(const viewLight_t *vLight);
 // outside a render pass, before VK_RT_DispatchShadowBatch.
 void VK_RT_ShadowBatchClearLayers(VkCommandBuffer cmd);
 
-// Trace + blur every batched light.  Must be called outside a render pass, after
-// the TLAS rebuild.  Does nothing when batching is off or no light was batched.
+// Trace + blur batch 0.  Must be called outside a render pass, after the TLAS
+// rebuild.  Does nothing when no light casts shadows.
 void VK_RT_DispatchShadowBatch(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// S3: batch index that traces this light, or -1 (no shadows).
+int VK_RT_GetShadowBatchForLight(const viewLight_t *vLight);
+
+// S3: batches this view (0 when nothing is batched).
+int VK_RT_ShadowBatchCount(void);
+
+// S3: clear, trace and blur batch `batch` (>= 1) from inside the interaction loop.
+// Must be called with the render pass ended; depth and gbufAlbedo are attachment
+// layouts on entry and restored on return.
+void VK_RT_DispatchShadowBatchInLoop(VkCommandBuffer cmd, const viewDef_t *viewDef, int batch);
 
 // ---------------------------------------------------------------------------
 // Material table (Phase 5.4) — shared infrastructure for reflections, GI, shadow any-hit

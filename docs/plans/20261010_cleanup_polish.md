@@ -57,11 +57,12 @@ shipped.
 | `r_fsrDebug`, `r_vkRTReflDataDiag`, `r_vkRTInterLogN`, `r_vkRTLogCaptureReset`, `r_vkRTDebugLightTextures`, `r_vkRTLightLogN`, `r_vkRTDebugLightFilter`, `r_vkRTDebugSurface`, `r_vkRTDebugMaxLogsPerFrame` | `r_vkRTProfile`, `r_vkLogRT`, `r_vkLogSubmitInfo` |
 | `r_vkShadowFlipOps`, `r_vkShadowFullScissor`, `r_vkLightFullScissor`, `r_vkSplitSubmitMask/Verbose`, `r_vkLowPerturbationMode`, `r_vkLogShadowBranch/Geom`, `r_vkVcCheck` | `r_vkSerializeFrames` (cheap stability bisect) |
 
-### 1b — after optimization Stage S closes
+### 1b — after optimization Stage S closes (closed 2026-10-13)
 
 | Remove | Because |
 |---|---|
-| `r_rtShadowStablePattern`, `r_rtShadowDistanceCutoff`, `r_rtShadowMinSamples`, `r_rtShadowTemporalJitterMinSamples` | Diagnostic switches whose defaults are the shipped behaviour — but they are the knobs Stage S tunes against, and S2 explicitly *replaces* `r_rtShadowDistanceCutoff`. `r_rtShadowDebugMode` stays |
+| ~~Serial shadow path: `VK_RT_DispatchShadowRaysForLight`, `VK_RT_SHADOW_SERIAL_LAYER`, `r_rtShadowBatch`; batch width 7 → 8~~ **done 2026-10-13** | Stage S4. Check: `grep ShadowRaysForLight` clean, `shadow.breaks` = ceil(casters/8)−1, `lights.batched` pins at 8 |
+| `r_rtShadowStablePattern`, `r_rtShadowVolumeCull`, `r_rtShadowMinSamples`, `r_rtShadowTemporalJitterMinSamples` | Diagnostic switches whose defaults are the shipped behaviour — but they are the knobs Stage S tunes against. S2 replaced `r_rtShadowDistanceCutoff` with `r_rtShadowVolumeCull` (A/B switch). `r_rtShadowDebugMode` stays |
 | `r_vkLogBufferGarbage` | Optimization E3 says use it before removing it |
 
 ### 1c — after the reflection arc closes
@@ -167,7 +168,7 @@ Both were optimization and now live in `20261010_vk_core_audit.md`:
 
 | Was | Now |
 |---|---|
-| Phase 6a, RT shadow dispatch, steps S0-S7 | Part 3, **Stage S**. Code comments in `vk_raytracing.h:971` and `vk_shadows.cpp:1465` still say "Phase 6a" — both names mean Stage S |
+| Phase 6a, RT shadow dispatch, steps S0-S7 | Part 3, **Stage S** (S0/S1 since dropped; S2-S7 remain). Code comments in `vk_raytracing.h:971` and `vk_shadows.cpp:1465` still say "Phase 6a" — both names mean Stage S |
 | Phase 6 E1-E5, Vulkan efficiency | Stages A0-A5 / B0-B4 owned the fixes already; the E2/E3/E4 audits moved to that doc's order table as regression guards |
 
 Nothing was dropped. This section is a forwarding note; delete it once no reader is looking

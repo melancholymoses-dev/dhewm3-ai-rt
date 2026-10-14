@@ -403,6 +403,7 @@ enum vkRTProfilePhase_t
     // Nested sub-spans of a phase above: printed, but excluded from total=/raster=.
     VK_RTPROF_PHASE_NESTED_BEGIN,
     VK_RTPROF_PHASE_BLAS = VK_RTPROF_PHASE_NESTED_BEGIN, // inside TLAS
+    VK_RTPROF_PHASE_SHADOWS_LOOP,                        // inside Interactions: in-loop shadow dispatch
     VK_RTPROF_PHASE_COUNT
 };
 
@@ -460,7 +461,7 @@ static const char *const s_rtProfPhaseNames[VK_RTPROF_PHASE_COUNT] = {
     "GIComposite",  "Vol",          "VolTemporal",   "VolBilateral",    "FroxelFill",
     "FroxelIntegrate", "FroxelResolve", "VolComposite", "DepthPrepass", "Interactions",
     "ShaderPasses", "FogLights",    "Upscale",       "Bloom",           "Tonemap",
-    "TLAS.BLAS",
+    "TLAS.BLAS",    "Interactions.Shadows",
 };
 
 static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
@@ -4068,6 +4069,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
     }
 
     int lightIdx = 0;
+    int shadowBatchDone = 0; // S3: highest shadow batch traced so far; batch 0 ran before the pass
     for (viewLight_t *vLight = backEnd.viewDef->viewLights; vLight; vLight = vLight->next, lightIdx++)
     {
         backEnd.vLight = vLight;
@@ -4120,9 +4122,9 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
                            (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height, nLocal,
                            nGlobal, nTrans, nGlobalShadow, nLocalShadow, VK_RTShadowsEnabled() ? 1 : 0, lightId,
                            VK_RT_PlayerSuppressesLight(lightId) ? 1 : 0, s_shadowMaskLayer,
-                           (s_shadowMaskLayer < 0)                            ? " (noShadows)"
-                           : (s_shadowMaskLayer == VK_RT_SHADOW_SERIAL_LAYER) ? " (serial)"
-                                                                              : " (batched)");
+                           (s_shadowMaskLayer < 0)                      ? " (noShadows)"
+                           : (VK_RT_GetShadowBatchForLight(vLight) > 0) ? " (later batch)"
+                                                                        : " (batched)");
         }
 
         if (r_vkLogShadowBranch.GetInteger() >= 2)
@@ -4214,23 +4216,27 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             track.valid = true;
         }
 
-        // --- Per-light RT shadow dispatch (serial path only) ---
-        // P1b: batched lights were already traced and blurred before the render pass
-        // opened, so nothing happens here for them — that is the whole point of the
-        // change.  Only a light parked on the serial scratch layer (r_rtShadowBatch 0,
-        // or more shadow-casting lights in view than VK_RT_SHADOW_BATCH_MAX) still
-        // costs an end/reopen round-trip, because the layer is reused between lights
-        // and must be re-traced immediately before its own draws.
-        // The shadow mask (VK_IMAGE_LAYOUT_GENERAL) is written by the dispatch and read
-        // by the interaction fragment shader without any layout transition.
-        if (VK_RTShadowsEnabled() && s_shadowMaskLayer == VK_RT_SHADOW_SERIAL_LAYER)
+        // --- In-loop RT shadow dispatch ---
+        // Batch 0 was traced before the render pass opened.  S3: the first light of each
+        // later batch ends the pass and traces its whole batch, reusing batch 0's layers
+        // now that their draws are recorded.  Batch order follows this loop's light
+        // order (VK_RB_AssignShadowLayers walks the same list with the same filter).
+        const int shadowBatch = VK_RTShadowsEnabled() ? VK_RT_GetShadowBatchForLight(vLight) : -1;
+        if (shadowBatch > shadowBatchDone)
         {
             vkCmdEndRenderPass(cmd);
-            VK_RT_DispatchShadowRaysForLight(cmd, backEnd.viewDef, vLight, lightScissor, s_shadowMaskLayer);
+            // Nested span: splits shadow trace + blur out of gpu.Interactions, which
+            // otherwise cannot tell ray cost from per-light shading cost.
+            const uint64_t cpuLoopShadowStart = VK_RTProfile_CPUStamp();
+            const int profLoopShadow = VK_RTProfile_PhaseBegin(cmd, VK_RTPROF_PHASE_SHADOWS_LOOP);
+            VK_RT_DispatchShadowBatchInLoop(cmd, backEnd.viewDef, shadowBatch);
+            VK_RTProfile_PhaseEnd(cmd, profLoopShadow);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_SHADOWS_LOOP, cpuLoopShadowStart);
+            shadowBatchDone = shadowBatch;
+            VK_Prof_Add(VKPROF_SHADOW_BREAKS, 1.0);
             // This light's scissor, not the view's — the interaction draws that follow are
-            // confined to it.
+            // confined to it.  The mask stays GENERAL; no layout transition is needed.
             VK_ResumeHdrRenderPass(cmd, &lightScissor);
-            // Rebind the interaction pipeline after reopening the render pass.
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
             s_interactionPipeTag = "opaque";
         }

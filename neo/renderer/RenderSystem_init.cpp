@@ -151,7 +151,7 @@ idCVar r_rtDeformedTangents("r_rtDeformedTangents", "1", CVAR_RENDERER | CVAR_BO
                             "ignoring r_useDeferredTangents (0 = restore the deferral, for cost A/B)");
 // r_rtGI is declared in vk_gi.cpp — extern reference here for documentation.
 // All CVars from vk_gi.cpp are registered automatically at startup.
-idCVar r_rtShadowSamples("r_rtShadowSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+idCVar r_rtShadowSamples("r_rtShadowSamples", "2", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                          "shadow rays per pixel (1=hard shadows, 4+=soft shadows)");
 idCVar r_rtShadowBlur("r_rtShadowBlur", "6", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                       "shadow mask blur radius in pixels (0=off, 1-8=kernel half-width)");
