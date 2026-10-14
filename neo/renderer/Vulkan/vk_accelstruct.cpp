@@ -419,9 +419,43 @@ static void VK_RT_ClearWorldEntityBLASPointers(bool destroyGpuResources)
         VK_RT_ModelBLASCacheClear();
 }
 
+// Scratch ranges of static BLASes, released once their build command has retired.
+// Same frame-count clock as the BLAS garbage queue.
+struct vkScratchGarbage_t
+{
+    vkPoolAlloc_t range;
+    int retireFrameCount;
+};
+static idList<vkScratchGarbage_t> s_scratchGarbage;
+
+static void VK_RT_DeferScratchFree(vkPoolAlloc_t *range)
+{
+    vkScratchGarbage_t g;
+    g.range = *range;
+    g.retireFrameCount = tr.frameCount + VK_MAX_FRAMES_IN_FLIGHT;
+    s_scratchGarbage.Append(g);
+    memset(range, 0, sizeof(*range));
+}
+
+// force = true frees everything (device idle: level load, shutdown).
+static void VK_RT_DrainScratchGarbage(bool force)
+{
+    int kept = 0;
+    for (int i = 0; i < s_scratchGarbage.Num(); i++)
+    {
+        if (force || tr.frameCount >= s_scratchGarbage[i].retireFrameCount)
+            VK_Pool_Free(&s_blasScratchPool, &s_scratchGarbage[i].range);
+        else
+            s_scratchGarbage[kept++] = s_scratchGarbage[i];
+    }
+    s_scratchGarbage.SetNum(kept, false);
+}
+
 // Drain BLAS garbage entries that are safe to free (called after fence wait).
 void VK_RT_DrainBLASGarbage(void)
 {
+    VK_RT_DrainScratchGarbage(false);
+
     int kept = 0;
     for (int i = 0; i < s_blasGarbageCount; i++)
     {
@@ -514,7 +548,7 @@ static void AllocASBuffer(VkDeviceSize size, VkBufferUsageFlags extraUsage, VkBu
 // rather than only Surface(0).  Used by VK_RT_RebuildTLAS.
 // ---------------------------------------------------------------------------
 
-vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkBLAS_t *prevBlas)
+vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkBLAS_t *prevBlas, bool allowUpdate)
 {
     extern bool VK_VertexCache_GetBuffer(vertCache_t * block, VkBuffer * outBuf, VkDeviceSize * outOffset);
 
@@ -673,8 +707,8 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
     // Only valid for CPU-path (owned) buffers; GPU-cache buffers are managed
     // externally and have stable addresses already.
     // ---------------------------------------------------------------------------
-    if (prevBlas && prevBlas->isValid && prevBlas->geomCount == (uint32_t)validCount && prevBlas->geomPrimCounts &&
-        prevBlas->geomVertSizes && prevBlas->geomVertRanges)
+    if (prevBlas && prevBlas->isValid && prevBlas->allowUpdate && prevBlas->geomCount == (uint32_t)validCount &&
+        prevBlas->geomPrimCounts && prevBlas->geomVertSizes && prevBlas->geomVertRanges)
     {
         bool compatible = true;
         for (int i = 0; i < validCount && compatible; i++)
@@ -860,27 +894,32 @@ fullRebuild:
     VkAccelerationStructureBuildGeometryInfoKHR buildInfo = {};
     buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    // Static BLASes never refit: no ALLOW_UPDATE gives the driver a smaller, faster-to-trace AS (R3).
     buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
-                      VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+                      (allowUpdate ? VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR : 0);
     buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     buildInfo.geometryCount = (uint32_t)validCount;
     buildInfo.pGeometries = asGeoms;
+    blas->allowUpdate = allowUpdate;
 
     VkAccelerationStructureBuildSizesInfoKHR sizeInfo = {};
     sizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
     vkGetAccelerationStructureBuildSizesKHR(vk.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo,
                                             primCounts, &sizeInfo);
+    VkDeviceSize scratchSize = sizeInfo.buildScratchSize;
 
-    // Query update scratch too — updateScratchSize can exceed buildScratchSize on some drivers.
-    buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
-    VkAccelerationStructureBuildSizesInfoKHR updateSizeInfo = {};
-    updateSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-    vkGetAccelerationStructureBuildSizesKHR(vk.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo,
-                                            primCounts, &updateSizeInfo);
-    buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-    VkDeviceSize scratchSize = sizeInfo.buildScratchSize > updateSizeInfo.updateScratchSize
-                                   ? sizeInfo.buildScratchSize
-                                   : updateSizeInfo.updateScratchSize;
+    if (allowUpdate)
+    {
+        // Query update scratch too — updateScratchSize can exceed buildScratchSize on some drivers.
+        buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+        VkAccelerationStructureBuildSizesInfoKHR updateSizeInfo = {};
+        updateSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+        vkGetAccelerationStructureBuildSizesKHR(vk.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo,
+                                                primCounts, &updateSizeInfo);
+        buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+        if (updateSizeInfo.updateScratchSize > scratchSize)
+            scratchSize = updateSizeInfo.updateScratchSize;
+    }
 
     VK_Pool_Alloc(&s_blasStoragePool, sizeInfo.accelerationStructureSize, &blas->storage);
 
@@ -917,6 +956,10 @@ fullRebuild:
     addrInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
     addrInfo.accelerationStructure = blas->handle;
     blas->deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(vk.device, &addrInfo);
+
+    // A BLAS that never refits needs its scratch only until this build has executed.
+    if (!allowUpdate)
+        VK_RT_DeferScratchFree(&blas->scratch);
 
     s_blasBuildStats.rebuildCount++;
     for (int i = 0; i < validCount; i++)
@@ -1183,7 +1226,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                     VK_RT_DestroyBLAS(ent->blas); // no-op for cached; safe to call
                 // Build multi-geometry BLAS covering all non-translucent surfaces.
                 // A single TLAS instance per entity, one geometry per surface.
-                ent->blas = VK_RT_BuildBLASForModel(model, cmd);
+                // Static models go to the cache and never refit, so they build without ALLOW_UPDATE.
+                ent->blas = VK_RT_BuildBLASForModel(model, cmd, NULL, ent->dynamicModel != NULL);
                 // Cache newly built BLAS for static entities so future entity
                 // pointer churn reuses it without a rebuild.
                 if (!ent->dynamicModel && ent->blas)
@@ -1752,6 +1796,17 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                        "others by parms.origin\n",
                        pass2Radius, r_rtTlasFallbackRadius.GetFloat());
         common->Printf("  pass 3 cull radius = %.0f (r_rtNearDynRadius)\n", r_rtNearDynRadius.GetFloat());
+        // Live bytes per BLAS pool: the R3 A/B reads AS and scratch totals from here.
+        const vkBufferPool_t *pools[3] = {&s_blasStoragePool, &s_blasScratchPool, &s_blasGeomPool};
+        for (int p = 0; p < 3; p++)
+        {
+            int chunks = 0;
+            VkDeviceSize total = 0, freeBytes = 0, largest = 0;
+            VK_Pool_Stats(pools[p], &chunks, &total, &freeBytes, &largest);
+            common->Printf("  pool %-11s: used %6d KB of %6d KB in %d chunk(s)\n", pools[p]->name,
+                           (int)((total - freeBytes) >> 10), (int)(total >> 10), chunks);
+        }
+        common->Printf("  scratch awaiting release: %d range(s)\n", s_scratchGarbage.Num());
         // r_rtReflectionDistance is file-static in vk_reflections.cpp; read it by name
         // rather than widen its linkage for a debug line.
         common->Printf("  consumer ray reach: GI=%.0f  vol=%.0f+lightDist  refl=%.0f\n", r_rtGIRadius.GetFloat(),
@@ -2145,7 +2200,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         vkRTBindlessFrameStats_t bindless1 = {};
         VK_RT_GetBindlessFrameStats(&bindless1);
         const uint64_t blasPass1 = blasTicks1 - blasTicks0, blasPass3 = blasTicks3 - blasTicks1;
-        common->Printf("VK RT TLAS SLOW: frame=%d total=%.2f |pass1=%.2f (blas=%.2f mat=%.2f) pass2=%.2f "
+        common->Printf("VK RT TLAS SLOW: frame=%d total=%.2f | pass1=%.2f (blas=%.2f mat=%.2f) pass2=%.2f "
                        "pass3=%.2f (blas=%.2f dynModel=%.2f) inst=%.2f (instRealloc=%d rewriteStatic=%d) "
                        "matTable=%.2f (bindlessRebuild=%.2f newSlots=%u slotsWritten=%u bgLoads=%u) "
                        "build=%.2f (storageRegrow=%d scratchRegrow=%d) | inst=%u/%u/%u geoms=%u/%u\n",
@@ -2197,6 +2252,7 @@ void VK_RT_BeginLevelLoad(void)
     s_blasGarbageCount = 0;
 
     // Every BLAS was freed above; hand the old level's chunks back to the driver.
+    VK_RT_DrainScratchGarbage(true);
     VK_Pool_TrimEmpty(&s_blasStoragePool);
     VK_Pool_TrimEmpty(&s_blasScratchPool);
     VK_Pool_TrimEmpty(&s_blasGeomPool);
@@ -2297,6 +2353,7 @@ void VK_RT_Shutdown(void)
     s_blasGarbageCount = 0;
 
     // Every BLAS is gone, so the pools hold no live ranges.
+    s_scratchGarbage.Clear();
     VK_Pool_Destroy(&s_blasStoragePool);
     VK_Pool_Destroy(&s_blasScratchPool);
     VK_Pool_Destroy(&s_blasGeomPool);

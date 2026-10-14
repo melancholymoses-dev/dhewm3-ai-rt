@@ -246,6 +246,12 @@ R7 A/B, 2026-10-14 (mchq_bar0 vs mchq_bar1, r_vkRTPreferBAR via vid_restart):
   Side note: mem.rssMB 210 -> 614 after the vid_restart. Not BAR (tables are ~11 MB);
   a vid_restart leak or reload footprint. E3 territory.
 
+R3 A/B, 2026-10-14 (mchq_r3 vs mchq_bar0 / mchq_bar1, all pre-R3 runs as baseline):
+  gpu.total p50 8.81 vs 8.65 / 8.48; AO 2.81 vs 2.86 / 2.77; Shadows 1.30 vs 1.33 / 1.24.
+  Every pass between or beside the two baselines: no trace gain from dropping ALLOW_UPDATE.
+  Pools after: storage 8251 KB, scratch 3503 KB (dynamic only, 14 x ~240 KB), geom 3353 KB.
+  Kept for the memory and because static BLASes never refit.
+
 One-off: r2r frame 32426 waited 125.8 ms on the upload fence. GPU passes on it read
   20.0 + 12.8 ms and the neighbours ~30 ms, so the stall is outside any timed pass
   (driver or present). n=1, near capture start (RSS 143 MB).

@@ -161,7 +161,7 @@ identical; BLAS GPU ms not worse.
 
 | Change | Detail |
 |---|---|
-| Static BLAS flags | No `ALLOW_UPDATE` for BLASes built from static models; free scratch after the build completes (deferred with the BLAS garbage clock) |
+| Static BLAS flags — **done 2026-10-14** | No `ALLOW_UPDATE` for static-model BLASes; scratch freed on the BLAS garbage clock. A/B (mchq_r3 vs bar0/bar1): no trace gain, all passes inside noise. Kept for memory: static scratch 0, pool holds only dynamic scratch (3.5 MB). `r_rtTlasDump 1` prints per-pool KB |
 | Dynamic BLAS flags | `PREFER_FAST_BUILD` for per-frame updated BLASes; full rebuild every N updates |
 | Rebuild burst — **done 2026-10-14** | Cause was allocation, not build work: 2N+2 `vkAllocateMemory` per rebuild at ~0.28 ms each; frame 15770 of r2r spent 129 of 133 ms allocating (35 first-sight BLASes). `vk_buffer_pool` (vertex-cache allocator, generalized) now backs AS storage (256 align), scratch (device scratch align) and host-mapped geometry (64 align). Cap dropped |
 | Shared transient scratch | Still open: scratch is pooled but kept per BLAS for life. One scratch per frame slot sized to the largest build would cut the scratch total |

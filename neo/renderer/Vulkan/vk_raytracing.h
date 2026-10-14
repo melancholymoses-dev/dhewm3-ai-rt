@@ -122,8 +122,10 @@ struct vkBLAS_t
     // Used by the TLAS loop to write per-surface VkMaterialEntry values.
     // idMaterial* pointers are stable for the lifetime of a map session.
     const idMaterial **geomShaders; // [geomCount], may hold NULLs for missing shaders
-    // Build/update scratch range in the BLAS scratch pool (freed at destroy time).
+    // Build/update scratch range in the BLAS scratch pool. Empty for static BLASes, which
+    // release it after the build (they never refit).
     vkPoolAlloc_t scratch;
+    bool allowUpdate; // built with ALLOW_UPDATE; MODE_UPDATE refits are only legal when set
     bool isValid;
     // Set when the model BLAS cache owns this entry.
     // VK_RT_DestroyBLAS is a no-op for cached BLASes; only the cache clear
@@ -815,7 +817,9 @@ void VK_RT_DestroyBLAS(vkBLAS_t *blas);
 // prevBlas: if non-NULL and geometry is compatible, performs an in-place update
 // (reuses geometry buffers and uses MODE_UPDATE) instead of a full rebuild.
 // Returns prevBlas on successful update, or a new vkBLAS_t on full rebuild.
-vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkBLAS_t *prevBlas = NULL);
+// allowUpdate=false (static models) builds without ALLOW_UPDATE and frees scratch after the build.
+vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkBLAS_t *prevBlas = NULL,
+                                  bool allowUpdate = true);
 
 // Drain deferred BLAS deletions (call after fence wait when frame slot is safe)
 void VK_RT_DrainBLASGarbage(void);
