@@ -78,6 +78,11 @@ time. This is why optimization parks every CPU stage and Stage S runs first.
 | `20261010_cleanup_polish.md` | **All deletion and polish, no optimization.** Phase order 1a/1b/1c, the per-phase rules (cvar+UBO+shader+menu deleted together), presets and resets, comment sweep |
 | `20261013_glass_geometric_normal.md` | Glass crease fix; the stock-map glass-patch census |
 | `20261013_reflection_roughness.md` | Roughness/GGX reflections, the denoiser, and the GI handoff ceiling |
+
+
+**Reference Documents**
+| Doc | Owns|
+|----|-----|
 | `../Dhewm3-AI-RT-Settings.md` | Cvar inventory and tiers; the source for arc 8 phase 1 (trim) and phase 5 (presets) |
 | `../rt_engine_rules.md` | **Not a plan.** Taste contract, correctness rules, settled conclusions, debugging posture. Check new RT code against it |
 | `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine. Load it before chasing any AMD-vs-NVIDIA or device-lost bug. |

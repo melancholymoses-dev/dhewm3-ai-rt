@@ -105,6 +105,12 @@ worth checking for:
   informational; GPU-AV needs certain features itself and turns them on for
   you. Not a bug in this codebase.
 
+- **`VK_LAYER_LUNARG_crash_diagnostic`** — ships with the Vulkan SDK,
+  purpose-built for device-lost/hang diagnosis (reports GPU progress at the
+  point of failure). Not yet tried on this project; worth reaching for if
+  GPU-AV output doesn't explain a device-lost.
+
+
 ## This project's own diagnostics (no external tools needed)
 
 - **`r_vkLogRT <n>`** — verbose per-frame prints from most RT dispatch
@@ -134,15 +140,113 @@ worth checking for:
   `VK: recent stage breadcrumbs` — the last stage name before the failed
   submit narrows the fault window to whatever ran between that split point
   and the previous one.
-- **`r_vkRTProfile 1`** (`r_vkRTProfileLogEvery` controls print frequency) —
-  periodic GPU phase timings. Useful for telling a real correctness bug
-  apart from a GPU timeout/TDR: if per-phase cost climbs steadily over a
-  play session right up to a device-lost, suspect a growing workload (more
-  admitted lights/entities) tripping the driver's hang detection, not memory
-  corruption.
+- **`r_vkRTProfile`** — GPU/CPU phase timings; see Profiling below. For a
+  device-lost, per-phase cost climbing steadily up to the failure points at a
+  growing workload tripping the driver's hang detection, not corruption.
 - **`r_vkRTReflDataDiag 2`** — validates material-table addresses/texture
   slots/base indices CPU-side and logs bad slots. Cheap, no layers needed.
-- **`VK_LAYER_LUNARG_crash_diagnostic`** — ships with the Vulkan SDK,
-  purpose-built for device-lost/hang diagnosis (reports GPU progress at the
-  point of failure). Not yet tried on this project; worth reaching for if
-  GPU-AV output doesn't explain a device-lost.
+
+## Profiling
+
+Owned by `neo/renderer/Vulkan/vk_profile.cpp`; `vk_backend.cpp` keeps the
+timestamp query pools and records raw numbers into it. Design and findings
+live in `plans/20261010_vk_core_audit.md` stage A0.
+
+### The capture recipe
+
+There is one. Don't hand-tune the groups filter — everything is always
+collected and always written to the CSV.
+
+```
+com_fixedTic 1
+r_vkRTProfileCSV mchq.csv
+r_vkRTProfileWindow 60
+r_vkRTProfile 1
+```
+
+Then, before reading any individual frame:
+
+```
+python tools/vk_profile_report.py mchq.csv
+python tools/vk_profile_report.py after.csv --baseline before.csv
+```
+
+`com_fixedTic 1` unlocks the framerate. Doom 3 caps at **62.5 fps**, not 60:
+`USERCMD_MSEC` is integer `1000/60 = 16` and `Session.cpp:3121` blocks one
+render per tick. Capped, any GPU cost under ~16 ms is hidden and the pacing
+wait splits between `Sys_WaitForEvent` and the upload fence. Uncapped,
+`frame.backend` ≈ GPU time. Game time then advances 16 ms per *frame*
+regardless of real time, so it is a measurement mode, not a play mode.
+
+Two rules that come out of how the numbers are built:
+
+- `frame.backend` includes blocking waits, so it is not CPU work. Subtract the
+  `wait.*` tags before calling anything CPU-bound — CONDITIONS does this.
+- A wait that tracks the **previous** frame's GPU cost is back-pressure, not a
+  cost of whatever the wait is named after. Shortening it moves the stall
+  elsewhere; it does not recover time while GPU-bound.
+
+### Cvars
+
+| Cvar | Default | What it does |
+|---|---|---|
+| `r_vkRTProfile` | 0 | 0=off, 1=window summaries, 2=one row per frame. Mode 2 floods the console; use a CSV instead |
+| `r_vkRTProfileWindow` | 30 | Frames per summary window (1-256) |
+| `r_vkRTProfileCSV` | "" | One CSV row per frame, ~130 columns, buffered and flushed at window close. **Also suppresses the console block** in favour of one heartbeat line per window |
+| `r_vkRTProfileStats` | 29 | Console summary columns: 1=mean 2=p5 4=p50 8=p95 16=max |
+| `r_vkRTProfileGroups` | 63 | **Console filter only**, never a collection switch: 1=phases 2=frame 4=upload 8=waits 16=memory 32=midframe. Every group is always collected and always in the CSV |
+| `r_vkRTProfileSpikeMs` | 0 | Dump every metric for frames over this backend ms. Ignored while a CSV is open |
+| `r_vkDebugLabels` | 0 | `VK_EXT_debug_utils` pass labels and object names, covering all 26 phases. Works at `r_vkRTProfile 0`, so an Nsight/RGP/RenderDoc capture is readable without the profiler running |
+
+### What gets logged
+
+| Group | Metrics | Answers |
+|---|---|---|
+| phases | `gpu.<phase>` and `cpu.<phase>` for 26 phases, plus `gpu.total`/`cpu.total` (RT) and `gpu.raster`/`cpu.raster` | Which pass costs what. `gpu.*` is the only group that needs query pools |
+| frame | `fenceWait`, `acquire`, `drain`, `upload`, `submit`, `present`, `profilePrint`, `backend` (fence→present wall clock), `other` (backend minus every span), `game`, `frontend`, `findView`, `addLights`, `addModels` | Where backend time goes. A large `other` means a span is missing, not that the engine has mystery time |
+| upload | `flushes`, `KB` staged, `staticBlocks`, `ring.draws`, ring vert/idx KB, data+UBO high-water, `overflows`, `vc.allocs/allocKB/allocMs/frees`, `blas.updates/rebuilds/tris/dynInst` | Per-frame copy volume; BLAS refit vs rebuild |
+| waits | ms and count per tag across 40 wrapped blocking-wait sites in 20 files (`uploadFlush`, `image`, `accelStruct`, `ao`, `gi`, `giProbe`, `vol`, `bloom`, `gbuffer`, `temporal`, `reflect`, `tonemap`, `upscale`, `swapchain`, `readback`, `serialize`, `shutdown`, `other`) | Which wait blocks, and whether any run per frame |
+| memory | `mem.rssMB` (`Sys_GetProcessMemoryBytes`), `mem.virtMemMB` (vertex-cache CPU copies), `mem.vramUsedMB`/`BudgetMB` via `VK_EXT_memory_budget` | Leaks across map loads; VRAM pressure |
+| midframe | lazy image loads + ms, first-use pipeline builds + ms | Hitches from streaming or pipeline creation |
+| lights | `lights.view`, `lights.shadow` (casters), `lights.batched`, `lights.serial` | Whether a capture met the shadow-dispatch condition at all |
+
+Startup also prints `VK PROFILE LIMITS` (max memory allocations, max samplers).
+
+### The CSV
+
+`r_vkRTProfileCSV <name>.csv` writes through `fileSystem`, so the file lands in
+the writable game dir — on Windows `Documents/My Games/dhewm3/base/<name>.csv`.
+Format:
+
+- One header row, then **one row per rendered frame**: `frame` followed by every
+  registered metric, `%.4f`, in a fixed order. ~130 columns.
+- The header comes from the full metric table, so **columns are stable across
+  captures** even when a group is off — two CSVs are always diffable.
+- Buffered in memory and flushed at window close and at shutdown. Setting
+  `r_vkRTProfile 0` or clearing the cvar closes the file cleanly.
+- Row count should equal frames run. A short file means it was still buffered;
+  flush with `r_vkRTProfile 0`.
+
+### Reading a capture: `tools/vk_profile_report.py`
+
+Stdlib-only; takes a CSV and prints six sections:
+
+| Section | What it answers |
+|---|---|
+| CONDITIONS | What the capture contains and what it therefore cannot speak to, plus GPU-bound vs CPU-bound from the backend with blocking waits removed |
+| SHADOW DISPATCH | Pass cost bucketed by `lights.serial`. Serial shadow dispatch is billed to `gpu.Interactions`, so no single p50 can separate them |
+| CONSISTENCY | `frame.backend` against the sum of its spans. A gap means a span is missing |
+| SWINGS | Passes whose p95 is over 0.5 ms above their p50, labelled with the cause where it is testable: the measurement, frame pacing, or scene content |
+| TIMES / COUNTERS | Percentile tables, alphabetical, split so times can be scanned without bytes and counts in the way |
+| WORST | The N worst frames by a chosen column, all non-zero fields |
+
+| Flag | Default | Use |
+|---|---|---|
+| `--baseline <csv>` | — | Per-column p50 diff instead of the full report. What a fix stage quotes for before/after |
+| `--top N` | 0 | Worst-frame dumps; 0 skips them |
+| `--sort-by <col>` | `frame.backend` | Column the worst-frame dump ranks on |
+| `--floor <ms>` | 0.02 | Hide small fields in worst-frame dumps |
+| `--group <substr>` | — | Filter the tables, e.g. `gpu.` or `wait.` |
+| `--min-pct N` | 5 | Diff mode: hide moves under this percent |
+
+
