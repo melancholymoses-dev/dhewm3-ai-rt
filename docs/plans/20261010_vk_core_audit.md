@@ -20,7 +20,7 @@ finding on a chugging section. A stage whose counter reads near zero is dropped,
 
 | # | Action | Risk | Why it is here |
 |---|---|---|---|
-| 1 | **Stage S** — shadow dispatch, S2-S7 | med | Only double-digit GPU item. 74% of mchq frames overflow the 7-light batch; each overflowed light costs ~0.37 ms billed to `Interactions` |
+| 1 | ~~**Stage S**~~ — **closed 2026-10-13** | — | S2 cull landed; S3 batching landed for no gain; remaining cost is ray count, handled by `r_rtShadowSamples` default 2. S4 moved to cleanup 1b |
 | 2 | **BLAS rebuild burst** — cap and spread rebuilds per frame | med | 36 rebuilds in one frame = 49 ms backend. Overlaps B2's flag work |
 | 3 | **B0 remaining A/Bs** — R2 serialize-frames, R7 memory type | none | Two GPU-side questions, both cheap, both gate later stages |
 | 4 | **B2** — static BLAS flags, shared scratch | med | Read an RRA capture first |
@@ -78,26 +78,34 @@ summed over all dispatches (batched and serial), reported as `shadow.Mpix` next 
 so S2's in-shader cull moves GPU time, not this counter; S5 is the step that lowers it.
 
 Steps are read live off that counter plus the frame time in the corner. No per-step CSV
-capture: if `shadow.pixels` collapses and `Interactions + Shadows` does not, break overhead
+capture: if `shadow.Mpix` collapses and `Interactions + Shadows` does not, break overhead
 is the remaining cost and S3/S4 holds the win — which is the ray-vs-break split that an
 up-front measurement step would have produced, arriving as a side effect.
 
-`S0 Measure` and `S1 Label` are dropped. `VK_RT_SHADOW_BATCH_MAX` is a `#define`
-(`vk_raytracing.h:177`), so a sweep costs a rebuild per point and S3 reorganises the budget
-anyway; S1 labels a span that S4 deletes. Until S4 lands, read `Interactions + Shadows` as
-one number. Numbering stays S2-S7 — the labels are cited elsewhere.
+`S0 Measure` is dropped. `S1 Label` was restored after S3: `gpu.Interactions.Shadows` times
+in-loop trace + blur, nested in Interactions. Numbering stays S2-S7 — the labels are cited
+elsewhere.
+
+**Measured split (mchq3, 9070 XT, 4 samples, 2026-10-13).** Per serial light, in-loop
+trace + blur is ~90% of the climb and shading ~10% (18 serial: 5.23 vs 0.65 ms). Blur off
+(mchq3b) saves only 0.3-0.7 ms. The cost is in-volume rays, so S4/S7 (break overhead) have
+nothing to win and S5 mostly trims pixels S2 already makes cheap.
 
 | Step | Change | Check |
 |---|---|---|
 | S2 Pixel cull — **done 2026-10-13** (9070 XT mchq p50: Int 4.55→3.10, Shadows 2.07→1.30, 0.50→0.33 ms/serial light; debug 11 clean) | `shadow_ray.rgen` tests world pos against `lightDef->frustum[6]` (padded 4 units) right after reconstruction; outside stores 1.0 and returns. `r_rtShadowVolumeCull` (default 1) replaces `r_rtShadowDistanceCutoff` | `r_rtShadowDebugMode 11`: every shadowed light should vanish, any light left is a wrong cull; shadows identical with `r_rtShadowVolumeCull 0/1`; `gpu.Interactions + gpu.Shadows` drops at equal `shadow.Mpix` |
+| S2b Back-face skip — **reverted 2026-10-13, no gain** | Skipped the trace where `dot(n, L) < -0.1`. In-loop shadow time unchanged at matched `lights.serial`: back-facing rays hit their own surface within a few units and were already cheap | — |
 | S3 Looped batches — **done 2026-10-13, no gain** (W=7 until S4). mchq3: breaks p50 1 / max 4, visuals clean, but 0.34 ms/serial light unchanged — break overhead was not the cost. `gpu.Interactions.Shadows` span added to split in-loop trace from shading | Assign shadow lights to batch `k = n / W`. Batch 0 traces where it does today. On reaching the first light of batch k>0: end pass, clear used layers, trace + blur the batch, resume. Lights are additive, so order within the loop is free | `shadow.breaks` = ceil(casters/7)−1 (21 lights = 2, was 14); `r_vkLogRT 1` prints one `SHADOW BATCH` line per batch; Interactions flat against `lights.serial` |
 | S4 Delete serial path | Remove `VK_RT_DispatchShadowRaysForLight`, `VK_RT_SHADOW_SERIAL_LAYER`, `r_rtShadowBatch`, overflow log; the scratch layer becomes a batch layer (W=8) | `grep -r ShadowBatch\b` clean; settings doc row removed |
 | S5 Rect shrink | Dispatch rect = light scissor ∩ screen rect of (lit surface bounds ∩ light bounds). Blur and interaction scissor use the same rect | `shadow.Mpix` well below the post-S2 figure in the corner |
 | S6 Stencil clear | Skip the per-light stencil clear when RT shadows are on, after confirming the pass starts with stencil 128 | Screenshots identical; stencil-shadow fallback (`r_rtShadows 0`) unchanged |
 | S7 Layer count (optional) | W=16 only if S3 shows break overhead still matters. First share one mask + blur-temp pair across frame slots (mask has no history), which makes 16 layers VRAM-neutral | VRAM logged before/after; no flicker with 2 frames in flight |
 
-Order: S2, S3+S4, S5, S6, S7. One commit each; the counter's before/after goes in the commit
-message, not a report.
+**Stage S closed 2026-10-13.** The remaining cost is lit, front-facing rays reaching the
+light, so it scales with `r_rtShadowSamples`. Visual A/B: 2 samples matches 4, 1 matches
+stencil. Default changed 1 → 2 (the 4 seen in captures was a user setting). S4 is cleanup-only
+and moves to the cleanup plan; S5, S6, S7 are dropped. If shadow cost matters again, the next
+lever is adaptive sampling: 1 ray, refine to N only where a 3x3 neighbourhood disagrees.
 
 ### S2 notes
 

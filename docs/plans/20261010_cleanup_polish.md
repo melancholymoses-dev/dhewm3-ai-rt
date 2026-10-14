@@ -57,10 +57,11 @@ shipped.
 | `r_fsrDebug`, `r_vkRTReflDataDiag`, `r_vkRTInterLogN`, `r_vkRTLogCaptureReset`, `r_vkRTDebugLightTextures`, `r_vkRTLightLogN`, `r_vkRTDebugLightFilter`, `r_vkRTDebugSurface`, `r_vkRTDebugMaxLogsPerFrame` | `r_vkRTProfile`, `r_vkLogRT`, `r_vkLogSubmitInfo` |
 | `r_vkShadowFlipOps`, `r_vkShadowFullScissor`, `r_vkLightFullScissor`, `r_vkSplitSubmitMask/Verbose`, `r_vkLowPerturbationMode`, `r_vkLogShadowBranch/Geom`, `r_vkVcCheck` | `r_vkSerializeFrames` (cheap stability bisect) |
 
-### 1b — after optimization Stage S closes
+### 1b — after optimization Stage S closes (closed 2026-10-13)
 
 | Remove | Because |
 |---|---|
+| Serial shadow path: `VK_RT_DispatchShadowRaysForLight`, `VK_RT_SHADOW_SERIAL_LAYER`, `r_rtShadowBatch`; batch width 7 → 8 | Stage S4, moved here. Only `r_rtShadowBatch 0` uses it since S3. Check: `grep ShadowRaysForLight` clean, `shadow.breaks` = ceil(casters/8)−1 |
 | `r_rtShadowStablePattern`, `r_rtShadowVolumeCull`, `r_rtShadowMinSamples`, `r_rtShadowTemporalJitterMinSamples` | Diagnostic switches whose defaults are the shipped behaviour — but they are the knobs Stage S tunes against. S2 replaced `r_rtShadowDistanceCutoff` with `r_rtShadowVolumeCull` (A/B switch). `r_rtShadowDebugMode` stays |
 | `r_vkLogBufferGarbage` | Optimization E3 says use it before removing it |
 

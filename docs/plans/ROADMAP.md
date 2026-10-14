@@ -1,6 +1,6 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-10-13 · **Next action: optimization Stage S** (`20261010_vk_core_audit.md` Part 3)
+**Status reviewed:** 2026-10-13 · **Next action: 8c Stage 4 + in-game validation** (Stage S closed 2026-10-13)
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
 designs live in the linked docs. Prior cycle: `completed/202610a_ROADMAP.md`.
@@ -15,7 +15,7 @@ they are things to check code against, not things to schedule.
 
 | # | Item | Doc | Status |
 |---|---|---|---|
-| 8 | **Optimization** — Vulkan core (F1-F13/A0-A5), RT uploads (R1-R10/B0-B4), and **Stage S** RT shadow dispatch (was cleanup Phase 6a) | `20261010_vk_core_audit.md` | **Current.** Owns all perf work. Stage S runs first: 74% of frames overflow the 7-light batch, up to 10 ms. 9 findings dispatched by measurement; A2/A4/A5 parked — all three scenarios are GPU-bound by 4-7x |
+| 8 | **Optimization** — Vulkan core (F1-F13/A0-A5), RT uploads (R1-R10/B0-B4), and **Stage S** RT shadow dispatch (was cleanup Phase 6a) | `20261010_vk_core_audit.md` | **Current.** Owns all perf work. Stage S closed 2026-10-13 (S2 cull −32% Interactions; S3 batching no gain; cost is ray count, default `r_rtShadowSamples` 1 → 2). 9 findings dispatched by measurement; A2/A4/A5 parked — all three scenarios are GPU-bound by 4-7x |
 | 8b | **Glass reflection normals** — Mars City windows focus and invert; the panes are piecewise-flat Bezier patches whose 26.57° crease `GenerateNormals` smooths into a cylindrical mirror. Stages 1-3 | `20261013_glass_geometric_normal.md` | Unstarted. Small and bounded. Cause confirmed by hand calculation + a census of all 27 stock maps (718 glass patches: 6 `CREASE`, 21 real `ARC`, 153 `MIXED`) |
 | 8c | **Volumetrics in reflections** — the flashlight beam is absent from glass; march the reflected segment through `froxelScatter`. Stages 1-4 | `20261013_reflection_volumetrics.md` | Stages 1-3 landed 2026-10-13, **not yet validated in-game**. Stage 4 is the debug overlay + menu entries |
 | 8d | **Surface roughness in reflections** — extend past glass to opaque surfaces with a GGX lobe. Blocked on a reflection denoiser (the only RT pass without one) and a roughness ceiling to avoid double-counting probe GI. Stages 1-5 | `20261013_reflection_roughness.md` | Unstarted. Budget 20-40% frame time for the all-surface mode; **gates cleanup Phase 2b/2c**, which would otherwise reclaim the G-buffer alpha that F0 needs |
@@ -28,11 +28,11 @@ this says *when*.
 
 | # | Step | From | Gate to clear |
 |---|---|---|---|
-| 1 | **Stage S** — shadow dispatch S2-S7 | 8 | Only double-digit measured GPU item (up to 10 ms, 74% of frames). S0/S1 dropped 2026-10-13: steps read live off a `shadow.pixels` counter instead of a capture each |
+| 1 | ~~Stage S~~ — **done 2026-10-13** | 8 | S2 + S3 landed; S2b reverted; S5-S7 dropped. See the audit doc's Stage S close-out |
 | 2 | 8c Stage 4 + validate 1-3 in-game | 8c | Already landed, unvalidated. Finish before stacking more reflection work |
 | 3 | 8b glass crease fix | 8b | Small, bounded; adds refl debug modes 9/10 |
 | 4 | Cleanup 1a + 5a | 8e | Unblocked; land whenever convenient |
-| 5 | Cleanup 1b | 8e | Needs Stage S closed |
+| 5 | Cleanup 1b (+ Stage S4 serial-path deletion) | 8e | Unblocked — Stage S closed |
 | 6 | Optimization B0/B2/B1, BLAS rebuild burst | 8 | GPU-side; everything CPU-side is parked |
 | 7 | 8d roughness Stages 1-5 | 8d | Denoiser first. Decide go/no-go on the 20-40% frame cost before Stage 4 |
 | 8 | Cleanup 1c + Phase 2 | 8e | Needs the reflection arc resolved — **2c is irreversible** |

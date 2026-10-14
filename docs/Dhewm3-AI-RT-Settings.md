@@ -54,7 +54,7 @@ Needs fixing if they stay in the menu: `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIR
 
 | Name | Group | Purpose | Default | Tier | Rec. |
 |---|---|---|---|---|---|
-| `r_rtShadowSamples` | Shadows | Shadow rays per pixel | 1 | A (preset) | 1 / 2 / 4 by preset |
+| `r_rtShadowSamples` | Shadows | Shadow rays per pixel | 2 | A (preset) | 1 / 2 / 4 by preset |
 | `r_rtShadowBlur` | Shadows | Shadow blur radius/passes | 6 | A | = |
 | `r_rtShadowBlurEnable` | Shadows | Blur on/off | 1 | A | = |
 | `r_rtShadowBlurDepthAware` | Shadows | Depth-aware blur | 1 | D | = |
@@ -67,6 +67,7 @@ Needs fixing if they stay in the menu: `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIR
 | `r_rtShadowSoftRadiusMax` | Shadows | Max soft-shadow source radius | 6.0 | D | = |
 | `r_rtShadowMinSamples` | Shadows | Floor on shadow rays/pixel | 1 | D | = |
 | `r_rtShadowVolumeCull` | Shadows | Skip shadow rays outside the light volume (debug mode 11 shows the cull) | 1 | D | = |
+| `r_rtShadowBackfaceCull` | Shadows | Skip shadow rays on surfaces facing away from the light (debug mode 12 shows the skip) | 1 | D | = |
 | `r_rtShadowTemporalJitter` | Shadows | Vary sample pattern per frame | 1 | D | = |
 | `r_rtShadowTemporalJitterMinSamples` | Shadows | Min samples before temporal jitter applies | 4 | D | = |
 | `r_rtShadowStablePattern` | Shadows | Stable per-light jitter seed | 0 | D | = |
@@ -317,7 +318,7 @@ The numbers below are starting points, not measured.
 
 | Cvar | Low | Medium | High (= current) | Ultra |
 |---|---|---|---|---|
-| `r_rtShadowSamples` | 1 | 1 | 1 | 2 |
+| `r_rtShadowSamples` | 1 | 2 | 2 | 4 |
 | `r_rtAOSamples` | 2 | 4 | 4 | 8 |
 | `r_rtGISamples` | 1 | 2 | 4 | 6 |
 | `r_rtGIProbeRays` | 64 | 128 | 128 | 192 |
