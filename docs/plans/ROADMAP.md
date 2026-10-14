@@ -54,18 +54,26 @@ per-phase detail: `20261010_vk_core_audit.md` and `notes/20261010_vk_core_baseli
 | | CPU | GPU | Notes |
 |---|---|---|---|
 | Fast | Ryzen 9 5950X | RTX 4070 Ti Super | Default for all captures unless stated |
-| Slow | Ryzen 5 2600X | AMD 9070 XT | Weaker RT card — this is what motivated the upscaling work. ~60 fps after the particle-upload CPU fix |
+| Slow | Ryzen 5 2600 | AMD 9070 XT | Weaker RT card — this is what motivated the upscaling work. 49-64 fps p50 at 1440p (2026-10-13) |
 
-**Current baseline** — 2026-10-12, `com_fixedTic 1` (uncapped), 1440p, no upscaling, three
-scenarios, p50 GPU ms from CSV:
+**Current baseline** — Fast 2026-10-12, Slow 2026-10-13. `com_fixedTic 1` (uncapped), 1440p,
+no upscaling, three scenarios (mchq / r2r / commfire), p50 GPU ms from CSV:
 
-| | GI | Refl | Vol | AO | Shadows | TLAS | RT total | raster |
+| Machine | GI | Refl | Vol | AO | Shadows | TLAS | RT total | raster |
 |---|---|---|---|---|---|---|---|---|
-| mchq / r2r / commfire | 0.00 | 0.00-1.11 | 0.50-1.13 | 1.69-2.51 | 1.33-4.07 | 0.17 | **5.07-9.68** | 3.47-6.56 |
+| Fast | 0.00 | 0.00-1.11 | 0.50-1.13 | 1.69-2.51 | 1.33-4.07 | 0.17 | **5.07-9.68** | 3.47-6.56 |
+| Slow | 0.00 | 0.00-0.62 | 0.76-1.19 | 2.02-2.66 | 2.07-4.78 | 0.24-0.55 | **7.23-11.41** | 5.43-8.25 |
 
-Total GPU p50: mchq 9.17 ms (109 fps), r2r 11.63 (86), commfire 14.94 (67). **All three are
-GPU-bound by 4-7x** — CPU recording is 1.4-1.7 ms, so no CPU-side work can show up as frame
-time. This is why optimization parks every CPU stage and Stage S runs first.
+| Total GPU p50 (fps) | mchq | r2r | commfire |
+|---|---|---|---|
+| Fast | 9.17 (109) | 11.63 (86) | 14.94 (67) |
+| Slow | 14.31 (64) | 15.12 (61) | 19.66 (49) |
+
+**Both machines are GPU-bound in every scenario** — 4-7x on Fast (CPU recording 1.4-1.7 ms),
+4-5x on Slow (CPU busy 3.6-4.0 ms). No CPU-side work can show up as frame time, so
+optimization parks every CPU stage and Stage S runs first. Serial shadow dispatch reproduces
+on Slow (0.50-0.59 ms per serial light). commfire's p95 is ~34 ms (29 fps) on both machines,
+driven by gpu.Interactions.
 
 `com_fixedTic 1` matters: Doom 3 otherwise caps at 62.5 fps (`USERCMD_MSEC` is integer
 `1000/60`), which hid all GPU cost beyond ~16 ms in every capture before this one.

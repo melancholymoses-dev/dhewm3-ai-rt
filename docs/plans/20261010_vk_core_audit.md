@@ -342,7 +342,7 @@ Super. mchq 2978 frames, r2r 4456, commfire 1327. p50 GPU ms:
 | mchq / r2r / commfire | 0.00 | 0.00-1.11 | 0.50-1.13 | 1.69-2.51 | 1.33-4.07 | 0.17 | **5.07-9.68** | 3.47-6.56 |
 
 Total GPU p50: mchq 9.17 ms (109 fps), r2r 11.63 (86), commfire 14.94 (67).
-Slow machine (2600X / 9070 XT), 2026-10-10 MC 1440p: ~8.0 ms RT.
+Slow machine (2600 / 9070 XT), 2026-10-10 MC 1440p: ~8.0 ms RT.
 
 Three traps in reading any of this:
 
