@@ -96,45 +96,16 @@ nothing to win and S5 mostly trims pixels S2 already makes cheap.
 | S2 Pixel cull — **done 2026-10-13** (9070 XT mchq p50: Int 4.55→3.10, Shadows 2.07→1.30, 0.50→0.33 ms/serial light; debug 11 clean) | `shadow_ray.rgen` tests world pos against `lightDef->frustum[6]` (padded 4 units) right after reconstruction; outside stores 1.0 and returns. `r_rtShadowVolumeCull` (default 1) replaces `r_rtShadowDistanceCutoff` | `r_rtShadowDebugMode 11`: every shadowed light should vanish, any light left is a wrong cull; shadows identical with `r_rtShadowVolumeCull 0/1`; `gpu.Interactions + gpu.Shadows` drops at equal `shadow.Mpix` |
 | S2b Back-face skip — **reverted 2026-10-13, no gain** | Skipped the trace where `dot(n, L) < -0.1`. In-loop shadow time unchanged at matched `lights.serial`: back-facing rays hit their own surface within a few units and were already cheap | — |
 | S3 Looped batches — **done 2026-10-13, no gain** (W=7 until S4). mchq3: breaks p50 1 / max 4, visuals clean, but 0.34 ms/serial light unchanged — break overhead was not the cost. `gpu.Interactions.Shadows` span added to split in-loop trace from shading | Assign shadow lights to batch `k = n / W`. Batch 0 traces where it does today. On reaching the first light of batch k>0: end pass, clear used layers, trace + blur the batch, resume. Lights are additive, so order within the loop is free | `shadow.breaks` = ceil(casters/7)−1 (21 lights = 2, was 14); `r_vkLogRT 1` prints one `SHADOW BATCH` line per batch; Interactions flat against `lights.serial` |
-| S4 Delete serial path | Remove `VK_RT_DispatchShadowRaysForLight`, `VK_RT_SHADOW_SERIAL_LAYER`, `r_rtShadowBatch`, overflow log; the scratch layer becomes a batch layer (W=8) | `grep -r ShadowBatch\b` clean; settings doc row removed |
+| S4 Delete serial path — **done 2026-10-13** (W=8) | Remove `VK_RT_DispatchShadowRaysForLight`, `VK_RT_SHADOW_SERIAL_LAYER`, `r_rtShadowBatch`, overflow log; the scratch layer becomes a batch layer (W=8) | `grep -r ShadowBatch\b` clean; settings doc row removed |
 | S5 Rect shrink | Dispatch rect = light scissor ∩ screen rect of (lit surface bounds ∩ light bounds). Blur and interaction scissor use the same rect | `shadow.Mpix` well below the post-S2 figure in the corner |
 | S6 Stencil clear | Skip the per-light stencil clear when RT shadows are on, after confirming the pass starts with stencil 128 | Screenshots identical; stencil-shadow fallback (`r_rtShadows 0`) unchanged |
 | S7 Layer count (optional) | W=16 only if S3 shows break overhead still matters. First share one mask + blur-temp pair across frame slots (mask has no history), which makes 16 layers VRAM-neutral | VRAM logged before/after; no flicker with 2 frames in flight |
 
 **Stage S closed 2026-10-13.** The remaining cost is lit, front-facing rays reaching the
 light, so it scales with `r_rtShadowSamples`. Visual A/B: 2 samples matches 4, 1 matches
-stencil. Default changed 1 → 2 (the 4 seen in captures was a user setting). S4 is cleanup-only
-and moves to the cleanup plan; S5, S6, S7 are dropped. If shadow cost matters again, the next
+stencil. Default changed 1 → 2 (the 4 seen in captures was a user setting). S4 landed as
+cleanup; S5, S6, S7 are dropped. If shadow cost matters again, the next
 lever is adaptive sampling: 1 ray, refine to N only where a 3x3 neighbourhood disagrees.
-
-### S2 notes
-
-`idRenderLightLocal::frustum[6]` (`tr_local.h:232`) is the light volume for both kinds —
-global space, positive side out, built unconditionally by `R_SetLightFrustum`
-(`tr_lightrun.cpp:438`) from the same `lightProject` the interaction pass attenuates with.
-Point lights get the box's planes, projected lights the frustum's, so one 6-plane test covers
-both and agrees with the lighting by construction.
-
-Do not reuse the UBO's `lightAxisRight/Up/Fwd`: those are penumbra extents, scaled by
-`r_rtShadowSoftRadiusScale` and clamped to Min/Max (`vk_shadows.cpp:1036-1047`). S2 needs 6
-new `vec4` planes in `ShadowParams`.
-
-Cull before the bias block, not before the trace — a culled pixel currently also pays 9
-`texelFetch` calls and 5 `invViewProj` multiplies (`shadow_ray.rgen:248-260`).
-
-S2 is the only step that touches the camera-inside-light-volume case; no rect shrink helps
-when the rect genuinely is the screen.
-
-| Risk | Guard |
-|---|---|
-| S2 plane test disagrees with the falloff texture at the edges, giving a lit rim | Pad the planes a few units; compare against the tinted debug view |
-| S3 layer reused before the previous batch's draws executed | Barrier fragment-read → RT-write at each batch start; sync validation |
-| S5 rect too tight when surface bounds are stale (animated models) | Use the same bounds the frontend culled with; fall back to light scissor when unsure |
-| S7 shared mask across slots | Only after sync validation is clean on S3 |
-
-Exit: `shadow.Mpix` under ~8 on the mchq route, `Interactions` flat against
-`lights.serial` instead of climbing, and GPU p50 under 9.17 ms. One confirming capture at the
-end of the stage, not per step.
 
 ---
 
@@ -332,7 +303,7 @@ Guards, not fixes. Cheap; no number demands them.
 | B2 | Shared scratch | Builds in one command buffer overlap on scratch; updates need scratch too | Offsets within the shared buffer per build, or dynamic BLASes keep their own |
 | B3 | Cached material entries | Stale after a skin/material swap or a bindless generation bump | Invalidate on generation; `vid_restart` and level-change screenshots |
 | B4 | BAR memory type | ~256 MB heap without Resizable BAR; data rings alone are 128 MB; any CPU read-back from write-combined memory | Fallback on allocation failure; small buffers first, rings last |
-| S | — | See Stage S's own risk table |
+| S | — | Closed 2026-10-13 |
 
 Parked stages (A2, A4, A5) keep their guards in git history; re-derive them if a stage reopens.
 

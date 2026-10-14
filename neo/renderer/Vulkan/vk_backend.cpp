@@ -4122,10 +4122,9 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
                            (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height, nLocal,
                            nGlobal, nTrans, nGlobalShadow, nLocalShadow, VK_RTShadowsEnabled() ? 1 : 0, lightId,
                            VK_RT_PlayerSuppressesLight(lightId) ? 1 : 0, s_shadowMaskLayer,
-                           (s_shadowMaskLayer < 0)                            ? " (noShadows)"
-                           : (s_shadowMaskLayer == VK_RT_SHADOW_SERIAL_LAYER) ? " (serial)"
-                           : (VK_RT_GetShadowBatchForLight(vLight) > 0)       ? " (later batch)"
-                                                                              : " (batched)");
+                           (s_shadowMaskLayer < 0)                      ? " (noShadows)"
+                           : (VK_RT_GetShadowBatchForLight(vLight) > 0) ? " (later batch)"
+                                                                        : " (batched)");
         }
 
         if (r_vkLogShadowBranch.GetInteger() >= 2)
@@ -4235,26 +4234,9 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_SHADOWS_LOOP, cpuLoopShadowStart);
             shadowBatchDone = shadowBatch;
             VK_Prof_Add(VKPROF_SHADOW_BREAKS, 1.0);
-            VK_ResumeHdrRenderPass(cmd, &lightScissor);
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
-            s_interactionPipeTag = "opaque";
-        }
-        // r_rtShadowBatch 0: one break per light on the serial scratch layer.
-        // The shadow mask (VK_IMAGE_LAYOUT_GENERAL) is written by the dispatch and read
-        // by the interaction fragment shader without any layout transition.
-        else if (VK_RTShadowsEnabled() && s_shadowMaskLayer == VK_RT_SHADOW_SERIAL_LAYER)
-        {
-            vkCmdEndRenderPass(cmd);
-            VK_Prof_Add(VKPROF_SHADOW_BREAKS, 1.0);
-            const uint64_t cpuLoopShadowStart = VK_RTProfile_CPUStamp();
-            const int profLoopShadow = VK_RTProfile_PhaseBegin(cmd, VK_RTPROF_PHASE_SHADOWS_LOOP);
-            VK_RT_DispatchShadowRaysForLight(cmd, backEnd.viewDef, vLight, lightScissor, s_shadowMaskLayer);
-            VK_RTProfile_PhaseEnd(cmd, profLoopShadow);
-            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_SHADOWS_LOOP, cpuLoopShadowStart);
             // This light's scissor, not the view's — the interaction draws that follow are
-            // confined to it.
+            // confined to it.  The mask stays GENERAL; no layout transition is needed.
             VK_ResumeHdrRenderPass(cmd, &lightScissor);
-            // Rebind the interaction pipeline after reopening the render pass.
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
             s_interactionPipeTag = "opaque";
         }

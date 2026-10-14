@@ -61,7 +61,7 @@ shipped.
 
 | Remove | Because |
 |---|---|
-| Serial shadow path: `VK_RT_DispatchShadowRaysForLight`, `VK_RT_SHADOW_SERIAL_LAYER`, `r_rtShadowBatch`; batch width 7 → 8 | Stage S4, moved here. Only `r_rtShadowBatch 0` uses it since S3. Check: `grep ShadowRaysForLight` clean, `shadow.breaks` = ceil(casters/8)−1 |
+| ~~Serial shadow path: `VK_RT_DispatchShadowRaysForLight`, `VK_RT_SHADOW_SERIAL_LAYER`, `r_rtShadowBatch`; batch width 7 → 8~~ **done 2026-10-13** | Stage S4. Check: `grep ShadowRaysForLight` clean, `shadow.breaks` = ceil(casters/8)−1, `lights.batched` pins at 8 |
 | `r_rtShadowStablePattern`, `r_rtShadowVolumeCull`, `r_rtShadowMinSamples`, `r_rtShadowTemporalJitterMinSamples` | Diagnostic switches whose defaults are the shipped behaviour — but they are the knobs Stage S tunes against. S2 replaced `r_rtShadowDistanceCutoff` with `r_rtShadowVolumeCull` (A/B switch). `r_rtShadowDebugMode` stays |
 | `r_vkLogBufferGarbage` | Optimization E3 says use it before removing it |
 

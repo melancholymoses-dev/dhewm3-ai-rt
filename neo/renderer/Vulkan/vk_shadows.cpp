@@ -151,11 +151,6 @@ static idCVar r_rtShadowBlurMinRect(
     "r_rtShadowBlurMinRect", "64", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
     "skip the RT shadow blur when the light's dispatch rect is smaller than this on both sides "
     "(P1a perf: tiny lights don't visibly benefit; 0 = always blur)");
-static idCVar r_rtShadowBatch(
-    "r_rtShadowBatch", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-    "P1b: batch all shadow-casting lights into one shadow mask array pass (1) so the interaction "
-    "loop runs with zero render-pass breaks, or dispatch per-light inside the loop like before (0). "
-    "Set 0 to A/B the perf win or to isolate a shadow regression.");
 static idCVar r_vkRTDebugLights("r_vkRTDebugLights", "0", CVAR_RENDERER | CVAR_INTEGER,
                                 "log Vulkan RT shadow dispatch state (0=off, 1=filtered lights)");
 static idCVar r_vkRTLightLogN("r_vkRTLightLogN", "0", CVAR_RENDERER | CVAR_INTEGER,
@@ -706,7 +701,7 @@ static VkImageView VK_RT_ShadowClassView(void)
     return VK_RT_ShadowClassValid() ? vkRT.gbufAlbedo[vk.currentFrame].view : VK_RT_GetNullGbufNormalView();
 }
 
-// The serial path dispatches from inside the interaction loop, where gbufAlbedo is a
+// In-loop batches (S3) dispatch from inside the interaction loop, where gbufAlbedo is a
 // colour attachment of the (just-ended) HDR render pass rather than in the RT block's
 // SHADER_READ_ONLY window.  Round-trip it exactly like depth, so the descriptor's
 // declared layout is honest on both paths.
@@ -901,8 +896,8 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
             // Binding 4: gbufAlbedo — alpha is the surface class.  texelFetch only in the
             // rgen, so filter/wrap state is irrelevant; reuse the depth sampler.  The null
             // 1x1 image stands in when there is no G-buffer, with playerClassValid 0 so the
-            // rgen never reads it.  Layout matches both dispatch paths: the batch runs
-            // inside vk_backend's SHADER_READ_ONLY window, the serial path round-trips it
+            // rgen never reads it.  Layout matches both dispatch paths: batch 0 runs
+            // inside vk_backend's SHADER_READ_ONLY window, in-loop batches round-trip it
             // alongside depth.
             VkDescriptorImageInfo gbufImgInfo = {};
             gbufImgInfo.sampler = vkRT.depthSampler;
@@ -1386,61 +1381,6 @@ static void VK_RT_ShadowMemBarrier(VkCommandBuffer cmd, VkPipelineStageFlags src
 }
 
 // ---------------------------------------------------------------------------
-// VK_RT_DispatchShadowRaysForLight — serial (one light, one render-pass break)
-//
-// Kept for r_rtShadowBatch 0 and for lights that overflow the batch budget.
-// Depth is round-tripped here so the caller can reopen its render pass immediately.
-// ---------------------------------------------------------------------------
-
-void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight,
-                                      VkRect2D dispatchRect, int layer)
-{
-    if (!vkRT.isInitialized || !vkRT.tlas[vk.currentFrame].isValid)
-        return;
-    if (!r_useRayTracing.GetBool() || !r_rtShadows.GetBool())
-        return;
-    if (!vLight || !vLight->lightDef)
-        return;
-    // layer < 0 means "this light casts no shadows" — the interaction pass clears
-    // u_UseShadowMask for it, so there is nothing to trace and nothing to clear.
-    if (layer < 0)
-        return;
-    if (vkRT.shadowMask[vk.currentFrame].image == VK_NULL_HANDLE)
-        return;
-
-    VK_RT_ShadowDepthToRead(cmd);
-    VK_RT_ShadowClassToRead(cmd);
-    VK_RT_RecordShadowTrace(cmd, viewDef, vLight, dispatchRect, layer);
-
-    const int blurRadius = VK_RT_ShadowBlurWanted(dispatchRect) ? VK_RT_ShadowBlurRadius() : 0;
-    const bool didBlur = (blurRadius > 0);
-    if (didBlur)
-    {
-        VK_RT_ShadowMemBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                               VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipeline);
-        VK_RT_EnsureBlurDescriptors(vk.currentFrame);
-        VK_RT_RecordShadowBlurPass(cmd, dispatchRect, layer, 0, blurRadius);
-        VK_RT_ShadowMemBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                               VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
-        VK_RT_RecordShadowBlurPass(cmd, dispatchRect, layer, 1, blurRadius);
-    }
-
-    // RT is always in the source scope (it wrote the mask and read depth); compute
-    // joins it only when the blur actually ran.
-    const VkPipelineStageFlags srcStage =
-        VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | (didBlur ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
-
-    // --- Barrier: shadow mask → fragment shader read ---
-    VK_RT_ShadowMemBarrier(cmd, srcStage, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-                           VK_ACCESS_SHADER_READ_BIT);
-
-    // --- Depth + gbufAlbedo barriers: restore attachment layouts for the render pass resume ---
-    VK_RT_ShadowDepthRestore(cmd, srcStage);
-    VK_RT_ShadowClassRestore(cmd, srcStage);
-}
-
-// ---------------------------------------------------------------------------
 // P1b — batched shadow masks
 //
 // One layer per shadow-casting light lets every light be traced and blurred in a
@@ -1452,8 +1392,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
 // Batch 0 traces before the render pass opens; each later batch is traced from
 // inside the interaction loop when its first light comes up, at the cost of one
 // render-pass break for the whole batch instead of one per light.  Lights are
-// additive, so drawing them batch by batch changes nothing visible.  Only
-// r_rtShadowBatch 0 still uses the per-light serial layer.
+// additive, so drawing them batch by batch changes nothing visible.
 // ---------------------------------------------------------------------------
 
 struct vkShadowBatchEntry_t
@@ -1461,20 +1400,19 @@ struct vkShadowBatchEntry_t
     const viewLight_t *vLight;
     VkRect2D rect;
     int layer; // >= 0: mask layer; -1: light casts no shadows
-    int batch; // >= 0: batch that traces it; -1: no shadows or serial path
+    int batch; // >= 0: batch that traces it; -1: no shadows
 };
 
 // Doom 3 view light counts are small; this only has to cover one view's lights.
 #define VK_RT_SHADOW_BATCH_TRACK 64
-// Lights per batch (W).  S4 frees the serial scratch layer and raises this to 8.
-#define VK_RT_SHADOW_BATCH_WIDTH VK_RT_SHADOW_BATCH_MAX
+// Lights per batch (W): every mask layer.
+#define VK_RT_SHADOW_BATCH_WIDTH VK_RT_SHADOW_LAYERS
 
 static vkShadowBatchEntry_t s_shadowBatch[VK_RT_SHADOW_BATCH_TRACK];
 static int s_shadowBatchCount = 0;       // entries recorded (including no-shadow lights)
 static int s_shadowBatchQueued = 0;      // lights given a batch slot, all batches
-static bool s_shadowBatchSerial = false; // any light landed on the serial layer
-static int s_shadowBatchCasters = 0;     // shadow-casting lights this view, batched or not
-static int s_shadowBatchSerialCount = 0; // of those, how many miss batch 0 (later batch or serial layer)
+static int s_shadowBatchCasters = 0;     // shadow-casting lights this view
+static int s_shadowBatchSerialCount = 0; // of those, how many miss batch 0
 
 // Layers batch `b` occupies: W for full batches, the remainder for the last.
 static int VK_RT_ShadowBatchLayersIn(int b)
@@ -1482,16 +1420,10 @@ static int VK_RT_ShadowBatchLayersIn(int b)
     return idMath::ClampInt(0, VK_RT_SHADOW_BATCH_WIDTH, s_shadowBatchQueued - b * VK_RT_SHADOW_BATCH_WIDTH);
 }
 
-bool VK_RT_ShadowBatchEnabled(void)
-{
-    return r_rtShadowBatch.GetBool();
-}
-
 void VK_RT_ShadowBatchBegin(void)
 {
     s_shadowBatchCount = 0;
     s_shadowBatchQueued = 0;
-    s_shadowBatchSerial = false;
     s_shadowBatchCasters = 0;
     s_shadowBatchSerialCount = 0;
 }
@@ -1546,21 +1478,11 @@ int VK_RT_ShadowBatchAddLight(const viewLight_t *vLight, VkRect2D dispatchRect)
     if (castsShadows)
     {
         s_shadowBatchCasters++;
-        if (VK_RT_ShadowBatchEnabled())
-        {
-            const int slot = s_shadowBatchQueued++;
-            batch = slot / VK_RT_SHADOW_BATCH_WIDTH;
-            layer = slot % VK_RT_SHADOW_BATCH_WIDTH;
-            if (batch > 0)
-                s_shadowBatchSerialCount++;
-        }
-        else
-        {
-            // Batching disabled: every light reuses the serial scratch layer.
-            layer = VK_RT_SHADOW_SERIAL_LAYER;
-            s_shadowBatchSerial = true;
+        const int slot = s_shadowBatchQueued++;
+        batch = slot / VK_RT_SHADOW_BATCH_WIDTH;
+        layer = slot % VK_RT_SHADOW_BATCH_WIDTH;
+        if (batch > 0)
             s_shadowBatchSerialCount++;
-        }
     }
 
     vkShadowBatchEntry_t &e = s_shadowBatch[s_shadowBatchCount++];
@@ -1591,25 +1513,18 @@ int VK_RT_GetShadowLayerForLight(const viewLight_t *vLight)
     return -1;
 }
 
-// Clear layers [0, layerCount) and optionally the serial scratch layer to 1.0.
-// The leading barrier also orders a reused layer after the previous batch's
-// interaction reads and blur, which is what makes S3's in-loop reuse safe.
-static void VK_RT_ClearShadowLayers(VkCommandBuffer cmd, int layerCount, bool serialLayer)
+// Clear layers [0, layerCount) to 1.0.  The leading barrier also orders a reused
+// layer after the previous batch's interaction reads and blur, which is what makes
+// S3's in-loop reuse safe.
+static void VK_RT_ClearShadowLayers(VkCommandBuffer cmd, int layerCount)
 {
     vkShadowMask_t &sm = vkRT.shadowMask[vk.currentFrame];
-    if (sm.image == VK_NULL_HANDLE)
+    if (sm.image == VK_NULL_HANDLE || layerCount <= 0)
         return;
 
     // Only the layers actually in use this view need clearing — a full 8-layer clear
     // is pure bandwidth when the room has two lights.
-    VkImageSubresourceRange ranges[2];
-    uint32_t rangeCount = 0;
-    if (layerCount > 0)
-        ranges[rangeCount++] = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, (uint32_t)layerCount};
-    if (serialLayer)
-        ranges[rangeCount++] = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, VK_RT_SHADOW_SERIAL_LAYER, 1};
-    if (rangeCount == 0)
-        return;
+    const VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, (uint32_t)layerCount};
 
     // Barrier: earlier RT/compute writes and fragment reads → transfer clear
     VK_RT_ShadowMemBarrier(cmd,
@@ -1623,7 +1538,7 @@ static void VK_RT_ClearShadowLayers(VkCommandBuffer cmd, int layerCount, bool se
     clearVal.float32[1] = 1.0f;
     clearVal.float32[2] = 1.0f;
     clearVal.float32[3] = 1.0f;
-    vkCmdClearColorImage(cmd, sm.image, VK_IMAGE_LAYOUT_GENERAL, &clearVal, rangeCount, ranges);
+    vkCmdClearColorImage(cmd, sm.image, VK_IMAGE_LAYOUT_GENERAL, &clearVal, 1, &range);
 
     // Barrier: transfer clear → RT shader writes
     VK_RT_ShadowMemBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
@@ -1633,12 +1548,12 @@ static void VK_RT_ClearShadowLayers(VkCommandBuffer cmd, int layerCount, bool se
 void VK_RT_ShadowBatchClearLayers(VkCommandBuffer cmd)
 {
     // Batch 0 only; later batches clear their own layers when they dispatch.
-    VK_RT_ClearShadowLayers(cmd, VK_RT_ShadowBatchLayersIn(0), s_shadowBatchSerial);
+    VK_RT_ClearShadowLayers(cmd, VK_RT_ShadowBatchLayersIn(0));
 }
 
 static bool VK_RT_ShadowBatchUsable(void)
 {
-    return VK_RT_ShadowBatchEnabled() && vkRT.isInitialized && vkRT.tlas[vk.currentFrame].isValid &&
+    return vkRT.isInitialized && vkRT.tlas[vk.currentFrame].isValid &&
            r_useRayTracing.GetBool() && r_rtShadows.GetBool() &&
            vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE;
 }
@@ -1650,7 +1565,7 @@ static bool VK_RT_ShadowBatchUsable(void)
 static void VK_RT_RecordShadowBatch(VkCommandBuffer cmd, const viewDef_t *viewDef, int batch, bool inLoop)
 {
     if (inLoop)
-        VK_RT_ClearShadowLayers(cmd, VK_RT_ShadowBatchLayersIn(batch), false);
+        VK_RT_ClearShadowLayers(cmd, VK_RT_ShadowBatchLayersIn(batch));
 
     // --- Trace every light in the batch: no barriers between them, they write disjoint layers ---
     VK_RT_ShadowDepthToRead(cmd);
@@ -1662,7 +1577,7 @@ static void VK_RT_RecordShadowBatch(VkCommandBuffer cmd, const viewDef_t *viewDe
     {
         const vkShadowBatchEntry_t &e = s_shadowBatch[i];
         if (e.batch != batch)
-            continue; // no shadows, another batch, or the serial path
+            continue; // no shadows, or another batch
         VK_RT_RecordShadowTrace(cmd, viewDef, e.vLight, e.rect, e.layer);
         traced++;
     }

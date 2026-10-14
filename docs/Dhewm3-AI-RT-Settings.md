@@ -71,7 +71,6 @@ Needs fixing if they stay in the menu: `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIR
 | `r_rtShadowTemporalJitter` | Shadows | Vary sample pattern per frame | 1 | D | = |
 | `r_rtShadowTemporalJitterMinSamples` | Shadows | Min samples before temporal jitter applies | 4 | D | = |
 | `r_rtShadowStablePattern` | Shadows | Stable per-light jitter seed | 0 | D | = |
-| `r_rtShadowBatch` | Shadows | Batch all shadow lights into one mask-array pass | 1 | D | = |
 | `r_rtShadowMaskProjected` | Shadows | Apply RT shadow mask to projected lights | 1 | D | = |
 | `r_rtFlashlightBias` | Shadows | Ray bias for the flashlight | 17 | A | = |
 | `r_rtShadowDebugMode` | Shadows | Visualize shadow-pass internals | 0 | D | = |

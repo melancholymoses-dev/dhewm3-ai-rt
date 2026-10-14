@@ -343,16 +343,24 @@ def report_shadow_dispatch(cap: Capture) -> None:
         v = sorted(cap.col(name)[i] for i in idxs)
         return percentile(v, 0.5)
 
+    # Sums and differences are formed per frame before the median: the median of a
+    # difference is not the difference of the medians.
+    def med_combo(idxs: List[int], a: str, b: str, sign: float) -> float:
+        ca, cb = cap.col(a), cap.col(b)
+        return percentile(sorted(ca[i] + sign * cb[i] for i in idxs), 0.5)
+
     shown = [s for s in sorted(buckets) if len(buckets[s]) >= 20]
     for s in shown:
         idxs = buckets[s]
         it, sh = med(idxs, "gpu.Interactions"), med(idxs, "gpu.Shadows")
+        both = med_combo(idxs, "gpu.Interactions", "gpu.Shadows", 1.0)
         extra = ""
         if loop:
             ls = med(idxs, "gpu.Interactions.Shadows")
-            extra = " %9.2f %9.2f" % (ls, it - ls)
+            shade = med_combo(idxs, "gpu.Interactions", "gpu.Interactions.Shadows", -1.0)
+            extra = " %9.2f %9.2f" % (ls, shade)
         print("  %8d %6d %9.2f %9.2f %9.2f %9.0f%s"
-              % (s, len(idxs), it, sh, it + sh, med(idxs, "lights.shadow"), extra))
+              % (s, len(idxs), it, sh, both, med(idxs, "lights.shadow"), extra))
 
     if len(shown) >= 2:
         lo, hi = buckets[shown[0]], buckets[shown[-1]]
