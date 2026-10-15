@@ -14,20 +14,30 @@ every CPU-side stage is parked and only GPU work is scheduled. Gate: no fix stag
 until a counter shows its finding on a chugging section. A stage whose counter reads near
 zero is dropped, not deferred — that rule retired 15 of the original findings.
 
-## Next levers
+## Current lead — interaction overdraw (stage L)
 
-Ranked by measured size, cheapest first within a row.
+**This is the one being worked.** Everything below it is parked behind it. Measured
+2026-10-14; the finding and its two candidate fixes are in [Stage L](#stage-l--interaction-overdraw).
+
+`gpu.Interactions` is the largest single item in the frame (4.55-7.45 ms p50, 21 ms p95 on
+commfire) and it is **per-fragment, not per-draw**. 16.6-34.3 M fragment invocations per
+frame, each re-fetching the same surface's bump/diffuse/specular because Doom 3 rasterizes
+a surface once per light touching it.
+
+## Other levers
+
+Parked behind the lead. Ranked by measured size, cheapest first within a row.
 
 | # | Lever | Cost to try | Why here |
 |---|---|---|---|
-| 1 | **X7** — geometry submitted 3+ times (depth prepass, G-buffer, interactions × lights, shader passes) | capture only | `gpu.Interactions` is the biggest single item (4.55-7.45 ms p50) and owns commfire's 20 ms p95 on both machines |
-| 2 | **AO ray budget** — `r_rtAOSamples` 4 → 2 leaning on the existing EMA; `aoRadius` 64 down; then half-res + bilateral upsample; then first-ray-closest-hit with the rest `TerminateOnFirstHit` | (a)(b) cvar sweep, (c)(d) code | 2.0-2.7 ms p50. `ao_ray.rgen:166` traces `gl_RayFlagsNoneEXT` — closest hit, because the `(t/R)²` falloff needs the nearest occluder, so each AO ray costs more than a shadow ray, 4x per pixel at full res |
-| 3 | **ProbeResolve / FroxelFill sweep** — probe counts and spacing, `r_rtVolFroxel` grid dims | cvar sweep | ProbeResolve 1.0-1.4 ms is a full-res screen pass; FroxelFill 0.5-1.2 ms is the largest resolution-independent item in the engine. ProbeTrace (0.05) and ProbeBlend (0.09) are free — the GI cost is not rays |
-| 4 | **E3 leak** — VRAM and RSS growth across `vid_restart` | 1 restart | RSS 210 → 614 MB after one restart (R7 side note). See E3 below |
-| 5 | **X6** — non-opaque BLAS geometry, any-hit cost per ray | counter + tint | Compounds with row 2: every AO ray can invoke `ao_ray.rahit` |
-| 6 | **X8** — load time, ~10 s per map | read one log | Three of the four phase timers already print. See X8 below |
-| 7 | **B2 remainder, B3, B4, A3** | med | Memory, allocation-limit safety and hitches, not frame time. Read an RRA capture before B2 |
-| 8 | **E2, E4** | none | Cheap guards; no number demands them |
+| ~~X7~~ | ~~geometry submitted 3+ times~~ | — | **Closed 2026-10-14, negative.** Amplification is 2.7-4.0x against 15-42 lights in view, so per-(light, surface) culling is working and there is no resubmission to reclaim. Led to Stage L |
+| 1 | **AO ray budget** — `r_rtAOSamples` 4 → 2 leaning on the existing EMA; `aoRadius` 64 down; then half-res + bilateral upsample; then first-ray-closest-hit with the rest `TerminateOnFirstHit` | (a)(b) cvar sweep, (c)(d) code | 2.0-2.7 ms p50. `ao_ray.rgen:166` traces `gl_RayFlagsNoneEXT` — closest hit, because the `(t/R)²` falloff needs the nearest occluder, so each AO ray costs more than a shadow ray, 4x per pixel at full res |
+| 2 | **ProbeResolve / FroxelFill sweep** — probe counts and spacing, `r_rtVolFroxel` grid dims | cvar sweep | ProbeResolve 1.0-1.4 ms is a full-res screen pass; FroxelFill 0.5-1.2 ms is the largest resolution-independent item in the engine. ProbeTrace (0.05) and ProbeBlend (0.09) are free — the GI cost is not rays |
+| 3 | **E3 leak** — VRAM and RSS growth across `vid_restart` | 1 restart | RSS 210 → 614 MB after one restart (R7 side note). See E3 below |
+| 4 | **X6** — non-opaque BLAS geometry, any-hit cost per ray | counter + tint | Compounds with row 1: every AO ray can invoke `ao_ray.rahit` |
+| 5 | **X8** — load time, ~10 s per map | read one log | Three of the four phase timers already print. See X8 below |
+| 6 | **B2 remainder, B3, B4, A3** | med | Memory, allocation-limit safety and hitches, not frame time. Read an RRA capture before B2 |
+| 7 | **E2, E4** | none | Cheap guards; no number demands them |
 
 Shadow dispatch (Stage S) is closed: the remaining cost is lit, front-facing rays reaching
 the light, so it scales with `r_rtShadowSamples` (now 2). Next lever there, if it matters
@@ -36,6 +46,49 @@ again, is adaptive sampling — 1 ray, refine where a 3x3 neighbourhood disagree
 Exit for the arc: `Interactions` flat against `lights.serial`; mchq GPU p50 under 9.17 ms;
 live RT allocations under 100 after a level load; VRAM flat across three `vid_restart`s.
 One change per commit with before/after numbers in `notes/`.
+
+---
+
+## Stage L — interaction overdraw
+
+Measured from RenderDoc quad-overdraw exports, 1440p, five viewpoints across three maps.
+Method: `r_vkDebugLabels 1`, capture, save the overlay as **EXR** (8-bit formats cannot
+carry the counts), then `tools/rdoc_overdraw.py <exr>`. Draw counts from
+`tools/rdoc_draw_census.py` in RenderDoc's Python Shell. RenderDoc forces `RT=no`, which
+does not change this measurement — the stencil-volume skip keys on the cvars, so the raster
+geometry is identical to an RT frame.
+
+| capture | mean depth | interaction mean | M frags | ≥12: pixels% | ≥12: frags% | max |
+|---|---|---|---|---|---|---|
+| r2r1 | 4.50 | 3.50 | 16.6 | 6.1% | 23.8% | 46 |
+| r2r2 | 5.44 | 4.44 | 20.0 | 7.2% | 22.6% | 64 |
+| mchq | 6.13 | 5.13 | 22.6 | 10.0% | 20.8% | 24 |
+| commfire1 | 6.32 | 5.32 | 23.3 | 9.7% | 23.9% | 36 |
+| **commfire2** | **9.31** | **8.31** | **34.3** | **26.0%** | **38.2%** | 33 |
+
+Depth is whole-render-pass (the pass spans prepass → shader passes), so subtract ~1 for the
+prepass. commfire2 is the `gpu.Interactions` 21 ms p95 and is a different shape: 84% of the
+screen at ≥6 layers, not a tail. Viewpoint variance inside one map (commfire1 vs 2) exceeds
+variance between maps — quote a viewpoint, never a map.
+
+Ruled out, both with evidence:
+
+| Hypothesis | Verdict |
+|---|---|
+| Geometry resubmitted more than the light count explains (X7) | **No.** 2.7-4.0x amplification against 15-42 lights in view. Draw counts: depth 77-197, interactions 279-745, shaderpasses 34-486. 486 shaderpass draws cost 0.128 ms against 745 interaction draws at 21 ms — submission count is not the variable |
+| Grates / perforated materials | **No.** The prepass alpha-clips `MC_PERFORATED` through `depthClipPipeline` (`vk_backend.cpp:2768`, `:2792`), so they do get early-Z; and the deep regions in the masks are large flat floors and ceiling beams, not mesh patterns |
+
+What is left is the plain reading: a large flat surface sits inside many light volumes and is
+shaded once per light. Culling is geometric — a light either touches a surface or does not —
+with no test for how much it contributes.
+
+| Step | Change | Gate |
+|---|---|---|
+| L1 | Per-light debug labels in the interaction loop (`vk_backend.cpp:4073`, `lightIdx` + `vLight->lightShader` are in hand; needs an RAII scope guard, the loop has `continue` paths) | A capture attributes coverage to a named light; identifies which lights stack on the commfire2 floor |
+| L2 | Contribution-based interaction culling: drop (light, surface) pairs whose falloff-weighted contribution falls below a threshold, behind a quality cvar | Mean depth and `gpu.Interactions` both fall; screenshots unchanged at the default threshold |
+| L3 | Clustered/tiled forward — material fetched once, lights looped in-shader | Only if L2 is insufficient. The 4.4-8.3x interaction mean is the size of the material-fetch win |
+
+Re-measure with the same five viewpoints after any step; the EXR exports are in `tools/output/`.
 
 ---
 
@@ -120,7 +173,7 @@ worse; texture screenshots identical; the FSR mip-bias change still rebuilds cor
 
 | # | Where | Question | How | Verdict |
 |---|---|---|---|---|
-| X7 | Depth prepass, G-buffer, interactions × lights, shader passes | Geometry submitted 3+ times | RenderDoc/Nsight with the `r_vkDebugLabels` names | **Do first.** Points at the biggest item |
+| ~~X7~~ | Depth prepass, G-buffer, interactions × lights, shader passes | Geometry submitted 3+ times | RenderDoc + `tools/rdoc_draw_census.py` | **Closed 2026-10-14, negative** — 2.7-4.0x amplification is near the floor for per-light forward. Became Stage L |
 | X6 | Non-opaque BLAS geometry (perforated, translucent) | Any-hit cost per ray | count + debug tint; RRA | **Do.** Real GPU lever |
 | X8 | Level load | Where the ~10 s goes | read one load log (below) | **Do.** Nearly free |
 | X2 | `tr_trisurf.cpp:2085-2111` | How often tangents are re-derived because the TLAS is active | count and ms at the site | Fold into X8 — almost certainly first-sight only |
@@ -159,6 +212,12 @@ load. Add timers only where that log leaves a gap.
 Method, raw numbers and the per-capture write-ups: `notes/20261010_vk_core_baseline.txt`.
 Capture recipe, profiler cvars and `vk_profile_report.py`: `../vulkan_debugging.md`.
 Run `python tools/vk_profile_report.py <csv>` before reading individual frames.
+
+| Tool | Answers |
+|---|---|
+| `tools/vk_profile_report.py <csv>` | Per-pass GPU/CPU ms over a capture. First pass on any timing question |
+| `tools/rdoc_draw_census.py` (RenderDoc Python Shell) | Draws, indices and dispatches per debug-label region. Submission-side questions |
+| `tools/rdoc_overdraw.py <exr>` | Overdraw histogram, the pixels%-vs-fragments% split, heat map and tail mask. Per-fragment questions |
 
 **Current baseline** — Fast 2026-10-12, Slow 2026-10-13. `com_fixedTic 1`, 1440p, no
 upscaling. Fast = 5950X / 4070 Ti Super, Slow = 2600 / 9070 XT. p50 GPU ms:

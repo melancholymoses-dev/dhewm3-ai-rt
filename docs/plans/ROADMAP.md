@@ -1,6 +1,8 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-10-13 · **Next action: 8c Stage 4 + in-game validation** (Stage S closed 2026-10-13)
+**Status reviewed:** 2026-10-14 · **Active lead: optimization Stage L — interaction overdraw**
+(`20261010_vk_core_audit.md` → "Current lead"). Still open from the previous review and not
+blocked by it: 8c Stage 4 + in-game validation.
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
 designs live in the linked docs. Prior cycle: `completed/202610a_ROADMAP.md`.
@@ -15,7 +17,7 @@ they are things to check code against, not things to schedule.
 
 | # | Item | Doc | Status |
 |---|---|---|---|
-| 8 | **Optimization** — Vulkan core (F/A), RT uploads (R/B), not-yet-audited (X). Stage S shadow dispatch closed | `20261010_vk_core_audit.md`, closed half in `completed/20261010_vk_core_audit_closed.md` | **Current.** Owns all perf work. Three wins landed (S2 cull, `r_rtShadowSamples` 4 → 2, BLAS pooling); 15 findings dispatched or parked by measurement, since all scenarios are GPU-bound by 4-7x. Next levers: X7 geometry resubmission, AO ray budget, probe/froxel sweep, the `vid_restart` leak |
+| 8 | **Optimization** — Vulkan core (F/A), RT uploads (R/B), not-yet-audited (X), **Stage L interaction overdraw**. Stage S shadow dispatch closed | `20261010_vk_core_audit.md`, closed half in `completed/20261010_vk_core_audit_closed.md` | **Current, and Stage L is the active lead** — see that doc's "Current lead" section for where we are in the tree. Three wins landed (S2 cull, `r_rtShadowSamples` 4 → 2, BLAS pooling); 17 findings dispatched or parked by measurement |
 | 8b | **Glass reflection normals** — Mars City windows focus and invert; the panes are piecewise-flat Bezier patches whose 26.57° crease `GenerateNormals` smooths into a cylindrical mirror. Stages 1-3 | `20261013_glass_geometric_normal.md` | Unstarted. Small and bounded. Cause confirmed by hand calculation + a census of all 27 stock maps (718 glass patches: 6 `CREASE`, 21 real `ARC`, 153 `MIXED`) |
 | 8c | **Volumetrics in reflections** — the flashlight beam is absent from glass; march the reflected segment through `froxelScatter`. Stages 1-4 | `20261013_reflection_volumetrics.md` | Stages 1-3 landed 2026-10-13, **not yet validated in-game**. Stage 4 is the debug overlay + menu entries |
 | 8d | **Surface roughness in reflections** — extend past glass to opaque surfaces with a GGX lobe. Blocked on a reflection denoiser (the only RT pass without one) and a roughness ceiling to avoid double-counting probe GI. Stages 1-5 | `20261013_reflection_roughness.md` | Unstarted. Budget 20-40% frame time for the all-surface mode; **gates cleanup Phase 2b/2c**, which would otherwise reclaim the G-buffer alpha that F0 needs |
@@ -33,7 +35,7 @@ this says *when*.
 | 3 | 8b glass crease fix | 8b | Small, bounded; adds refl debug modes 9/10 |
 | 4 | Cleanup 1a + 5a | 8e | Unblocked; land whenever convenient |
 | 5 | Cleanup 1b (+ Stage S4 serial-path deletion) | 8e | Unblocked — Stage S closed |
-| 6 | Optimization next levers: X7 capture, AO ray budget, probe/froxel sweep, E3 `vid_restart` leak | 8 | GPU-side only; everything CPU-side is parked. Levers 1-4 of the audit doc; the cvar sweeps need no code |
+| 6 | **Optimization Stage L — interaction overdraw.** L1 per-light labels, L2 contribution culling, L3 clustered forward | 8 | **The active lead.** `gpu.Interactions` is per-fragment, not per-draw: 16.6-34.3 M fragment invocations/frame, interaction depth 3.5-8.3. X7 and the grate hypothesis both measured and closed negative. Other levers (AO budget, probe/froxel sweep, E3 leak) park behind it |
 | 7 | 8d roughness Stages 1-5 | 8d | Denoiser first. Decide go/no-go on the 20-40% frame cost before Stage 4 |
 | 8 | Cleanup 1c + Phase 2 | 8e | Needs the reflection arc resolved — **2c is irreversible** |
 | 9 | Cleanup 3, 4 | 8e | Biggest surgery, 0.001 ms gain. Last of the code changes |
