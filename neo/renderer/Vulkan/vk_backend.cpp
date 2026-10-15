@@ -6299,11 +6299,21 @@ void VKimp_PostInit(int width, int height)
         VK_RT_InitGI();
         common->Printf("VK: initializing RT volumetrics\n");
         VK_RT_InitVolumetrics();
-        // Also allocates/resizes the G-buffer normal/F0 images (Stage 3.5) and
-        // wires them into the HDR framebuffers — see vk_tonemap.cpp.
-        common->Printf("VK: initializing RT tonemapping\n");
-        VK_RT_InitTonemap();
-        VK_RT_InitUpscale();
+    }
+
+    // Tonemap and upscale are not RT work despite the VK_RT_ prefix: hdrScene is the main
+    // render target for every Vulkan draw and the tonemap blit is the only thing that
+    // reaches the swapchain, so a device without RT extensions needs both or it renders
+    // into a NULL framebuffer. This matches the swapchain-recreate path, which already
+    // resizes these two unguarded and guards only bloom (vk_swapchain.cpp).
+    // Tonemap also allocates/resizes the G-buffer normal/F0 images (Stage 3.5) and wires
+    // them into the HDR framebuffers — see vk_tonemap.cpp.
+    common->Printf("VK: initializing tonemapping\n");
+    VK_RT_InitTonemap();
+    VK_RT_InitUpscale();
+
+    if (vk.rayTracingSupported)
+    {
         // After the upscale: bloom's images are sized off the swapchain extent, but its
         // dispatches read vk.renderExtent, which VK_RT_InitUpscale establishes.
         VK_RT_InitBloom();
@@ -6325,6 +6335,11 @@ void VKimp_PreShutdown(void)
     VK_Prof_DeviceWaitIdle(VKPROF_WAIT_SHUTDOWN);
     VK_RTProfile_Shutdown();
     VK_Prof_Shutdown(); // flushes any buffered CSV rows
+    // Mirror of the init split above, and it must run BEFORE VK_RT_Shutdown: that function
+    // ends with a memset of vkRT, which would null these handles out from under us and leak
+    // the objects. Both are no-ops if the handles were never created.
+    VK_RT_ShutdownUpscale();
+    VK_RT_ShutdownTonemap();
     if (vk.rayTracingSupported && vkRT.isInitialized)
     {
         VK_RT_Shutdown();

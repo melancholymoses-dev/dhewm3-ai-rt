@@ -149,8 +149,10 @@ worth checking for:
 ## Profiling
 
 Owned by `neo/renderer/Vulkan/vk_profile.cpp`; `vk_backend.cpp` keeps the
-timestamp query pools and records raw numbers into it. Design and findings
-live in `plans/20261010_vk_core_audit.md` stage A0.
+timestamp query pools and records raw numbers into it. **This section is the
+profiler reference.** What the numbers mean for the engine lives in
+`plans/20261010_vk_core_audit.md`; the raw captures in
+`plans/notes/20261010_vk_core_baseline.txt`.
 
 ### The capture recipe
 
@@ -278,7 +280,7 @@ Startup prints the two device limits as `VK PROFILE LIMITS`, and the
 | Windows Performance Recorder / Analyzer | any | ETW: CPU samples, disk I/O, page faults, time blocked in driver calls. Load time, and hitches the sampler shows as "waiting" |
 | Nsight Graphics, GPU Trace | NVIDIA | Per-pass GPU time including RT dispatches. Needs `r_vkDebugLabels` to be readable |
 | RGP, RMV, RRA | AMD | RGP per-event GPU time; RMV VRAM by allocation; RRA BLAS/TLAS quality and opaque flags |
-| RenderDoc | any | Raster draw inspection, overdraw, state per draw |
+| RenderDoc | any | Raster draw inspection, overdraw, state per draw. **Captures are raster-only** — it does not support the RT extensions, so it hides them from the app and the engine comes up `(RT=no)`, with no TLAS and no RT passes. Fine for geometry-resubmission work, useless for RT. Use Nsight or RGP for anything RT |
 | Validation via vkconfig: sync + best-practices | any | Best-practices flags small allocations and redundant work; sync covers GPU-GPU hazards. **Sync cannot see CPU writes to mapped memory.** Object-lifetime reporting fires at `vkDestroyDevice`, which a full `vid_restart` reaches — that is the leak check |
 
 Tracy only if log spans stop scaling; it adds a dependency.

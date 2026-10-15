@@ -85,6 +85,10 @@ ranges freed only via the BLAS garbage clock, per-build offsets within the share
 | Incremental bindless writes | Track dirty slot indices and write only those. Full rebuild only on level-load reset |
 | No image loads from here | Slots never lazy-load; unresolved images take the white fallback |
 
+Counters this stage needs, neither of which exists yet: `MakeMaterialEntry` calls and
+texture-slot compares per frame (R5); bindless rebuilds per minute, slots written per
+rebuild, and the trigger — new slot vs `VK_Image_ChangeCounter` bump (R6).
+
 Check: TLAS gather CPU ms drops; descriptor writes per rebuild drop from thousands to the
 changed slots; reflection textures correct after a level change and after `vid_restart`.
 Risk: cached entries go stale after a skin/material swap or a bindless generation bump —

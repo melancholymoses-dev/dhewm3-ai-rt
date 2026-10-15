@@ -111,6 +111,13 @@ git history.
 | B1 | Zero-copy BLAS: static `indexCache` on the GPU, per-slot dynamic geometry ring, persistent maps | Gate was "R2 or R7 confirmed"; neither was. Reopen for memory or correctness only |
 | A1 | Static index buffers (F1) | Only ever B1's prerequisite |
 
+The two findings B1 existed to fix, kept because both are still true in the code:
+
+| # | Finding | Where |
+|---|---|---|
+| R1 | The BLAS "zero-copy" path needs both `ambientCache` and `indexCache` on the GPU, and `indexCache` never exists under Vulkan (F1), so **every** BLAS geometry takes the fallback: its own host-visible vertex buffer (full 60-byte `idDrawVert`) and index buffer, 2 `vkAllocateMemory` + `memcpy` per geometry. Dynamic entities pay `vkMapMemory` + full copy + unmap per geometry per frame. Confirmed by `VK RT BLAS SRC gpuPct=0.0`. R7 disproved the read-cost half of the claim; the allocation half was fixed by pooling, so what is left is PCIe traffic that does not measure | `vk_accelstruct.cpp:520-523`, `1005-1037`, `876-882` |
+| R2 | Dynamic-entity BLAS geometry buffers and the AS itself are single-copy, updated in place every frame, with 2 frames in flight. Frame N's `memcpy` and `MODE_UPDATE` can overlap N-1's trace; TLAS and material tables are per slot, the BLAS is not, and no frame-start barrier orders N-1's reads before N's write. Expected symptom is a one-frame normal/position mismatch on skinned entities under load — not observed in the A/B above | `vk_accelstruct.cpp:847-930`, `1301-1311` |
+
 Risky-edit guards for the closed and parked stages, if any reopen: A1 — index block purged
 while a BLAS or draw still references it, TAG_TEMP misclassified as static; needs an A/B cvar
 and shadow indexes excluded. B1 — address tables pointing at the other frame slot, TLAS

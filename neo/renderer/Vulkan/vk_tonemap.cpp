@@ -545,8 +545,8 @@ void VK_RT_ResizeTonemap(uint32_t width, uint32_t height)
 
 void VK_RT_DispatchTonemap(VkCommandBuffer cmd)
 {
-    if (!vkRT.isInitialized)
-        return;
+    // Gate on the resource, not vkRT.isInitialized: that flag means "RT is up", and this
+    // pass is the only route from hdrScene to the swapchain on a device without RT.
     if (vkRT.hdrScene[0].image == VK_NULL_HANDLE)
         return;
 

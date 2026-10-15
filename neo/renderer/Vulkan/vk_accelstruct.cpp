@@ -2489,12 +2489,9 @@ void VK_RT_Shutdown(void)
     // Volumetric lighting pipeline and buffers (Phase 7.2)
     VK_RT_ShutdownVolumetrics();
 
-    // HDR scene buffer and tonemap pipeline (Phase 8.1).  Also destroys the
-    // G-buffer normal/F0 images (Stage 3.5) — see vk_tonemap.cpp.
-    VK_RT_ShutdownTonemap();
-
-    // Upscaling
-    VK_RT_ShutdownUpscale();
+    // Tonemap (with the HDR scene buffer and the G-buffer images) and upscale are shut
+    // down by VKimp_PreShutdown instead: they are created whether or not the device has
+    // RT, so their teardown cannot live behind this function's RT gate.
 
     // Bloom images and source-capture pipelines (bloom plan B1)
     VK_RT_ShutdownBloom();

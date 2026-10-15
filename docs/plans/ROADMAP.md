@@ -15,7 +15,7 @@ they are things to check code against, not things to schedule.
 
 | # | Item | Doc | Status |
 |---|---|---|---|
-| 8 | **Optimization** — Vulkan core (F1-F13/A0-A5), RT uploads (R1-R10/B0-B4), and **Stage S** RT shadow dispatch (was cleanup Phase 6a) | `20261010_vk_core_audit.md` | **Current.** Owns all perf work. Stage S closed 2026-10-13 (S2 cull −32% Interactions; S3 batching no gain; cost is ray count, default `r_rtShadowSamples` 1 → 2). 9 findings dispatched by measurement; A2/A4/A5 parked — all three scenarios are GPU-bound by 4-7x |
+| 8 | **Optimization** — Vulkan core (F/A), RT uploads (R/B), not-yet-audited (X). Stage S shadow dispatch closed | `20261010_vk_core_audit.md`, closed half in `completed/20261010_vk_core_audit_closed.md` | **Current.** Owns all perf work. Three wins landed (S2 cull, `r_rtShadowSamples` 4 → 2, BLAS pooling); 15 findings dispatched or parked by measurement, since all scenarios are GPU-bound by 4-7x. Next levers: X7 geometry resubmission, AO ray budget, probe/froxel sweep, the `vid_restart` leak |
 | 8b | **Glass reflection normals** — Mars City windows focus and invert; the panes are piecewise-flat Bezier patches whose 26.57° crease `GenerateNormals` smooths into a cylindrical mirror. Stages 1-3 | `20261013_glass_geometric_normal.md` | Unstarted. Small and bounded. Cause confirmed by hand calculation + a census of all 27 stock maps (718 glass patches: 6 `CREASE`, 21 real `ARC`, 153 `MIXED`) |
 | 8c | **Volumetrics in reflections** — the flashlight beam is absent from glass; march the reflected segment through `froxelScatter`. Stages 1-4 | `20261013_reflection_volumetrics.md` | Stages 1-3 landed 2026-10-13, **not yet validated in-game**. Stage 4 is the debug overlay + menu entries |
 | 8d | **Surface roughness in reflections** — extend past glass to opaque surfaces with a GGX lobe. Blocked on a reflection denoiser (the only RT pass without one) and a roughness ceiling to avoid double-counting probe GI. Stages 1-5 | `20261013_reflection_roughness.md` | Unstarted. Budget 20-40% frame time for the all-surface mode; **gates cleanup Phase 2b/2c**, which would otherwise reclaim the G-buffer alpha that F0 needs |
@@ -28,12 +28,12 @@ this says *when*.
 
 | # | Step | From | Gate to clear |
 |---|---|---|---|
-| 1 | ~~Stage S~~ — **done 2026-10-13** | 8 | S2 + S3 landed; S2b reverted; S5-S7 dropped. See the audit doc's Stage S close-out |
+| 1 | ~~Stage S~~ — **done 2026-10-13** | 8 | S2 + S3 landed; S2b reverted; S5-S7 dropped. Close-out in `completed/20261010_vk_core_audit_closed.md` |
 | 2 | 8c Stage 4 + validate 1-3 in-game | 8c | Already landed, unvalidated. Finish before stacking more reflection work |
 | 3 | 8b glass crease fix | 8b | Small, bounded; adds refl debug modes 9/10 |
 | 4 | Cleanup 1a + 5a | 8e | Unblocked; land whenever convenient |
 | 5 | Cleanup 1b (+ Stage S4 serial-path deletion) | 8e | Unblocked — Stage S closed |
-| 6 | Optimization B0/B2/B1 (BLAS rebuild burst closed 2026-10-14) | 8 | GPU-side; everything CPU-side is parked |
+| 6 | Optimization next levers: X7 capture, AO ray budget, probe/froxel sweep, E3 `vid_restart` leak | 8 | GPU-side only; everything CPU-side is parked. Levers 1-4 of the audit doc; the cvar sweeps need no code |
 | 7 | 8d roughness Stages 1-5 | 8d | Denoiser first. Decide go/no-go on the 20-40% frame cost before Stage 4 |
 | 8 | Cleanup 1c + Phase 2 | 8e | Needs the reflection arc resolved — **2c is irreversible** |
 | 9 | Cleanup 3, 4 | 8e | Biggest surgery, 0.001 ms gain. Last of the code changes |
@@ -57,12 +57,8 @@ per-phase detail: `20261010_vk_core_audit.md` and `notes/20261010_vk_core_baseli
 | Slow | Ryzen 5 2600 | AMD 9070 XT | Weaker RT card — this is what motivated the upscaling work. 49-64 fps p50 at 1440p (2026-10-13) |
 
 **Current baseline** — Fast 2026-10-12, Slow 2026-10-13. `com_fixedTic 1` (uncapped), 1440p,
-no upscaling, three scenarios (mchq / r2r / commfire), p50 GPU ms from CSV:
-
-| Machine | GI | Refl | Vol | AO | Shadows | TLAS | RT total | raster |
-|---|---|---|---|---|---|---|---|---|
-| Fast | 0.00 | 0.00-1.11 | 0.50-1.13 | 1.69-2.51 | 1.33-4.07 | 0.17 | **5.07-9.68** | 3.47-6.56 |
-| Slow | 0.00 | 0.00-0.62 | 0.76-1.19 | 2.02-2.66 | 2.07-4.78 | 0.24-0.55 | **7.23-11.41** | 5.43-8.25 |
+no upscaling, three scenarios (mchq / r2r / commfire). The per-pass table lives in
+`20261010_vk_core_audit.md`; only the totals are repeated here.
 
 | Total GPU p50 (fps) | mchq | r2r | commfire |
 |---|---|---|---|
@@ -82,7 +78,7 @@ driven by gpu.Interactions.
 
 | Doc | Owns |
 |---|---|
-| `20261010_vk_core_audit.md` | **All optimization.** Findings (F1-F13, R1-R10, X1-X8), stages A0-A5 / B0-B4, **Stage S** shadow dispatch, the baseline measurements, profiling tooling, and the optimization order |
+| `20261010_vk_core_audit.md` | **All optimization.** Open findings, open stages (B2 remainder, B3, B4, A3, E2-E4), the X verdicts, the baseline numbers and the next levers. Closed work is in `completed/20261010_vk_core_audit_closed.md`; the profiler reference is in `../vulkan_debugging.md` |
 | `20261010_cleanup_polish.md` | **All deletion and polish, no optimization.** Phase order 1a/1b/1c, the per-phase rules (cvar+UBO+shader+menu deleted together), presets and resets, comment sweep |
 | `20261013_glass_geometric_normal.md` | Glass crease fix; the stock-map glass-patch census |
 | `20261013_reflection_roughness.md` | Roughness/GGX reflections, the denoiser, and the GI handoff ceiling |
@@ -93,7 +89,7 @@ driven by gpu.Interactions.
 |----|-----|
 | `../Dhewm3-AI-RT-Settings.md` | Cvar inventory and tiers; the source for arc 8 phase 1 (trim) and phase 5 (presets) |
 | `../rt_engine_rules.md` | **Not a plan.** Taste contract, correctness rules, settled conclusions, debugging posture. Check new RT code against it |
-| `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine. Load it before chasing any AMD-vs-NVIDIA or device-lost bug. |
+| `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine, **and the profiler reference** (capture recipe, cvars, metric groups, CSV, `vk_profile_report.py`, external tools). Load it before chasing any AMD-vs-NVIDIA or device-lost bug, or before taking a measurement. |
 
 ---
 
@@ -103,6 +99,7 @@ All in `completed/`.
 
 | Doc | Owns |
 |---|---|
+| `20261010_vk_core_audit_closed.md` | **Arc 8, closed half.** Stage S shadow dispatch in full, the closed B stages and their A/Bs (BLAS pooling, static flags, BAR placement, frame serialization), the 10 findings dispatched by measurement, the parked stages, and the three measurement defects |
 | `20261001_see_first_person_player_model.md` | **Arc 6.** First-person player body: trimmed mesh, `rtPlayer` RT exclusion, ladder and foot-IK fixes. Cvars `pm_showFirstPersonBody`, `pm_firstPersonBodyOffset`, `pm_ladderLegAnim` |
 | `20261009_vol_fix.md` | **Arc 7.** TLAS pass-2 bounds cull, projected-vol gain/falloff, `rtPlayer` mask bit, vertex-cache sub-allocator + staging ring. 7.4 conditional |
 | `20260906_bloom_plan.md` | Bloom: emissive-sourced, composited after FSR and before the HUD. |
