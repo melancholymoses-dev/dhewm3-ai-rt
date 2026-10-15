@@ -71,6 +71,14 @@ prepass. commfire2 is the `gpu.Interactions` 21 ms p95 and is a different shape:
 screen at ≥6 layers, not a tail. Viewpoint variance inside one map (commfire1 vs 2) exceeds
 variance between maps — quote a viewpoint, never a map.
 
+**commfire has a second hidden variable: whether the player is firing.** Our
+`projectile_plasmablast` is modded to carry a light (`base/def/weapon_plasmagun.def:205-212`,
+`lights/impflash` at radius 120 — stock has those lines commented out). A per-light census
+while firing found 4 bolt lights plus 3 `muzzleflash` = **7 of 25 lights and 35% of
+interaction draws, all from holding the trigger**. That is the commfire1-vs-2 difference, not
+monsters; there is no combat in these captures. Any commfire A/B must match the firing state
+or it measures the trigger.
+
 Ruled out, both with evidence:
 
 | Hypothesis | Verdict |
@@ -84,7 +92,7 @@ with no test for how much it contributes.
 
 | Step | Change | Gate |
 |---|---|---|
-| L1 | Per-light debug labels in the interaction loop (`vk_backend.cpp:4073`, `lightIdx` + `vLight->lightShader` are in hand; needs an RAII scope guard, the loop has `continue` paths) | A capture attributes coverage to a named light; identifies which lights stack on the commfire2 floor |
+| L1 | **Done 2026-10-14.** One label region per light inside the interaction loop, named `Light <i> [def <n>] <shader> (l=.. g=.. t=..)`. `vkScopedLabel_t` RAII guard (the loop has `continue` paths and an unbalanced label fails `vkEndCommandBuffer`); gated on the same once-per-frame latch the phase spans use, so no new cvar — `r_vkDebugLabels 1` | `rdoc_draw_census.py` prints a per-light draw ranking; each light is its own collapsible region in RenderDoc, and "Quad Overdraw (Draw)" on one light's last draw shows that light's own coverage |
 | L2 | Contribution-based interaction culling: drop (light, surface) pairs whose falloff-weighted contribution falls below a threshold, behind a quality cvar | Mean depth and `gpu.Interactions` both fall; screenshots unchanged at the default threshold |
 | L3 | Clustered/tiled forward — material fetched once, lights looped in-shader | Only if L2 is insufficient. The 4.4-8.3x interaction mean is the size of the material-fetch win |
 

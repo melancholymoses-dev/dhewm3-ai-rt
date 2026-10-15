@@ -106,7 +106,7 @@ class Census:
                 sub_path = path + [name] if name else path
                 sub = self.walk(kids, sub_path)
                 if name:
-                    key = "/".join(sub_path)
+                    key = " > ".join(sub_path)
                     self._seen[key] = self._seen.get(key, 0) + 1
                     first, last = self._eid_range(action, kids)
                     self.regions.append({
@@ -132,7 +132,7 @@ class Census:
                 totals[2] += max(inst, 1)
                 self.draws.append({
                     "eid": action.eventId,
-                    "region": "/".join(path),
+                    "region": " > ".join(path),
                     "name": name,
                     "indices": idx,
                     "instances": inst,
@@ -190,6 +190,16 @@ def census(controller, out_prefix):
     for row in ranked[:12]:
         print("  %-44s occ%d  draws=%-6d indices=%-9d" %
               (row["region"][-44:], row["occurrence"], row["draws"], row["indices"]))
+
+    # Stage L1 nests one region per light under Interactions; rank them, since "which
+    # light draws the most" is the question those labels exist to answer.
+    lights = [r for r in walker.regions if " > Light " in r["region"] and r["occurrence"] == 1]
+    if lights:
+        lights.sort(key=lambda r: r["draws"], reverse=True)
+        print("\nper-light draws (top 10 of %d lights drawing anything):" % len(lights))
+        for row in lights[:10]:
+            print("  %-60s draws=%-5d indices=%d" %
+                  (row["region"].split(" > ")[-1][:60], row["draws"], row["indices"]))
 
     depth = next((r for r in walker.regions
                   if r["region"].endswith("DepthPrepass") and r["occurrence"] == 1), None)

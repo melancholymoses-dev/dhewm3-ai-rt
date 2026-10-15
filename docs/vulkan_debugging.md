@@ -198,7 +198,7 @@ Two rules that come out of how the numbers are built:
 | `r_vkRTProfileStats` | 29 | Console summary columns: 1=mean 2=p5 4=p50 8=p95 16=max |
 | `r_vkRTProfileGroups` | 63 | **Console filter only**, never a collection switch: 1=phases 2=frame 4=upload 8=waits 16=memory 32=midframe. Every group is always collected and always in the CSV |
 | `r_vkRTProfileSpikeMs` | 0 | Dump every metric for frames over this backend ms. Ignored while a CSV is open |
-| `r_vkDebugLabels` | 0 | `VK_EXT_debug_utils` pass labels and object names, covering all 26 phases. Works at `r_vkRTProfile 0`, so an Nsight/RGP/RenderDoc capture is readable without the profiler running |
+| `r_vkDebugLabels` | 0 | `VK_EXT_debug_utils` pass labels and object names, covering all 26 phases, plus one nested region per light inside `Interactions` (`Light <i> [def <n>] <shader> (l=local g=global t=translucent)`). Works at `r_vkRTProfile 0`, so an Nsight/RGP/RenderDoc capture is readable without the profiler running |
 
 ### What gets logged
 

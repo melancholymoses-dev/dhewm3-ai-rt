@@ -108,6 +108,41 @@ static int s_rtProfLabelDepth = 0;
 // fail on it.  Returns the number it had to close.
 static int VK_RTProfile_CloseStrayLabels(VkCommandBuffer cmd);
 
+// Scoped label for regions that are not profiler phases (Stage L1: per-light interaction
+// regions).  The interaction loop has `continue` paths, and an unbalanced label makes
+// vkEndCommandBuffer fail, so the pop has to be automatic.  Gated on the same once-per-frame
+// latch the phase spans use, not on the cvar directly.
+struct vkScopedLabel_t
+{
+    VkCommandBuffer cmd;
+
+    vkScopedLabel_t(VkCommandBuffer c, const char *name) : cmd(VK_NULL_HANDLE)
+    {
+        if (!name || !name[0] || c == VK_NULL_HANDLE || !s_rtProfLabelsThisFrame)
+            return;
+        cmd = c;
+        VK_Prof_PushLabel(cmd, name);
+        s_rtProfLabelDepth++;
+    }
+
+    ~vkScopedLabel_t()
+    {
+        if (cmd == VK_NULL_HANDLE)
+            return;
+        VK_Prof_PopLabel(cmd);
+        s_rtProfLabelDepth--;
+    }
+
+    vkScopedLabel_t(const vkScopedLabel_t &) = delete;
+    vkScopedLabel_t &operator=(const vkScopedLabel_t &) = delete;
+};
+
+// True when the per-light interaction labels should be emitted this frame.
+static bool VK_LightLabelsActive(void)
+{
+    return s_rtProfLabelsThisFrame;
+}
+
 static void VK_DumpStageBreadcrumbs(void)
 {
     common->Printf("VK: recent stage breadcrumbs (oldest -> newest):\n");
@@ -4076,6 +4111,28 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
 
         if (!VK_RB_LightDrawsInteractions(vLight))
             continue;
+
+        // Stage L1: one debug-label region per light, so a GPU capture can attribute
+        // draws and screen coverage to a named light rather than to one flat
+        // "Interactions" block.  Surface counts ride along so the label answers
+        // "which light draws the most" without cross-referencing a capture CSV.
+        // Built only when labels are latched on; the list walks are short.
+        char lightLabel[128];
+        lightLabel[0] = '\0';
+        if (VK_LightLabelsActive())
+        {
+            int nLocal = 0, nGlobal = 0, nTrans = 0;
+            for (const drawSurf_t *s = vLight->localInteractions; s; s = s->nextOnLight)
+                nLocal++;
+            for (const drawSurf_t *s = vLight->globalInteractions; s; s = s->nextOnLight)
+                nGlobal++;
+            for (const drawSurf_t *s = vLight->translucentInteractions; s; s = s->nextOnLight)
+                nTrans++;
+            idStr::snPrintf(lightLabel, sizeof(lightLabel), "Light %d [def %d] %s (l=%d g=%d t=%d)", lightIdx,
+                            vLight->lightDef ? vLight->lightDef->index : -1,
+                            vLight->lightShader ? vLight->lightShader->GetName() : "<null>", nLocal, nGlobal, nTrans);
+        }
+        const vkScopedLabel_t lightLabelScope(cmd, lightLabel);
 
         // Set scissor for this light.  Keep a copy of the rect so we can use it in
         // vkCmdClearAttachments below (and so it matches what the shadow batch traced).

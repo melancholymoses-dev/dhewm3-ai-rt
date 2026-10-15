@@ -289,7 +289,7 @@ Needs fixing if they stay in the menu: `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIR
 | `r_vkRTProfileGroups` | Vulkan | Console filter only — all groups are always collected and always in the CSV. Leave at 63 | 63 | D | = |
 | `r_vkRTProfileSpikeMs` | Vulkan | Dump every metric for frames over this backend ms (0=off); ignored while a CSV is open | 0 | D | = |
 | `r_vkRTProfileCSV` | Vulkan | Per-frame CSV path (empty=off). Suppresses the console block in favour of one heartbeat line per window | "" | D | = |
-| `r_vkDebugLabels` | Vulkan | VK_EXT_debug_utils pass labels for Nsight/RGP/RenderDoc | 0 | D | = |
+| `r_vkDebugLabels` | Vulkan | VK_EXT_debug_utils pass labels for Nsight/RGP/RenderDoc, including a region per light inside Interactions | 0 | D | = |
 | `r_vkVcCheck`, `r_vkLogBufferGarbage` | Vulkan | Vertex-cache validation / accounting | 0 | D | = |
 | `r_vkLogRT`, `r_vkLogShadowBranch`, `r_vkLogShadowGeom`, `r_vkLogSubmitInfo`, `r_vkLogTranslucent` | Vulkan | Logging | 0 | D | = |
 | `r_vkRTDebugInteractions`, `r_vkRTDebugSurface`, `r_vkRTDebugMaxLogsPerFrame`, `r_vkRTInterLogN`, `r_vkRTLogCaptureReset`, `r_vkRTDebugLightTextures`, `r_vkRTDebugLights`, `r_vkRTLightLogN`, `r_vkRTDebugLightFilter` | Vulkan | RT interaction/light logging | 0 / "" / 24 / 0 … | D | = |
