@@ -249,4 +249,38 @@ Stdlib-only; takes a CSV and prints six sections:
 | `--group <substr>` | — | Filter the tables, e.g. `gpu.` or `wait.` |
 | `--min-pct N` | 5 | Diff mode: hide moves under this percent |
 
+### If you edit the profiler
+
+`vk_profile.cpp/.h` owns the metric registry, window, CSV and debug labels;
+`vk_backend.cpp` keeps the query pools and records raw numbers into it. Five
+rules, each with a silent failure mode:
+
+| Rule | Failure if broken |
+|---|---|
+| Gate new metrics on `VK_Prof_Active()`, not `VK_RTProfileEnabled()` (that one also needs RT support and a query pool) | No output at all on a non-RT GPU. Only `gpu.<phase>` needs the pools |
+| A new CPU span between `present` and `backendMs` must be added to `accounted` | Its cost silently becomes `frame.other`, the one metric read as "unexplained" |
+| One `PhaseEnd` per `VK_RTProfile_PhaseBegin` | With labels on, `vkEndCommandBuffer` fails. `VK_RTProfile_CloseStrayLabels` warns at both exits |
+| Don't move `VK_Prof_BeginFrameSlot` or the slot clear that follows `CollectAndLog` | It is the tick that runs with profiling off (CSV open/close, partial-window discard); clearing later wipes the pre-command-buffer upload counters |
+| `r_vkRTProfileGroups` filters the console only — never gate collection on it | A console filter turns a CSV column into zeros |
+
+Deliberately not built: a live `vkAllocateMemory`/`VkSampler` ledger (134 call
+sites for a number RMV, Nsight and the best-practices layer already report).
+Startup prints the two device limits as `VK PROFILE LIMITS`, and the
+`r_vkDebugLabels` object names let an RMV capture attribute allocations.
+
+## External tools (Windows, free)
+
+| Tool | GPU | Use |
+|---|---|---|
+| `tools/vk_profile_report.py <csv>` | any | First pass on any capture — see above |
+| PresentMon | any | Frame-time CSV; hitches vs sustained low fps; CPU-busy vs GPU-busy. First tool for "it chugs here" |
+| VS Performance Profiler or Very Sleepy | any | CPU sampling without instrumentation. Needs PDBs; `RelWithDebInfo` is the CMake default |
+| Windows Performance Recorder / Analyzer | any | ETW: CPU samples, disk I/O, page faults, time blocked in driver calls. Load time, and hitches the sampler shows as "waiting" |
+| Nsight Graphics, GPU Trace | NVIDIA | Per-pass GPU time including RT dispatches. Needs `r_vkDebugLabels` to be readable |
+| RGP, RMV, RRA | AMD | RGP per-event GPU time; RMV VRAM by allocation; RRA BLAS/TLAS quality and opaque flags |
+| RenderDoc | any | Raster draw inspection, overdraw, state per draw |
+| Validation via vkconfig: sync + best-practices | any | Best-practices flags small allocations and redundant work; sync covers GPU-GPU hazards. **Sync cannot see CPU writes to mapped memory.** Object-lifetime reporting fires at `vkDestroyDevice`, which a full `vid_restart` reaches — that is the leak check |
+
+Tracy only if log spans stop scaling; it adds a dependency.
+
 
