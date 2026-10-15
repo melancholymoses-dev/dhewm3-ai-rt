@@ -14,19 +14,26 @@ every CPU-side stage is parked and only GPU work is scheduled. Gate: no fix stag
 until a counter shows its finding on a chugging section. A stage whose counter reads near
 zero is dropped, not deferred — that rule retired 15 of the original findings.
 
-## Current lead — interaction overdraw (stage L)
+## Stage L — parked 2026-10-14
 
-**This is the one being worked.** Everything below it is parked behind it. Measured
-2026-10-14; the finding and its two candidate fixes are in [Stage L](#stage-l--interaction-overdraw).
+Characterized, no fix shipped. `gpu.Interactions` is the largest single item in the frame
+and it is **per-fragment, not per-draw** — 16.6-34.3 M fragment invocations, 3.5-8.3
+interaction layers deep. Four candidate causes were tested and **all four came back
+negative**: geometry resubmission (X7), perforated materials defeating early-Z, material
+sampling cost (L3's premise), and draw-call overhead. See [Stage L](#stage-l--interaction-overdraw).
 
-`gpu.Interactions` is the largest single item in the frame (4.55-7.45 ms p50, 21 ms p95 on
-commfire) and it is **per-fragment, not per-draw**. 16.6-34.3 M fragment invocations per
-frame, each re-fetching the same surface's bump/diffuse/specular because Doom 3 rasterizes
-a surface once per light touching it.
+What is left is that the lights genuinely do light those surfaces. Culling them at a
+bit-identical threshold is blocked on Doom 3's falloff being a *texture* rather than a
+formula; anything coarser is a quality tier, not an optimization (rules doc, taste rule 7).
+Reopen only with a plan for sampling the falloff image CPU-side, or a decision to ship a
+quality cvar.
+
+**Cost of the arc so far: five capture rounds, two of them invalidated by bad probes.**
+Do not reopen this without a probe whose validity check is known in advance.
 
 ## Other levers
 
-Parked behind the lead. Ranked by measured size, cheapest first within a row.
+Ranked by measured size, cheapest first within a row.
 
 | # | Lever | Cost to try | Why here |
 |---|---|---|---|
@@ -90,13 +97,15 @@ What is left is the plain reading: a large flat surface sits inside many light v
 shaded once per light. Culling is geometric — a light either touches a surface or does not —
 with no test for how much it contributes.
 
-| Step | Change | Gate |
-|---|---|---|
-| L1 | **Done 2026-10-14.** One label region per light inside the interaction loop, named `Light <i> [def <n>] <shader> (l=.. g=.. t=..)`. `vkScopedLabel_t` RAII guard (the loop has `continue` paths and an unbalanced label fails `vkEndCommandBuffer`); gated on the same once-per-frame latch the phase spans use, so no new cvar — `r_vkDebugLabels 1` | `rdoc_draw_census.py` prints a per-light draw ranking; each light is its own collapsible region in RenderDoc, and "Quad Overdraw (Draw)" on one light's last draw shows that light's own coverage |
-| L2 | Contribution-based interaction culling: drop (light, surface) pairs whose falloff-weighted contribution falls below a threshold, behind a quality cvar | Mean depth and `gpu.Interactions` both fall; screenshots unchanged at the default threshold |
-| L3 | Clustered/tiled forward — material fetched once, lights looped in-shader | Only if L2 is insufficient. The 4.4-8.3x interaction mean is the size of the material-fetch win |
+| Step | State |
+|---|---|
+| L1 | **Done 2026-10-14.** One label region per light inside the interaction loop, named `Light <i> [def <n>] <shader> (l=.. g=.. t=..)`. `vkScopedLabel_t` RAII guard (the loop has `continue` paths and an unbalanced label fails `vkEndCommandBuffer`); gated on the same once-per-frame latch the phase spans use, so no new cvar — `r_vkDebugLabels 1`. `rdoc_draw_census.py` prints a per-light draw ranking from it |
+| L2 | **Blocked, parked.** Contribution culling needs the falloff *image*, not a radius — the shader indexes a falloff texture by `dot(lightProject[3], vertex)`, and stock falloff textures vary enough that no analytic approximation is both safe and useful. Options if reopened: sample the image CPU-side into a per-material luminance table (only version that can be aggressive and bit-identical), or ship it as an explicit quality cvar |
+| L3 | **Dropped 2026-10-14, premise disproved.** `r_skipBump 1` alone (valid probe: `ring.draws` +1.3%/−4.8%, no draws deleted) moved `gpu.Interactions` by −0.8% to −8.7% on the well-sampled matched buckets, sign inconsistent, inside repeat-capture noise. Removing one of three material textures is unmeasurable, so removing the 4.4-8.3x redundancy of all three cannot justify a clustered-forward rewrite. Caveat: `flatNormalMap` is still sampled, so the probe removed cache misses but not the sample instruction — a slight underestimate, not enough to revive it |
 
-Re-measure with the same five viewpoints after any step; the EXR exports are in `tools/output/`.
+Dead ends, so they are not re-proposed: X7 resubmission, perforated/grates, material sampling,
+draw-call overhead. The EXR exports and census CSVs are in `tools/output/`; the five-viewpoint
+overdraw table above is the reference if anyone re-measures.
 
 ---
 
@@ -210,7 +219,7 @@ load. Add timers only where that log leaves a gap.
 | # | Audit |
 |---|---|
 | E2 | Confirm no per-frame `vkQueueWaitIdle`/`vkWaitForFences`: `vk_ao.cpp:257`, `vk_bloom.cpp:340`, `vk_gbuffer.cpp:185`, `vk_gi.cpp:831/3187`, `vk_gi_probe.cpp:545`, plus `vkDeviceWaitIdle` in resize/cvar paths. The tagged wait wrapper answers this directly |
-| E3 | **The `vid_restart` leak.** A full restart destroys the `VkDevice` *and* `VkInstance` (`vk_instance.cpp:870-872`), so the validation layer's object-lifetime check fires at device destroy and enumerates every leaked object with its `r_vkDebugLabels` name — **one restart is enough**. Then 3 restarts with `r_vkRTProfile 1` for `mem.vramUsedMB` / `mem.rssMB`: linear growth = leak, decaying = fragmentation or reload footprint. VRAM and RSS are likely different bugs — 400 MB of RSS is not the ~11 MB of RT tables; if validation comes back clean and RSS still climbs, that is the `USE_LIBC_MALLOC=1` + ETW heap hunt. Note `VK_RT_Shutdown`'s closing `memset(&vkRT, 0, ...)` (`vk_accelstruct.cpp:2505`) makes any handle missed above that line silent to everything *except* validation |
+| E3 | **Done 2026-10-15** — the `vid_restart` leak. Validation object-lifetime across a restart: **clean**, no Vulkan objects leaked, so it was CPU heap. Two fixes in `idVertexCache::Shutdown`, both ~1-4 MB/restart, both found by instruments rather than reading: the temp buffers (`Init` unlinks them from `staticHeaders`, so `PurgeAll` can never reach them, and `vid_restart` never called `Shutdown` at all), and the `deferredFreeList` (`Free()` only defers; only `EndFrame` drains it, so blocks freed during teardown sat on neither list). `vertexCacheVirtMemBytes` now gates the teardown and warns if anything is still held — that gate is what caught the second one. **The RSS 210 → 614 MB was never a leak**: `mem.rssMB` *falls* 1000 → 790 MB over 7 s after a restart, and the heap trace showed 300 MB of vertex-cache churn with 226 allocations outstanding — allocator retention, not growth. Also confirmed F4 on the way past (see A3) |
 | E4 | Full-buffer re-uploads of unchanged data (light tables, material table, instance data); write-combined reads; host-visible buffers not per-frame-slotted; BLAS rebuild vs update |
 
 ---

@@ -1,8 +1,9 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-10-14 · **Active lead: optimization Stage L — interaction overdraw**
-(`20261010_vk_core_audit.md` → "Current lead"). Still open from the previous review and not
-blocked by it: 8c Stage 4 + in-game validation.
+**Status reviewed:** 2026-10-14 · **Next action: 8c Stage 4 + in-game validation.**
+Optimization Stage L (interaction overdraw) was characterized and **parked** — four candidate
+causes all measured negative, and the remaining one is blocked on light falloff being a
+texture. Details and dead ends: `20261010_vk_core_audit.md` → "Stage L — parked".
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
 designs live in the linked docs. Prior cycle: `completed/202610a_ROADMAP.md`.
@@ -35,7 +36,7 @@ this says *when*.
 | 3 | 8b glass crease fix | 8b | Small, bounded; adds refl debug modes 9/10 |
 | 4 | Cleanup 1a + 5a | 8e | Unblocked; land whenever convenient |
 | 5 | Cleanup 1b (+ Stage S4 serial-path deletion) | 8e | Unblocked — Stage S closed |
-| 6 | **Optimization Stage L — interaction overdraw.** L1 per-light labels, L2 contribution culling, L3 clustered forward | 8 | **The active lead.** `gpu.Interactions` is per-fragment, not per-draw: 16.6-34.3 M fragment invocations/frame, interaction depth 3.5-8.3. X7 and the grate hypothesis both measured and closed negative. Other levers (AO budget, probe/froxel sweep, E3 leak) park behind it |
+| 6 | ~~Optimization Stage L~~ — **parked 2026-10-14.** L1 landed (per-light labels); L2 blocked, L3 dropped | 8 | Four candidate causes measured negative. If optimization resumes, start with the AO ray budget or the E3 `vid_restart` leak — both cheap, neither needs new tooling |
 | 7 | 8d roughness Stages 1-5 | 8d | Denoiser first. Decide go/no-go on the 20-40% frame cost before Stage 4 |
 | 8 | Cleanup 1c + Phase 2 | 8e | Needs the reflection arc resolved — **2c is irreversible** |
 | 9 | Cleanup 3, 4 | 8e | Biggest surgery, 0.001 ms gain. Last of the code changes |

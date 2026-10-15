@@ -2308,6 +2308,12 @@ void R_VidRestart_f(const idCmdArgs &args)
     // free the vertex caches so they will be regenerated again
     vertexCache.PurgeAll();
 
+    // PurgeAll cannot reach the temp buffers (Init unlinks them from the static list),
+    // and R_InitOpenGL below calls Init again, which overwrites tempBuffers[] and resets
+    // the list heads — orphaning them.  Shut the cache down properly first, while the
+    // backend that owns the payloads is still alive (it is deleted just below).
+    vertexCache.Shutdown();
+
     // sound and input are tied to the window we are about to destroy
 
     // free all of our texture numbers
