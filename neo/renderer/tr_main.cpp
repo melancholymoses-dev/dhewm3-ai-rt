@@ -1374,6 +1374,14 @@ void R_RenderView(viewDef_t *parms)
     R_AddModelSurfaces();
     tr.pc.c_addModelsUsec += R_ProfileUsecSince(stageTicks);
 
+    // dhewm3-rt: GUIs near the camera but off screen were not redrawn above; refresh their
+    // reflection textures so the glass doesn't show a frozen screen (Vulkan RT only).
+    if (glConfig.isVulkan && !parms->isSubview && tr.guiRecursionLevel == 0)
+    {
+        extern void VK_GuiTex_RefreshNearby(idRenderWorldLocal * world);
+        VK_GuiTex_RefreshNearby(static_cast<idRenderWorldLocal *>(parms->renderWorld));
+    }
+
     // any viewLight that didn't have visible surfaces can have it's shadows removed
     R_RemoveUnecessaryViewLights();
 

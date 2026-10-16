@@ -44,6 +44,13 @@ void main()
 
     MaterialEntry mat = materials[matIdx];
 
+    // GUI screens stay out of GI and its shadow rays until GUI reflections Stage 3's A/B.
+    if ((mat.flags & MAT_FLAG_GUI_SURF) != 0u)
+    {
+        ignoreIntersectionEXT;
+        return;
+    }
+
     if ((mat.flags & MAT_FLAG_ALPHA_TESTED) != 0u)
     {
         vec2  uv    = rt_InterpolateUV(matIdx, gl_PrimitiveID, baryCoord);

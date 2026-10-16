@@ -128,6 +128,54 @@ void R_SurfaceToTextureAxis(const srfTriangles_t *tri, idVec3 &origin, idVec3 ax
     VectorMA(origin, boundsOrg[1] - a->st[1], axis[1], origin);
 }
 
+// dhewm3-rt: GUI reflections Stage 0 census (docs/plans/20261015_gui_reflections.md).
+// Counts in-world GUI draws per frame, split primary view vs subviews, to size the
+// live-GUI texture pool. Each GUI name is printed the first time it is drawn.
+idCVar r_logGuiSurfs("r_logGuiSurfs", "0", CVAR_RENDERER | CVAR_INTEGER,
+                     "1 = every 60 frames print in-world GUI draws (primary view / subviews) and the peak;\n"
+                     "also print each GUI the first time it is drawn. Set to 1 again to reset the peak.");
+
+static void R_LogGuiSurf(const idUserInterface *gui)
+{
+    static int curFrame = -1;
+    static int primary = 0, subview = 0, peakPrimary = 0, peakTotal = 0;
+    static idStrList seen;
+
+    if (r_logGuiSurfs.IsModified())
+    {
+        r_logGuiSurfs.ClearModified();
+        peakPrimary = peakTotal = 0;
+        seen.Clear();
+    }
+
+    if (tr.frameCount != curFrame)
+    {
+        if (curFrame >= 0 && (curFrame % 60) == 0 && (primary + subview) > 0)
+        {
+            common->Printf("GUI census frame %d: primary=%d subview=%d (peak primary=%d total=%d)\n", curFrame,
+                           primary, subview, peakPrimary, peakTotal);
+        }
+        curFrame = tr.frameCount;
+        primary = subview = 0;
+    }
+
+    const bool isSub = tr.viewDef && tr.viewDef->isSubview;
+    if (isSub)
+        subview++;
+    else
+        primary++;
+    peakPrimary = Max(peakPrimary, primary);
+    peakTotal = Max(peakTotal, primary + subview);
+
+    const char *name = gui->Name();
+    if (seen.FindIndex(name) < 0)
+    {
+        seen.Append(name);
+        common->Printf("GUI census: first draw '%s' in %s view (recursion %d)\n", name, isSub ? "sub" : "primary",
+                       tr.guiRecursionLevel);
+    }
+}
+
 /*
 =================
 R_RenderGuiSurf
@@ -153,6 +201,9 @@ void R_RenderGuiSurf(idUserInterface *gui, drawSurf_t *drawSurf)
     }
 
     tr.pc.c_guiSurfs++;
+
+    if (r_logGuiSurfs.GetBool())
+        R_LogGuiSurf(gui);
 
     // create the new matrix to draw on this surface
     R_SurfaceToTextureAxis(drawSurf->geo, origin, axis);
@@ -188,6 +239,12 @@ void R_RenderGuiSurf(idUserInterface *gui, drawSurf_t *drawSurf)
     tr.guiModel->Clear();
     gui->Redraw(tr.viewDef->renderView.time);
     tr.guiModel->EmitToCurrentView(modelMatrix, drawSurf->space->weaponDepthHack);
+    // dhewm3-rt: also queue the same quads for this GUI's reflection texture (Vulkan RT only).
+    if (glConfig.isVulkan)
+    {
+        extern void VK_GuiTex_CaptureFromGuiModel(const idUserInterface *gui);
+        VK_GuiTex_CaptureFromGuiModel(gui);
+    }
     tr.guiModel->Clear();
 
     tr.guiRecursionLevel--;

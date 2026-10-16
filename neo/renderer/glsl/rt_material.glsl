@@ -48,6 +48,10 @@ struct MaterialEntry {
 // R4: MC_TRANSLUCENT *and* SURFTYPE_GLASS. MAT_FLAG_GLASS alone is every translucent
 // (smoke, force fields, liquids), which must not act as a reflection plane.
 #define MAT_FLAG_REAL_GLASS    0x40u
+// GUI reflections: GUI_SURF = stage-less (translucent) GUI surface; GUI_LIVE = emissive
+// index is a live GUI slot.
+#define MAT_FLAG_GUI_SURF      0x80u
+#define MAT_FLAG_GUI_LIVE      0x100u
 
 // ---------------------------------------------------------------------------
 // set=1 bindings

@@ -17,7 +17,10 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/tr_local.h"
 #include "renderer/RenderWorld_local.h"
 #include "renderer/VertexCache.h"
+#include "ui/UserInterface.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_gui_texture.h"
+#include "renderer/Vulkan/vk_image.h"
 #include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_upscale.h"
@@ -541,6 +544,66 @@ static void AllocASBuffer(VkDeviceSize size, VkBufferUsageFlags extraUsage, VkBu
     VK_CHECK(vkBindBufferMemory(vk.device, *outBuf, *outMem, 0));
 }
 
+// GUI reflections Stage 0 (docs/plans/20261015_gui_reflections.md): log each GUI surface
+// the BLAS filter sees, once per model/surface. Dynamic models rebuild often, so dedupe.
+static void VK_RT_LogGuiBlasSurf(const idRenderModel *model, int surfIdx, const idMaterial *shader, bool skipped)
+{
+    static idStrList logged;
+    const idStr key = va("%s#%d", model->Name(), surfIdx);
+    if (logged.FindIndex(key) >= 0 || logged.Num() >= 4096)
+        return;
+    logged.Append(key);
+
+    const idUserInterface *global = shader->GlobalGui();
+    common->Printf("VK RT GUI SURF: %s model='%s' surf=%d shader='%s' gui=%s stages=%d coverage=%d\n",
+                   skipped ? "SKIPPED" : "admitted", model->Name(), surfIdx, shader->GetName(),
+                   global ? global->Name() : va("entity%d", shader->GetEntityGui()), shader->GetNumStages(),
+                   (int)shader->Coverage());
+}
+
+// The MF_NOSHADOWS exclusion. Shared with the dynamic-instance address refresh, which must
+// walk the same surfaces to keep BLAS geometry slots aligned. Real window glass stays for
+// reflection rays; so do GUI surfaces (stage-less entityGui is translucent, hence noshadows),
+// which reflections show via their live texture (docs/plans/20261015_gui_reflections.md).
+static bool VK_RT_NoShadowsExcluded(const idMaterial *shader)
+{
+    if (!shader->TestMaterialFlag(MF_NOSHADOWS))
+        return false;
+    if (shader->Coverage() != MC_TRANSLUCENT)
+        return true;
+    return shader->GetSurfaceType() != SURFTYPE_GLASS && !shader->HasGui();
+}
+
+// GUI reflections Stage 2: point a GUI surface's material entry at its live texture slot,
+// resolving the GUI per instance as tr_light.cpp does. Without a rendered slot the entry
+// keeps GUI_SURF only, and every any-hit shader ignores it (the pre-Stage-2 result).
+// Returns a value for the static signature so slot changes rewrite cached entries.
+static uint32_t VK_RT_BindGuiMaterial(VkMaterialEntry &e, const idMaterial *shader, const idRenderEntityLocal *ent)
+{
+    if (!shader || (e.flags & VK_MAT_FLAG_GUI_SURF) == 0)
+        return 0;
+
+    // A screen is opaque emission, never a glass interface.
+    e.flags &= ~(VK_MAT_FLAG_GLASS | VK_MAT_FLAG_REAL_GLASS);
+
+    const idUserInterface *gui = NULL;
+    const int guiNum = shader->GetEntityGui() - 1;
+    if (ent && guiNum >= 0 && guiNum < MAX_RENDERENTITY_GUI)
+        gui = ent->parms.gui[guiNum];
+    if (!gui)
+        gui = shader->GlobalGui();
+
+    const int slot = VK_GuiTex_FindSlot(gui);
+    idImage *img = VK_GuiTex_SlotImage(slot);
+    int w = 0, h = 0;
+    if (!img || !VK_Image_GetExtent(img, &w, &h) || w != VK_GUITEX_WIDTH || h != VK_GUITEX_HEIGHT)
+        return 0xFFFFu;
+
+    e.emissiveTexIndex = VK_RT_GetOrAssignTexIndex(img);
+    e.flags = (e.flags | VK_MAT_FLAG_EMISSIVE | VK_MAT_FLAG_GUI_LIVE) & ~VK_MAT_FLAG_GUI_EMISSIVE;
+    return ((uint32_t)slot + 1u) | (e.emissiveTexIndex << 16);
+}
+
 // ---------------------------------------------------------------------------
 // VK_RT_BuildBLASForModel
 // Build a multi-geometry BLAS covering all non-translucent surfaces of a model.
@@ -604,14 +667,13 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
         {
             if (surf->shader->TestMaterialFlag(MF_POLYGONOFFSET))
                 continue;
-            // MF_NOSHADOWS normally skips a surface.  Exception: real window glass
-            // carries noshadows in the shipped materials yet must be in the BLAS so
-            // reflection rays can hit it.  Translucent non-glass surfaces (smoke,
-            // particles, flares) also carry noshadows+translucent but should be
-            // excluded — the RT pipeline would render them as opaque white boxes.
-            const bool isWindowGlass =
-                surf->shader->Coverage() == MC_TRANSLUCENT && surf->shader->GetSurfaceType() == SURFTYPE_GLASS;
-            if (surf->shader->TestMaterialFlag(MF_NOSHADOWS) && !isWindowGlass)
+            // MF_NOSHADOWS normally skips a surface; window glass and GUI surfaces are
+            // kept (VK_RT_NoShadowsExcluded).  Translucent smoke, particles and flares
+            // stay out — the RT pipeline would render them as opaque white boxes.
+            const bool noShadowsExcluded = VK_RT_NoShadowsExcluded(surf->shader);
+            if (surf->shader->HasGui() && r_vkLogRT.GetInteger() >= 1)
+                VK_RT_LogGuiBlasSurf(model, s, surf->shader, noShadowsExcluded);
+            if (noShadowsExcluded)
                 continue;
             const deform_t def = surf->shader->Deform();
             if (def == DFRM_PARTICLE || def == DFRM_PARTICLE2 || def == DFRM_SPRITE || def == DFRM_FLARE)
@@ -657,8 +719,10 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
         validSurfs[validCount].perforated = surf->shader && surf->shader->Coverage() == MC_PERFORATED;
         // Translucent (glass) surfaces: include in BLAS as non-opaque so rahit is invoked.
         // shadow_ray.rahit passes through glass; reflect_ray.rchit applies the Fresnel split.
+        // Stage-less GUI surfaces are translucent too, so the any-hit shaders decide per ray
+        // type whether a screen counts (MAT_FLAG_GUI_SURF / GUI_LIVE).
         validSurfs[validCount].translucent = surf->shader && surf->shader->Coverage() == MC_TRANSLUCENT;
-        if (validSurfs[validCount].translucent && r_vkLogRT.GetInteger() >= 1)
+        if (validSurfs[validCount].translucent && !surf->shader->HasGui() && r_vkLogRT.GetInteger() >= 1)
         {
             common->Printf("VK RT GLASS: model='%s' surf=%d shader='%s' gpu=%s verts=%d idx=%d\n", model->Name(), s,
                            surf->shader ? surf->shader->GetName() : "<null>", haveGpuGeom ? "yes" : "no", geo->numVerts,
@@ -1318,6 +1382,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                         VkMaterialEntry matEntry = VK_RT_MakeMaterialEntry(surfShader, ent->blas, base + g,
                                                                            s_dynGeomVtxAddrs, s_dynGeomIdxAddrs);
                         matEntry.baseGeomIdx = base + g;
+                        VK_RT_BindGuiMaterial(matEntry, surfShader, ent);
                         if (ent->parms.rtPlayer)
                             matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
                         // Bounds check: max valid vertex index for rt_InterpolateUV.
@@ -1344,9 +1409,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                                 // Skip surfaces that the BLAS builder would have excluded.
                                 if (surf->shader->TestMaterialFlag(MF_POLYGONOFFSET))
                                     continue;
-                                const bool isWindowGlass = surf->shader->Coverage() == MC_TRANSLUCENT &&
-                                                           surf->shader->GetSurfaceType() == SURFTYPE_GLASS;
-                                if (surf->shader->TestMaterialFlag(MF_NOSHADOWS) && !isWindowGlass)
+                                if (VK_RT_NoShadowsExcluded(surf->shader))
                                     continue;
                                 const deform_t def = surf->shader->Deform();
                                 if (def == DFRM_PARTICLE || def == DFRM_PARTICLE2 || def == DFRM_SPRITE ||
@@ -1408,6 +1471,9 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                                                                            s_staticGeomVtxAddrs, s_staticGeomIdxAddrs);
                         // baseGeomIdx in each entry is the absolute slot for THIS geometry only.
                         matEntry.baseGeomIdx = base + g;
+                        // Slot changes must rewrite the cached static entries.
+                        if (const uint32_t guiSig = VK_RT_BindGuiMaterial(matEntry, surfShader, ent))
+                            staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &guiSig, sizeof(guiSig));
                         // Tag player/weapon geometry so glass_probe.rahit can skip it.
                         if (ent->parms.rtPlayer)
                             matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
@@ -1593,6 +1659,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                 VkMaterialEntry matEntry =
                     VK_RT_MakeMaterialEntry(surfShader, cached, base + g, s_staticGeomVtxAddrs, s_staticGeomIdxAddrs);
                 matEntry.baseGeomIdx = base + g;
+                if (const uint32_t guiSig = VK_RT_BindGuiMaterial(matEntry, surfShader, ent))
+                    staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &guiSig, sizeof(guiSig));
                 if (cached->geomVertSizes && cached->geomVertSizes[g] >= sizeof(idDrawVert))
                     matEntry.maxVertex = (uint32_t)(cached->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
                 if (cached->geomIdxSizes && cached->geomIdxSizes[g] >= 3u * sizeof(uint32_t))
@@ -1742,6 +1810,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                 VkMaterialEntry matEntry =
                     VK_RT_MakeMaterialEntry(surfShader, ent->blas, base + g, s_dynGeomVtxAddrs, s_dynGeomIdxAddrs);
                 matEntry.baseGeomIdx = base + g;
+                VK_RT_BindGuiMaterial(matEntry, surfShader, ent);
                 if (ent->parms.rtPlayer)
                     matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
                 if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
@@ -2257,6 +2326,8 @@ void VK_RT_BeginLevelLoad(void)
     VK_Pool_TrimEmpty(&s_blasScratchPool);
     VK_Pool_TrimEmpty(&s_blasGeomPool);
 
+    VK_GuiTex_BeginLevelLoad();
+
     // Destroy all per-frame TLAS resources.
     // The new level's first RebuildTLAS call will allocate fresh buffers.
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
@@ -2357,6 +2428,8 @@ void VK_RT_Shutdown(void)
     VK_Pool_Destroy(&s_blasStoragePool);
     VK_Pool_Destroy(&s_blasScratchPool);
     VK_Pool_Destroy(&s_blasGeomPool);
+
+    VK_GuiTex_Shutdown();
 
     // Destroy TLAS (one per frame-in-flight slot)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)

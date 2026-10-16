@@ -12,6 +12,8 @@
     nextDir       — Direction for the continuation ray.
     hitT          — Distance to the hit (gl_RayTmaxEXT on a miss). Occludes the
                     projectile glow discs in reflect_ray.rgen (rt_emitter.glsl).
+    hitFlags      — MAT_FLAG_* of the hit material (reflect_ray.rchit); 0 on a miss.
+                    Read by r_rtReflectionDebugMode 10.
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
 
@@ -26,4 +28,5 @@ struct ReflPayload {
     vec3  nextOrigin;
     vec3  nextDir;
     float hitT;
+    uint  hitFlags;
 };

@@ -2500,6 +2500,9 @@ struct RTCVars
     idCVar *rtReflVol = nullptr;
     idCVar *rtReflVolSteps = nullptr;
     idCVar *rtReflGlowSmoke = nullptr;
+    idCVar *rtGuiReflections = nullptr;
+    idCVar *rtGuiReflGain = nullptr;
+    idCVar *rtGuiTexInterval = nullptr;
     idCVar *rtGlassNormalMode = nullptr;
     idCVar *rtGlassCreaseRatio = nullptr;
 
@@ -2633,6 +2636,9 @@ static void InitRTOptionsMenu()
     rtCVars.rtReflVol = cvarSystem->Find("r_rtReflVol");
     rtCVars.rtReflVolSteps = cvarSystem->Find("r_rtReflVolSteps");
     rtCVars.rtReflGlowSmoke = cvarSystem->Find("r_rtReflGlowSmoke");
+    rtCVars.rtGuiReflections = cvarSystem->Find("r_rtGuiReflections");
+    rtCVars.rtGuiReflGain = cvarSystem->Find("r_rtGuiReflGain");
+    rtCVars.rtGuiTexInterval = cvarSystem->Find("r_rtGuiTexInterval");
     rtCVars.rtGlassNormalMode = cvarSystem->Find("r_rtGlassNormalMode");
     rtCVars.rtGlassCreaseRatio = cvarSystem->Find("r_rtGlassCreaseRatio");
     rtCVars.rtGITemporal = cvarSystem->Find("r_rtGITemporal");
@@ -2845,6 +2851,11 @@ static void DrawRTOptionsMenu()
         ImGui::BeginDisabled(!(rtCVars.rtReflGlow && rtCVars.rtReflGlow->GetBool()));
         RTSliderFloat("Projectile Glow Gain", rtCVars.rtReflGlowGain, 0.0f, 4.0f, "%.2f");
         RTCheckbox("Include Smoke Particles (flames, trails)", rtCVars.rtReflGlowSmoke);
+        ImGui::EndDisabled();
+        RTCheckbox("Screens in Reflections", rtCVars.rtGuiReflections);
+        ImGui::BeginDisabled(!(rtCVars.rtGuiReflections && rtCVars.rtGuiReflections->GetBool()));
+        RTSliderFloat("Screen Reflection Brightness", rtCVars.rtGuiReflGain, 0.0f, 2.0f, "%.2f");
+        RTSliderInt("Screen Refresh Interval (frames)", rtCVars.rtGuiTexInterval, 1, 4);
         ImGui::EndDisabled();
         ImGui::TableNextColumn();
         RTSliderFloat("Specular F0 Scale (Fresnel intensity)", rtCVars.rtSpecF0Scale, 0.0f, 1.0f);

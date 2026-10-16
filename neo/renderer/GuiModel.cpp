@@ -332,6 +332,61 @@ void idGuiModel::EmitFullScreen(void)
 }
 
 /*
+================
+idGuiModel::EmitToTextureView
+
+dhewm3-rt: same 640x480 ortho view as EmitFullScreen, sized to an offscreen target and
+handed back to the caller rather than queued. The Vulkan backend draws it into a GUI
+texture slot before the main view (docs/plans/20261015_gui_reflections.md Stage 1).
+================
+*/
+viewDef_t *idGuiModel::EmitToTextureView(int width, int height)
+{
+    // No early-out on an empty model: an empty view still clears the slot, so a GUI that
+    // hides everything (or a slot's new owner) doesn't keep the previous image.
+    viewDef_t *viewDef = (viewDef_t *)R_ClearedFrameAlloc(sizeof(*viewDef));
+
+    viewDef->renderView.width = SCREEN_WIDTH;
+    viewDef->renderView.height = SCREEN_HEIGHT;
+    viewDef->viewport.x1 = 0;
+    viewDef->viewport.y1 = 0;
+    viewDef->viewport.x2 = width - 1;
+    viewDef->viewport.y2 = height - 1;
+    viewDef->scissor = viewDef->viewport;
+    // The source view's clock: in-world GUIs run on game fast time (tr_light.cpp), and the
+    // reflection must evaluate time-dependent stages exactly as the screen does.
+    viewDef->floatTime = tr.viewDef ? tr.viewDef->floatTime : tr.frameShaderTime;
+
+    viewDef->projectionMatrix[0] = 2.0f / 640.0f;
+    viewDef->projectionMatrix[5] = -2.0f / 480.0f;
+    viewDef->projectionMatrix[10] = -2.0f / 1.0f;
+    viewDef->projectionMatrix[12] = -1.0f;
+    viewDef->projectionMatrix[13] = 1.0f;
+    viewDef->projectionMatrix[14] = -1.0f;
+    viewDef->projectionMatrix[15] = 1.0f;
+
+    viewDef->worldSpace.modelViewMatrix[0] = 1.0f;
+    viewDef->worldSpace.modelViewMatrix[5] = 1.0f;
+    viewDef->worldSpace.modelViewMatrix[10] = 1.0f;
+    viewDef->worldSpace.modelViewMatrix[15] = 1.0f;
+
+    viewDef->maxDrawSurfs = surfaces.Num();
+    viewDef->drawSurfs = (drawSurf_t **)R_FrameAlloc(viewDef->maxDrawSurfs * sizeof(viewDef->drawSurfs[0]));
+    viewDef->numDrawSurfs = 0;
+
+    viewDef_t *oldViewDef = tr.viewDef;
+    tr.viewDef = viewDef;
+
+    for (int i = 0; i < surfaces.Num(); i++)
+    {
+        EmitSurface(&surfaces[i], viewDef->worldSpace.modelMatrix, viewDef->worldSpace.modelViewMatrix, false);
+    }
+
+    tr.viewDef = oldViewDef;
+    return viewDef;
+}
+
+/*
 =============
 AdvanceSurf
 =============

@@ -695,6 +695,11 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
     if (shader->GetCullType() == CT_TWO_SIDED)
         entry.flags |= VK_MAT_FLAG_TWO_SIDED;
 
+    // Stage-less (translucent) GUI surfaces only: those are the non-opaque screens the
+    // any-hit shaders special-case. GUI materials with real stages keep their own path.
+    if (shader->HasGui() && shader->Coverage() == MC_TRANSLUCENT)
+        entry.flags |= VK_MAT_FLAG_GUI_SURF;
+
     // --- Walk stages for diffuse and normal images ---
 
     for (int i = 0; i < shader->GetNumStages(); i++)
@@ -806,26 +811,29 @@ void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t st
     {
         uint32_t emissiveCount = 0;
         uint32_t guiEmissiveCount = 0;
+        uint32_t guiSurfCount = 0;
+        uint32_t guiLiveCount = 0;
+        const VkMaterialEntry *lists[2] = {staticEntries, dynamicEntries};
+        const uint32_t counts[2] = {staticMatCount, dynamicMatCount};
 
-        for (uint32_t i = 0; i < staticMatCount; i++)
+        for (int l = 0; l < 2; l++)
         {
-            const uint32_t flags = staticEntries[i].flags;
-            if (flags & VK_MAT_FLAG_EMISSIVE)
-                emissiveCount++;
-            if (flags & VK_MAT_FLAG_GUI_EMISSIVE)
-                guiEmissiveCount++;
-        }
-        for (uint32_t i = 0; i < dynamicMatCount; i++)
-        {
-            const uint32_t flags = dynamicEntries[i].flags;
-            if (flags & VK_MAT_FLAG_EMISSIVE)
-                emissiveCount++;
-            if (flags & VK_MAT_FLAG_GUI_EMISSIVE)
-                guiEmissiveCount++;
+            for (uint32_t i = 0; i < counts[l]; i++)
+            {
+                const uint32_t flags = lists[l][i].flags;
+                if (flags & VK_MAT_FLAG_EMISSIVE)
+                    emissiveCount++;
+                if (flags & VK_MAT_FLAG_GUI_EMISSIVE)
+                    guiEmissiveCount++;
+                if (flags & VK_MAT_FLAG_GUI_SURF)
+                    guiSurfCount++;
+                if (flags & VK_MAT_FLAG_GUI_LIVE)
+                    guiLiveCount++;
+            }
         }
 
-        common->Printf("VK RT MatTable: emissive-tagged=%u gui-emissive=%u total=%u\n", emissiveCount,
-                       guiEmissiveCount, staticMatCount + dynamicMatCount);
+        common->Printf("VK RT MatTable: emissive-tagged=%u gui-emissive=%u gui-surf=%u gui-live=%u total=%u\n",
+                       emissiveCount, guiEmissiveCount, guiSurfCount, guiLiveCount, staticMatCount + dynamicMatCount);
     }
 
     if (r_vkLogRT.GetInteger() >= 2)

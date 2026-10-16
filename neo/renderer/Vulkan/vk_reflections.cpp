@@ -134,7 +134,10 @@ idCVar r_rtReflectionDebugMode(
     "    the reflected surface. Emitters are collected even with r_rtReflGlow 0.\n"
     "9 = glass only: r_rtGlassNormalMode 2's split. Red = face normal (crease-adjacent flat facet),\n"
     "    green = interpolated (arc or flat). Brighter = more lopsided vertex normals.\n"
-    "Modes 2-9 require r_rtReflections 1 — they ride on the reflection ray dispatch, force the\n"
+    "10 = GUI screens in reflections (docs/plans/20261015_gui_reflections.md): green = hit bound\n"
+    "    to a live GUI texture, else mode 6 dimmed x0.25. Unbound screens are ignored by the ray,\n"
+    "    so magenta should not appear.\n"
+    "Modes 2-10 require r_rtReflections 1 — they ride on the reflection ray dispatch, force the\n"
     "full-screen launch grid, and are displayed via refl_composite.frag with blending disabled\n"
     "(replace, not add). The per-surface glass overlay is suppressed while they are active.");
 
@@ -169,6 +172,7 @@ idCVar r_rtReflectionDebugMode(
 //   float  volIsoMix      offset 248 size  4  (r_rtVolIsotropicMix, Stage 5)
 //   int    glassNormalMode offset 252 size 4  (r_rtGlassNormalMode)
 //   float  glassCreaseRatio offset 256 size 4  (r_rtGlassCreaseRatio)
+//   float  guiReflGain    offset 260 size  4  (r_rtGuiReflGain)
 //   total: 272 bytes — std140 rounds the block up to a multiple of
 //   16, and uboInfo.range is sizeof(ReflParamsUBO), which must not be smaller.
 // ---------------------------------------------------------------------------
@@ -209,7 +213,8 @@ struct ReflParamsUBO
     float volIsoMix; // r_rtVolIsotropicMix — Stage 5, for rt_PhaseFromMeanDir
     int32_t glassNormalMode; // r_rtGlassNormalMode — 0 interpolated, 1 face, 2 crease-aware
     float glassCreaseRatio;  // r_rtGlassCreaseRatio — mode 2 flattens when devRatio < this
-    float _pad0[3];          // std140 rounds the block to 272
+    float guiReflGain;       // r_rtGuiReflGain — scales live GUI screen hits (MAT_FLAG_GUI_LIVE)
+    float _pad0[2];          // std140 rounds the block to 272
 };
 static_assert(sizeof(ReflParamsUBO) == 272, "ReflParamsUBO size mismatch");
 
@@ -1307,6 +1312,8 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
     ubo.glassNormalMode = idMath::ClampInt(0, 2, r_rtGlassNormalMode.GetInteger());
     ubo.glassCreaseRatio = idMath::ClampFloat(0.0f, 1.0f, r_rtGlassCreaseRatio.GetFloat());
+    extern idCVar r_rtGuiReflGain; // vk_gui_texture.cpp
+    ubo.guiReflGain = idMath::ClampFloat(0.0f, 16.0f, r_rtGuiReflGain.GetFloat());
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
 
     // --- Update descriptor set (once per frame slot when frameCount changes).

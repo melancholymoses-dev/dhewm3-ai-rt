@@ -2509,6 +2509,9 @@ void R_InitCommands(void)
     cmdSystem->AddCommand("sizeDown", R_SizeDown_f, CMD_FL_RENDERER, "makes the rendered view smaller");
     cmdSystem->AddCommand("reloadGuis", R_ReloadGuis_f, CMD_FL_RENDERER, "reloads guis");
     cmdSystem->AddCommand("listGuis", R_ListGuis_f, CMD_FL_RENDERER, "lists guis");
+    extern void VK_GuiTex_Dump_f(const idCmdArgs &args);
+    cmdSystem->AddCommand("r_vkGuiTextureDump", VK_GuiTex_Dump_f, CMD_FL_RENDERER,
+                          "writes a GUI reflection texture slot to guitex_<slot>.tga; no args lists slots");
     cmdSystem->AddCommand("touchGui", R_TouchGui_f, CMD_FL_RENDERER, "touches a gui");
     cmdSystem->AddCommand("screenshot", R_ScreenShot_f, CMD_FL_RENDERER, "takes a screenshot");
     cmdSystem->AddCommand("envshot", R_EnvShot_f, CMD_FL_RENDERER, "takes an environment shot");

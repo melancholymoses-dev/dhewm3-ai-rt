@@ -696,6 +696,7 @@ list(APPEND src_vulkan
 	renderer/Vulkan/vk_temporal.cpp
 	renderer/Vulkan/vk_reflections.cpp
 	renderer/Vulkan/vk_rt_emitters.cpp
+	renderer/Vulkan/vk_gui_texture.cpp
 	renderer/Vulkan/vk_gi.cpp
 	renderer/Vulkan/vk_gi_probe.cpp
 	renderer/Vulkan/vk_vol.cpp

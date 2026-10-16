@@ -70,6 +70,10 @@ static const uint32_t VK_MAT_MAX_GEOMS = 16384;   // max total geometry slots ac
 // R4: MC_TRANSLUCENT *and* SURFTYPE_GLASS. VK_MAT_FLAG_GLASS alone is every translucent
 // (smoke, force fields, liquids), which must not act as a reflection plane.
 #define VK_MAT_FLAG_REAL_GLASS 0x40u
+// GUI reflections (docs/plans/20261015_gui_reflections.md). GUI_SURF = HasGui() && MC_TRANSLUCENT;
+// GUI_LIVE = emissive index points at a live GUI texture slot (Stage 2).
+#define VK_MAT_FLAG_GUI_SURF 0x80u
+#define VK_MAT_FLAG_GUI_LIVE 0x100u
 
 // One entry per BLAS geometry slot.  Indexed by
 //   gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT
@@ -805,7 +809,8 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // (docs/plans/20260918_reflection_brightness.md). Anything in 2..this forces the
 // full-screen launch grid, takes the replace-blend composite, and suppresses the
 // per-surface glass overlay.
-const int REFL_DEBUG_MAX_MODE = 9; // 8 = projectile emitter discs (vk_rt_emitters.cpp); 9 = glass crease split
+// 8 = projectile emitter discs (vk_rt_emitters.cpp); 9 = glass crease split; 10 = GUI hits
+const int REFL_DEBUG_MAX_MODE = 10;
 
 // Additively composite reflBuffer onto the framebuffer (Step 8, see
 // docs/plans/gbuffer_normal_pass.md). Must be called INSIDE the main render
