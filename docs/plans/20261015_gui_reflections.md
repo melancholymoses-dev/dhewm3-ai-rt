@@ -69,6 +69,7 @@ shows the bioscan text readable and the right way up. Raster GUIs are unchanged.
 | `VK_RT_BindGuiMaterial` at the 4 entry sites: GUI per instance (`tr_light.cpp:1671` rule) → slot; clear `GLASS`, set `EMISSIVE`+`GUI_LIVE`, `emissiveTexIndex` = slot image. Static sites fold slot+index into `staticSignature` | `vk_accelstruct.cpp` |
 | Any-hit: reflection accepts `GUI_LIVE` (no terminate, closest wins) and ignores unbound; shadow and GI ignore `GUI_SURF`; AO already ignores non-opaque | `reflect_ray/shadow_ray/gi_ray.rahit` |
 | `reflect_ray.rchit`: `GUI_LIVE` returns its emission even where dark | `reflect_ray.rchit` |
+| Slot cleared to alpha 0; reflection any-hit ignores slot alpha < 0.1, so undrawn parts of the GUI quad show the housing (first test showed black squares) | `vk_gui_texture.cpp`, `reflect_ray.rahit` |
 | Glow-only harvest excludes GUI surfaces (they are no longer BLAS-dropped) | `vk_rt_emitters.cpp` |
 | `MatTable` log adds `gui-surf=` / `gui-live=` | `vk_material_table.cpp` |
 
@@ -84,7 +85,7 @@ the scanner screens in the glass and no magenta. No new shadow or AO lines aroun
 |---|---|
 | `GUI_LIVE` skips the ×3 / 0.2 boost; scale by `r_rtGuiReflGain` (default 1) to match the raster screen | `rt_material.glsl` |
 | Decide whether live GUIs feed probe GI. A/B in the bioscan room; the default follows the result | `vk_gi*.cpp` |
-| Off-screen screens keep their last texture (no redraw when culled) | `vk_gui_texture.cpp` |
+| Done early: entity GUIs within `r_rtGuiTexRadius` (256) that the view culled are redrawn by `VK_GuiTex_RefreshNearby` (`R_RenderView`, after `R_AddModelSurfaces`), nearest first, stopping when the pool is full. At 512 in index order, door GUIs behind walls evicted the bioscan screens every frame | `vk_gui_texture.cpp`, `tr_main.cpp` |
 | `r_rtGuiReflections` (0/1) in `Dhewm3SettingsMenu.cpp`; GUI-texture pass gets its own profiler phase | settings menu, `vk_backend.cpp` |
 
 Check: screen and its reflection side by side at similar tonemapped brightness (debug

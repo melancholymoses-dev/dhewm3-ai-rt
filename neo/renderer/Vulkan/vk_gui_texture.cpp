@@ -28,6 +28,7 @@ Code release.
 #include "sys/platform.h"
 #include "framework/CmdSystem.h"
 #include "renderer/tr_local.h"
+#include "renderer/RenderWorld_local.h"
 #include "renderer/GuiModel.h"
 #include "ui/UserInterface.h"
 #include "renderer/Vulkan/vk_common.h"
@@ -45,6 +46,9 @@ idCVar r_rtGuiReflections("r_rtGuiReflections", "1", CVAR_RENDERER | CVAR_BOOL |
                           "Render in-world GUI screens into textures so RT reflections can show them.");
 idCVar r_rtGuiTexInterval("r_rtGuiTexInterval", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                           "Frames between refreshes of each GUI reflection texture. 1 = every frame.", 1, 60);
+idCVar r_rtGuiTexRadius("r_rtGuiTexRadius", "256", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                        "Entity GUIs within this distance of the camera keep refreshing while off screen, "
+                        "nearest first, so reflections of them stay live. 0 = only GUIs drawn on screen.");
 
 // ---------------------------------------------------------------------------
 // Slots (frontend)
@@ -155,6 +159,17 @@ static int VK_GuiTex_AcquireSlot(const idUserInterface *gui)
     return slot;
 }
 
+// True if AcquireSlot could place a new GUI this frame without failing.
+static bool VK_GuiTex_CanAcquire(void)
+{
+    for (int i = 0; i < VK_GUITEX_SLOTS; i++)
+    {
+        if (s_slots[i].gui == NULL || s_slots[i].lastSeenFrame != tr.frameCount)
+            return true;
+    }
+    return false;
+}
+
 void VK_GuiTex_CaptureFromGuiModel(const idUserInterface *gui)
 {
     // Top-level GUIs in the primary view only: subviews and nested GUIs would redraw
@@ -188,6 +203,90 @@ void VK_GuiTex_CaptureFromGuiModel(const idUserInterface *gui)
     s_pending[s_pendingCount].view = view;
     s_pending[s_pendingCount].slot = slot;
     s_pendingCount++;
+}
+
+struct guiTexCandidate_t
+{
+    idUserInterface *gui;
+    float distSq;
+};
+
+static int VK_GuiTex_CompareCandidates(const void *a, const void *b)
+{
+    const float da = ((const guiTexCandidate_t *)a)->distSq;
+    const float db = ((const guiTexCandidate_t *)b)->distSq;
+    return (da < db) ? -1 : (da > db) ? 1 : 0;
+}
+
+// Frontend, primary view, after R_AddModelSurfaces: the on-screen GUIs were captured by
+// R_RenderGuiSurf and hold their slots for this frame. Entity GUIs within
+// r_rtGuiTexRadius that the view culled are redrawn here nearest first, until the pool is
+// full, so a screen seen only in a reflection keeps animating. Nearest-first keeps the
+// set stable: off-screen GUIs never evict each other within a frame.
+void VK_GuiTex_RefreshNearby(idRenderWorldLocal *world)
+{
+    const float radius = r_rtGuiTexRadius.GetFloat();
+    if (!world || !tr.viewDef || radius <= 0.0f || !VK_GuiTex_Enabled() ||
+        tr.viewDef->renderView.viewaxis[0].LengthSqr() <= 0.0001f)
+        return;
+
+    static const int MAX_CANDIDATES = 64;
+    guiTexCandidate_t cands[MAX_CANDIDATES];
+    int numCands = 0;
+
+    const idVec3 &org = tr.viewDef->renderView.vieworg;
+    const float radiusSq = radius * radius;
+    for (int i = 0; i < world->entityDefs.Num() && numCands < MAX_CANDIDATES; i++)
+    {
+        const idRenderEntityLocal *ent = world->entityDefs[i];
+        if (!ent)
+            continue;
+        const float distSq = (ent->parms.origin - org).LengthSqr();
+        if (distSq > radiusSq)
+            continue;
+        for (int g = 0; g < MAX_RENDERENTITY_GUI && numCands < MAX_CANDIDATES; g++)
+        {
+            if (ent->parms.gui[g])
+            {
+                cands[numCands].gui = ent->parms.gui[g];
+                cands[numCands].distSq = distSq;
+                numCands++;
+            }
+        }
+    }
+    qsort(cands, numCands, sizeof(cands[0]), VK_GuiTex_CompareCandidates);
+
+    int redrawn = 0, skippedFull = 0;
+    for (int c = 0; c < numCands; c++)
+    {
+        idUserInterface *gui = cands[c].gui;
+        // Drawn on screen this frame, or not due yet: keep the slot, skip the Redraw.
+        const int slot = VK_GuiTex_FindSlot(gui);
+        if (slot >= 0 && s_slots[slot].renderedFrame >= 0 &&
+            tr.frameCount - s_slots[slot].renderedFrame < r_rtGuiTexInterval.GetInteger())
+        {
+            s_slots[slot].lastSeenFrame = tr.frameCount;
+            continue;
+        }
+        if (slot < 0 && !VK_GuiTex_CanAcquire())
+        {
+            skippedFull = numCands - c;
+            break;
+        }
+
+        // Same bracket as R_RenderGuiSurf, minus the on-surface emit.
+        tr.guiRecursionLevel++;
+        tr.guiModel->Clear();
+        gui->Redraw(tr.viewDef->renderView.time);
+        VK_GuiTex_CaptureFromGuiModel(gui);
+        tr.guiModel->Clear();
+        tr.guiRecursionLevel--;
+        redrawn++;
+    }
+
+    if ((redrawn > 0 || skippedFull > 0) && r_vkLogRT.GetInteger() >= 2)
+        common->Printf("VK GUITEX: frame=%d off-screen candidates=%d redrew=%d skipped(pool full)=%d\n",
+                       tr.frameCount, numCands, redrawn, skippedFull);
 }
 
 int VK_GuiTex_PendingCount(void)
@@ -485,9 +584,10 @@ bool VK_GuiTex_BeginPass(VkCommandBuffer cmd, int slot)
                          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
                          0, 1, &mb, 0, NULL, 0, NULL);
 
-    // Black, alpha 1: an unlit screen pixel emits nothing.
+    // Alpha 0: texels the GUI never draws stay uncovered, and the reflection any-hit lets
+    // the ray through to the housing there, as the raster blend does.
     VkClearValue clears[5] = {};
-    clears[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    clears[0].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
     clears[1].depthStencil = {1.0f, 128};
 
     VkRenderPassBeginInfo rb = {};
