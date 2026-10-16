@@ -50,15 +50,12 @@ The existing face-forward at `glass_probe.rchit:112-113` fixes the sign — appl
 rule to `faceNormal` independently, and use `abs()` on the deviation so a sign disagreement
 on degenerate geometry can't read as 90°.
 
-| Mode | Output |
-|---|---|
-| 9 | `reflNormal` as RGB — the normal **actually used**, after branch selection. Mode 2 shows `gbuf.rgb`, which on a glass pixel is the wall behind, so the glass normal has never been visible |
-| 10 | `degrees(acos(smoothDot))` on a ramp: black 0°, green 5°, red ≥20°. Glass-only pixels; 0 elsewhere |
+Built as planned; modes 9/10 were later folded into a single mode 9 (Stage 2).
 
-**Check:** no image change at `r_rtReflectionDebugMode 0`. Mode 9 on the Mars City window
-shows a vertical gradient over the upper third. Mode 10 shows a red band at the crease
-(~13°, half the 26.57° kink) and black over the flat lower two-thirds. `enpro`'s plasma
-tube reads uniformly green, not banded — a real arc with fine tessellation.
+**Result:** the deviation angle cannot separate the cases. The `mars_city1` cafeteria pane's
+large lower facet ramps 5°→0° across its whole height (one triangle row, crease-averaged
+top edge) — that ramp, not the kink, is the inverting lens. The Mars City skylight, a real
+arc, reads 3-5°. Same band, so no angle threshold works.
 
 ---
 
@@ -66,10 +63,15 @@ tube reads uniformly green, not banded — a real arc with fine tessellation.
 
 | File | Change |
 |---|---|
-| `vk_reflections.cpp` | `r_rtGlassNormalMode` (0 interp / 1 face / 2 crease-aware), `r_rtGlassCreaseAngle` (deg, default 8) |
-| `vk_reflections.cpp` | `ReflParamsUBO` += `int32_t glassNormalMode`, `float glassCreaseCos` at offsets 248/252. **Total stays 256** — the std140 tail is already padded, so no `static_assert` change |
-| `glsl/reflect_ray.rgen` | At the `isGlass` branch (line 272-277), choose: mode 1 → `faceNormal`; mode 2 → `faceNormal` when `smoothDot < glassCreaseCos`, else `hitNormal` |
-| `Dhewm3SettingsMenu.cpp` | Combo under the reflection block (~2836), gated on `reflOn` |
+| `vk_reflections.cpp` | `r_rtGlassNormalMode` (0 interp / 1 face / 2 crease-aware), `r_rtGlassCreaseRatio` (default 0.25) |
+| `vk_reflections.cpp` | `ReflParamsUBO` += `int32_t glassNormalMode`, `float glassCreaseRatio` at 252/256. Total 256 → 272 (UBO ring slot is 384) |
+| `glsl/glass_probe.rchit` | Per triangle: angle of each vertex normal to the face normal; `devRatio = min/max` (1 when max < 0.5°). Payload `pad` → `devRatio` |
+| `glsl/reflect_ray.rgen` | Mode 1 → `faceNormal`; mode 2 → `faceNormal` when `devRatio < glassCreaseRatio`. Debug mode 9 = the split (red face / green interp); old 9/10 dropped |
+| `Dhewm3SettingsMenu.cpp` | Combo + ratio slider under the reflection block, gated on `reflOn` |
+
+Discriminator is symmetry, not size: on a real arc every vertex tilts by ~half the facet
+angle; on a flat facet beside a smoothed crease the far-edge vertices match the face normal
+exactly, so `min/max ≈ 0`. Scale-free, so tessellation density doesn't matter.
 
 Selection lives in the rgen, not the rchit — the rchit has no `ReflParams` binding and
 needs none; both normals ride the payload.
@@ -77,14 +79,20 @@ needs none; both normals ride the payload.
 `origin = reflOrigin + reflNormal * 0.5` (line 331) picks up the change for free: on a
 crease the bias now pushes along the true facet normal.
 
-**Check:** `r_rtGlassNormalMode 1` at the Mars City window — the inversion is gone, replaced
-by two flat mirrors meeting at a visible seam. Mode 2 with `r_rtGlassCreaseAngle 8` matches
-mode 1 there and matches mode 0 on `enpro`'s tube. Sweep the angle 2→30 and confirm the
-`enpro` tube flips to faceted below ~4°, which bounds the useful range from one side.
+Mode 1 result: fixes the cafeteria pane, but every arc shows one image per facet (correct
+for a faceted mirror, wrong for these assets).
+
+**Check:** debug mode 9 — cafeteria lower facet red, skylight and `enpro` tube green. Mode 2
+composite: cafeteria not inverted, skylight matches mode 0. Sweep the ratio 0.1→0.5; arcs
+should stay green throughout.
 
 ---
 
 ## Stage 3 — validate and set the default
+
+**Closed 2026-10-15.** `r_rtGlassNormalMode` defaults to 2; cvars added to
+`Dhewm3-AI-RT-Settings.md`. Validated on the `mars_city1` cafeteria pane and skylight only —
+the map tour below was skipped. Run it if a curved pane ever looks faceted.
 
 Spots, worst-first. `teleport func_static_52993` reaches the Mars City pane; the others are
 worldspawn, so `noclip` + `getviewpos`.
@@ -100,8 +108,7 @@ worldspawn, so `noclip` + `getviewpos`.
 | `mc_underground` | 630 -1282 32 | ARC 90° | several nearby; outdoor glass |
 | `recycling2` | 1040 356 432 | FLAT 0° | regression guard — must be pixel-identical to mode 0 |
 
-Then: default `r_rtGlassNormalMode` to 2 (or 1 if `MIXED` shows no regression), add the
-`REFL_DEBUG_MAX_MODE` entry to the cvar doc, update `Dhewm3-AI-RT-Settings.md`, and move
+Then: default `r_rtGlassNormalMode` to 2, update `Dhewm3-AI-RT-Settings.md`, and move
 this doc to `completed/`.
 
 **Exit gate:** the Mars City window reads as a flat mirror, `enpro`'s tube is still smooth,
@@ -113,8 +120,9 @@ and `recycling2` is unchanged.
 
 | Risk | Handling |
 |---|---|
-| Coarse `ARC` patches facet visibly (`delta3` is 3x3) | `r_rtGlassCreaseAngle` keeps them on the interpolated normal; the sweep in Stage 2 bounds it |
-| `MIXED` needs per-hit selection, so the threshold is doing real work on 21% of patches | Mode 10 reads the deviation directly — tune from the overlay, not the composite |
+| Coarse `ARC` patches facet visibly (`delta3` is 3x3) | Symmetric tilt keeps them interpolated regardless of density |
+| `MIXED` needs per-hit selection, so the threshold is doing real work on 21% of patches | Debug mode 9 shows the split directly — tune from the overlay, not the composite |
+| A facet with a smoothed crease on *both* edges reads symmetric and stays smooth | Accepted; the census `CREASE` panes have one kink each |
 | A visible seam at the crease replaces a smooth wrong image | Correct, and it is what the geometry is. Only the 6 `CREASE` patches show it |
 | Cost | Three extra vertex position fetches in a shader that already has the addresses and indices loaded |
 

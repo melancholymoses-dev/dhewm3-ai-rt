@@ -100,6 +100,19 @@ idCVar r_rtReflectionMode("r_rtReflectionMode", "1", CVAR_RENDERER | CVAR_INTEGE
                           "    remap (r_rtSpecF0Scale/Gamma) plus r_rtReflectionMinWeight.\n"
                           "Use r_rtReflections 0 to turn the feature off entirely.");
 
+idCVar r_rtGlassNormalMode("r_rtGlassNormalMode", "2", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
+                           "Reflection-plane normal on glass.\n"
+                           "0 = vertex-interpolated (smooth; patch creases read as curved mirrors).\n"
+                           "1 = geometric face normal (flat facets).\n"
+                           "2 = crease-aware: face normal on triangles whose vertex normals tilt lopsidedly\n"
+                           "    (flat facet beside a smoothed crease), interpolated on symmetric ones (real\n"
+                           "    arcs). See r_rtGlassCreaseRatio and r_rtReflectionDebugMode 9.",
+                           0, 2);
+idCVar r_rtGlassCreaseRatio("r_rtGlassCreaseRatio", "0.25", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                            "r_rtGlassNormalMode 2: a glass triangle uses the face normal when its smallest\n"
+                            "vertex-normal deviation from the face normal is below this fraction of its largest.",
+                            0.0f, 1.0f);
+
 idCVar r_rtReflectionDebugMode(
     "r_rtReflectionDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
     "0 = off.\n"
@@ -119,7 +132,9 @@ idCVar r_rtReflectionDebugMode(
     "7 = mode 6 scaled x8, so the subject reads through the tonemap toe while judging it.\n"
     "8 = mode 6 plus projectile emitter discs (r_rtReflGlow): green = visible, red = behind\n"
     "    the reflected surface. Emitters are collected even with r_rtReflGlow 0.\n"
-    "Modes 2-8 require r_rtReflections 1 — they ride on the reflection ray dispatch, force the\n"
+    "9 = glass only: r_rtGlassNormalMode 2's split. Red = face normal (crease-adjacent flat facet),\n"
+    "    green = interpolated (arc or flat). Brighter = more lopsided vertex normals.\n"
+    "Modes 2-9 require r_rtReflections 1 — they ride on the reflection ray dispatch, force the\n"
     "full-screen launch grid, and are displayed via refl_composite.frag with blending disabled\n"
     "(replace, not add). The per-surface glass overlay is suppressed while they are active.");
 
@@ -152,7 +167,9 @@ idCVar r_rtReflectionDebugMode(
 //   int    volSteps       offset 240 size  4  (0 = no volume bound this frame)
 //   float  volGain        offset 244 size  4
 //   float  volIsoMix      offset 248 size  4  (r_rtVolIsotropicMix, Stage 5)
-//   total: 256 bytes — std140 rounds the block up to a multiple of
+//   int    glassNormalMode offset 252 size 4  (r_rtGlassNormalMode)
+//   float  glassCreaseRatio offset 256 size 4  (r_rtGlassCreaseRatio)
+//   total: 272 bytes — std140 rounds the block up to a multiple of
 //   16, and uboInfo.range is sizeof(ReflParamsUBO), which must not be smaller.
 // ---------------------------------------------------------------------------
 
@@ -190,9 +207,11 @@ struct ReflParamsUBO
     int32_t volSteps; // 0 = no usable grid this frame; the rgen takes no samples
     float volGain;
     float volIsoMix; // r_rtVolIsotropicMix — Stage 5, for rt_PhaseFromMeanDir
-    float _pad0[1];  // std140 rounds the block to 256
+    int32_t glassNormalMode; // r_rtGlassNormalMode — 0 interpolated, 1 face, 2 crease-aware
+    float glassCreaseRatio;  // r_rtGlassCreaseRatio — mode 2 flattens when devRatio < this
+    float _pad0[3];          // std140 rounds the block to 272
 };
-static_assert(sizeof(ReflParamsUBO) == 256, "ReflParamsUBO size mismatch");
+static_assert(sizeof(ReflParamsUBO) == 272, "ReflParamsUBO size mismatch");
 
 // ---------------------------------------------------------------------------
 // Forward declarations (defined in other files)
@@ -1286,6 +1305,8 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
             ubo.volIsoMix = idMath::ClampFloat(0.0f, 1.0f, r_rtVolIsotropicMix.GetFloat());
         }
     }
+    ubo.glassNormalMode = idMath::ClampInt(0, 2, r_rtGlassNormalMode.GetInteger());
+    ubo.glassCreaseRatio = idMath::ClampFloat(0.0f, 1.0f, r_rtGlassCreaseRatio.GetFloat());
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
 
     // --- Update descriptor set (once per frame slot when frameCount changes).

@@ -89,6 +89,8 @@ layout(set = 0, binding = 3) uniform ReflParams {
     int    volSteps;      // 0 = no usable grid this frame; take no samples
     float  volGain;
     float  volIsoMix;     // r_rtVolIsotropicMix — Stage 5, for rt_PhaseFromMeanDir
+    int    glassNormalMode; // r_rtGlassNormalMode — 0 interpolated, 1 face, 2 crease-aware
+    float  glassCreaseRatio; // r_rtGlassCreaseRatio — mode 2 flattens when devRatio < this
 } params;
 
 // Grid math only — no bindings of its own, so it can live alongside this set.
@@ -370,6 +372,9 @@ void main()
         // Glass surface found between camera and depth surface.
         reflOrigin = glassProbe.hitPos;
         reflNormal = glassProbe.hitNormal;
+        if (params.glassNormalMode == 1 ||
+            (params.glassNormalMode == 2 && glassProbe.devRatio < params.glassCreaseRatio))
+            reflNormal = glassProbe.faceNormal;
         pathClass  = vec3(0.0, 1.0, 0.0);   // green
     }
     else if (gbuf.a > 0.0)
@@ -420,6 +425,21 @@ void main()
         // already stored 0). Yellow cannot currently appear — the f0 early-out tests
         // gbuf.a, the same value this branch keys off, so it subsumes the fallback.
         imageStore(reflImage, coord, vec4(pathClass, 1.0));
+        return;
+    }
+
+    if (params.debugMode == 9)
+    {
+        // Glass only: mode 2's crease split. Red = face normal (lopsided triangle),
+        // green = interpolated (arc or flat); brightness falls with devRatio.
+        vec3 split = vec3(0.0);
+        if (isGlass)
+        {
+            float r = clamp(glassProbe.devRatio, 0.0, 1.0);
+            split = (r < params.glassCreaseRatio) ? vec3(1.0 - r, 0.0, 0.0)
+                                                  : vec3(0.0, 0.25 + 0.75 * (1.0 - r), 0.0);
+        }
+        imageStore(reflImage, coord, vec4(split, 1.0));
         return;
     }
 

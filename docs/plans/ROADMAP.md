@@ -1,6 +1,6 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-10-14 · **Next action: 8c Stage 4 + in-game validation.**
+**Status reviewed:** 2026-10-15 · **Next action: cleanup 1a + 5a (step 4).**
 Optimization Stage L (interaction overdraw) was characterized and **parked** — four candidate
 causes all measured negative, and the remaining one is blocked on light falloff being a
 texture. Details and dead ends: `20261010_vk_core_audit.md` → "Stage L — parked".
@@ -19,8 +19,6 @@ they are things to check code against, not things to schedule.
 | # | Item | Doc | Status |
 |---|---|---|---|
 | 8 | **Optimization** — Vulkan core (F/A), RT uploads (R/B), not-yet-audited (X), **Stage L interaction overdraw**. Stage S shadow dispatch closed | `20261010_vk_core_audit.md`, closed half in `completed/20261010_vk_core_audit_closed.md` | **Parked** — see that doc's "Current lead" section. Three wins (S2 cull, `r_rtShadowSamples` 4 → 2, BLAS pooling); 17 findings dispatched or parked by measurement.  Pausing |
-| 8b | **Glass reflection normals** — Mars City windows focus and invert; the panes are piecewise-flat Bezier patches whose 26.57° crease `GenerateNormals` smooths into a cylindrical mirror. Stages 1-3 | `20261013_glass_geometric_normal.md` | Unstarted. Small and bounded. Cause confirmed by hand calculation + a census of all 27 stock maps (718 glass patches: 6 `CREASE`, 21 real `ARC`, 153 `MIXED`) |
-| 8c | **Volumetrics in reflections** — the flashlight beam is absent from glass; march the reflected segment through `froxelScatter`. Stages 1-6 | `20261013_reflection_volumetrics.md` | Stages 1-3 landed 2026-10-13. In-game 2026-10-15 the reflected beam read wrong from two independent causes; **Stages 5 and 6 landed the same day, both unvalidated** — 5 replaces the camera-baked phase with a mean-direction grid, 6 replaces an invented axial ramp with GL's projected-light falloff image. Stage 4 is down to refl debug mode 9 |
 | 8d | **Surface roughness in reflections** — extend past glass to opaque surfaces with a GGX lobe. Blocked on a reflection denoiser (the only RT pass without one) and a roughness ceiling to avoid double-counting probe GI. Stages 1-5 | `20261013_reflection_roughness.md` | Unstarted. Budget 20-40% frame time for the all-surface mode; **gates cleanup Phase 2b/2c**, which would otherwise reclaim the G-buffer alpha that F0 needs |
 | 8e | **Cleanup + polish** — debug/cvar trim (1a/1b/1c), dead-path deletion, resets, presets, comment sweep | `20261010_cleanup_polish.md` | Reordered 2026-10-13: deletion runs *after* the gaining work, since the dead GI/vol paths measure 0.001 ms. 1a and 5a are unblocked and can land any time |
 
@@ -32,8 +30,8 @@ this says *when*.
 | # | Step | From | Gate to clear |
 |---|---|---|---|
 | 1 | ~~Stage S~~ — **done 2026-10-13** | 8 | S2 + S3 landed; S2b reverted; S5-S7 dropped. Close-out in `completed/20261010_vk_core_audit_closed.md` |
-| 2 | Validate 8c Stages 5 + 6 in-game | 8c | Both landed 2026-10-15, neither validated. Remaining in Stage 4: `r_rtReflectionDebugMode 9` (the menu entries landed with Stage 5) |
-| 3 | 8b glass crease fix | 8b | Small, bounded; adds refl debug modes 9/10 |
+| 2 | ~~Validate 8c Stages 5 + 6 in-game~~ — **done 2026-10-15** | 8c | Both validated. Stage 4's debug overlay not built. Doc in `completed/` |
+| 3 | ~~8b glass crease fix~~ — **done 2026-10-15** | 8b | `r_rtGlassNormalMode 2` default; refl debug mode 9. Doc in `completed/` |
 | 4 | Cleanup 1a + 5a | 8e | Unblocked; land whenever convenient |
 | 5 | Cleanup 1b (+ Stage S4 serial-path deletion) | 8e | Unblocked — Stage S closed |
 | 6 | ~~Optimization Stage L~~ — **parked 2026-10-14.** L1 landed (per-light labels); L2 blocked, L3 dropped | 8 | Four candidate causes measured negative. If optimization resumes, start with the AO ray budget or the E3 `vid_restart` leak — both cheap, neither needs new tooling |
@@ -83,7 +81,6 @@ driven by gpu.Interactions.
 |---|---|
 | `20261010_vk_core_audit.md` | **All optimization.** Open findings, open stages (B2 remainder, B3, B4, A3, E2-E4), the X verdicts, the baseline numbers and the next levers. Closed work is in `completed/20261010_vk_core_audit_closed.md`; the profiler reference is in `../vulkan_debugging.md` |
 | `20261010_cleanup_polish.md` | **All deletion and polish, no optimization.** Phase order 1a/1b/1c, the per-phase rules (cvar+UBO+shader+menu deleted together), presets and resets, comment sweep |
-| `20261013_glass_geometric_normal.md` | Glass crease fix; the stock-map glass-patch census |
 | `20261013_reflection_roughness.md` | Roughness/GGX reflections, the denoiser, and the GI handoff ceiling |
 
 
@@ -102,6 +99,8 @@ All in `completed/`.
 
 | Doc | Owns |
 |---|---|
+| `20261013_reflection_volumetrics.md` | **Arc 8c.** Flashlight beam in glass: reflected segment marched through `froxelScatter` (`r_rtReflVol*`), mean-direction phase grid, GL projected-light falloff image in the shared light eval |
+| `20261013_glass_geometric_normal.md` | **Arc 8b.** Glass patch crease normals: per-triangle symmetry test (`r_rtGlassNormalMode 2`, default), refl debug mode 9, the stock-map glass-patch census. Stage 3 map tour skipped — only the `mars_city1` cafeteria was checked |
 | `20261010_vk_core_audit_closed.md` | **Arc 8, closed half.** Stage S shadow dispatch in full, the closed B stages and their A/Bs (BLAS pooling, static flags, BAR placement, frame serialization), the 10 findings dispatched by measurement, the parked stages, and the three measurement defects |
 | `20261001_see_first_person_player_model.md` | **Arc 6.** First-person player body: trimmed mesh, `rtPlayer` RT exclusion, ladder and foot-IK fixes. Cvars `pm_showFirstPersonBody`, `pm_firstPersonBodyOffset`, `pm_ladderLegAnim` |
 | `20261009_vol_fix.md` | **Arc 7.** TLAS pass-2 bounds cull, projected-vol gain/falloff, `rtPlayer` mask bit, vertex-cache sub-allocator + staging ring. 7.4 conditional |

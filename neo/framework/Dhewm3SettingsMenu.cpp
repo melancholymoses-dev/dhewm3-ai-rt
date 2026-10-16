@@ -2500,6 +2500,8 @@ struct RTCVars
     idCVar *rtReflVol = nullptr;
     idCVar *rtReflVolSteps = nullptr;
     idCVar *rtReflGlowSmoke = nullptr;
+    idCVar *rtGlassNormalMode = nullptr;
+    idCVar *rtGlassCreaseRatio = nullptr;
 
     // GI fine-tuning
     idCVar *rtGITemporal = nullptr;
@@ -2631,6 +2633,8 @@ static void InitRTOptionsMenu()
     rtCVars.rtReflVol = cvarSystem->Find("r_rtReflVol");
     rtCVars.rtReflVolSteps = cvarSystem->Find("r_rtReflVolSteps");
     rtCVars.rtReflGlowSmoke = cvarSystem->Find("r_rtReflGlowSmoke");
+    rtCVars.rtGlassNormalMode = cvarSystem->Find("r_rtGlassNormalMode");
+    rtCVars.rtGlassCreaseRatio = cvarSystem->Find("r_rtGlassCreaseRatio");
     rtCVars.rtGITemporal = cvarSystem->Find("r_rtGITemporal");
     rtCVars.rtGITemporalAlpha = cvarSystem->Find("r_rtGITemporalAlpha");
     rtCVars.rtGISamples = cvarSystem->Find("r_rtGISamples");
@@ -2848,6 +2852,13 @@ static void DrawRTOptionsMenu()
         RTCheckbox("Light Shafts in Reflections", rtCVars.rtReflVol);
         ImGui::BeginDisabled(!(rtCVars.rtReflVol && rtCVars.rtReflVol->GetBool()));
         RTSliderInt("Shaft Samples per Ray", rtCVars.rtReflVolSteps, 1, 32);
+        ImGui::EndDisabled();
+        static const char *const glassNormalModes[] = {"Smooth (interpolated)", "Flat (face normal)",
+                                                       "Crease-aware"};
+        RTCombo("Glass Reflection Normal", rtCVars.rtGlassNormalMode, glassNormalModes,
+                IM_ARRAYSIZE(glassNormalModes));
+        ImGui::BeginDisabled(!(rtCVars.rtGlassNormalMode && rtCVars.rtGlassNormalMode->GetInteger() == 2));
+        RTSliderFloat("Glass Crease Ratio", rtCVars.rtGlassCreaseRatio, 0.0f, 1.0f, "%.2f");
         ImGui::EndDisabled();
 
         ImGui::EndTable();

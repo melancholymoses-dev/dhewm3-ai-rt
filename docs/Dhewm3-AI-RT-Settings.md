@@ -102,6 +102,8 @@ Needs fixing if they stay in the menu: `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIR
 | `r_rtReflectionBlend` | Reflections | Reflection blend factor | 6.0 | A | = |
 | `r_rtReflectionMinWeight` | Reflections | Skip reflection rays below this Fresnel weight (legacy mode 2) | 0.04 | D | = |
 | `r_rtReflectionDebugMode` | Reflections | Reflection debug view | 0 | D | = |
+| `r_rtGlassNormalMode` | Reflections | Glass reflection normal: 0 interpolated, 1 face, 2 crease-aware | 2 | D | = |
+| `r_rtGlassCreaseRatio` | Reflections | Mode 2 threshold: min/max vertex-normal tilt below which a glass triangle is flattened | 0.25 | D | = |
 | `r_rtReflAmbientScale` | Reflections | Fraction of a shadowed light still added in reflections | 0.15 | D | = |
 | `r_rtReflGlow` | Reflections | Emissive glow in reflections | 1 | A | = |
 | `r_rtReflGlowGain` | Reflections | Glow gain | 1.0 | A | = |

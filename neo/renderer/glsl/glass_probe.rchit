@@ -38,6 +38,12 @@ hitAttributeEXT vec2 baryCoord;
 // Normal offset within the 15-float idDrawVert stride.
 #define RT_VTX_NORMAL_OFF 5u
 
+vec3 rt_SafeNormalize(vec3 v)
+{
+    float len2 = dot(v, v);
+    return (len2 > 1e-12) ? v * inversesqrt(len2) : vec3(0.0);
+}
+
 void main()
 {
     uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
@@ -71,6 +77,8 @@ void main()
     uint64_t vtxAddr  = vtxAddrs[geomSlot];
 
     vec3 objNormal = vec3(0.0, 1.0, 0.0); // safe fallback
+    vec3 objFaceNormal = objNormal;
+    float devRatio = 1.0;   // 1 = symmetric or flat: keep the interpolated normal
     bool primOk = mat.maxPrimId == 0xFFFFFFFFu || uint(gl_PrimitiveID) <= mat.maxPrimId;
     if (idxAddr != 0ul && vtxAddr != 0ul && primOk)
     {
@@ -99,6 +107,31 @@ void main()
 
         float w0 = 1.0 - baryCoord.x - baryCoord.y;
         objNormal = normalize(w0 * n0 + baryCoord.x * n1 + baryCoord.y * n2);
+
+        vec3 p0 = vec3(vBuf.data[i0 * RT_VTX_STRIDE + RT_VTX_POS_OFF     ],
+                       vBuf.data[i0 * RT_VTX_STRIDE + RT_VTX_POS_OFF + 1u],
+                       vBuf.data[i0 * RT_VTX_STRIDE + RT_VTX_POS_OFF + 2u]);
+        vec3 p1 = vec3(vBuf.data[i1 * RT_VTX_STRIDE + RT_VTX_POS_OFF     ],
+                       vBuf.data[i1 * RT_VTX_STRIDE + RT_VTX_POS_OFF + 1u],
+                       vBuf.data[i1 * RT_VTX_STRIDE + RT_VTX_POS_OFF + 2u]);
+        vec3 p2 = vec3(vBuf.data[i2 * RT_VTX_STRIDE + RT_VTX_POS_OFF     ],
+                       vBuf.data[i2 * RT_VTX_STRIDE + RT_VTX_POS_OFF + 1u],
+                       vBuf.data[i2 * RT_VTX_STRIDE + RT_VTX_POS_OFF + 2u]);
+        vec3 fn = cross(p1 - p0, p2 - p0);
+        if (dot(fn, fn) > 1e-12)
+            objFaceNormal = normalize(fn);
+        else
+            objFaceNormal = objNormal;   // degenerate triangle
+
+        // Crease test: on a genuine arc every vertex normal tilts off the face normal by
+        // about the same angle; on a flat facet beside a smoothed crease the far-edge
+        // vertices match it exactly. abs() because the face winding is reversed.
+        float d0 = acos(clamp(abs(dot(rt_SafeNormalize(n0), objFaceNormal)), 0.0, 1.0));
+        float d1 = acos(clamp(abs(dot(rt_SafeNormalize(n1), objFaceNormal)), 0.0, 1.0));
+        float d2 = acos(clamp(abs(dot(rt_SafeNormalize(n2), objFaceNormal)), 0.0, 1.0));
+        float maxDev = max(d0, max(d1, d2));
+        if (maxDev > radians(0.5))
+            devRatio = min(d0, min(d1, d2)) / maxDev;
     }
 
     // Transform object-space normal to world space.
@@ -108,9 +141,17 @@ void main()
     // This handles non-uniform scaling (e.g. glass panels with texture-fit scaling).
     vec3 worldNormal = normalize(transpose(mat3(gl_WorldToObjectEXT)) * objNormal);
 
-    // Orient toward the incoming ray origin (camera-side of the glass).
+    vec3 worldFace = normalize(transpose(mat3(gl_WorldToObjectEXT)) * objFaceNormal);
+
+    // Orient toward the incoming ray origin (camera-side of the glass). Doom 3 winds
+    // front faces opposite to Vulkan, so the face normal gets its own flip.
     if (dot(worldNormal, gl_WorldRayDirectionEXT) > 0.0)
         worldNormal = -worldNormal;
+    if (dot(worldFace, gl_WorldRayDirectionEXT) > 0.0)
+        worldFace = -worldFace;
 
-    glassProbe.hitNormal = worldNormal;
+    glassProbe.hitNormal  = worldNormal;
+    glassProbe.faceNormal = worldFace;
+    glassProbe.smoothDot  = abs(dot(worldNormal, worldFace));
+    glassProbe.devRatio   = devRatio;
 }
