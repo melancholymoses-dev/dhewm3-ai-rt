@@ -90,6 +90,7 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Vtx
 //   stride = 15 floats = 60 bytes
 // ---------------------------------------------------------------------------
 #define RT_VTX_STRIDE   15u
+#define RT_VTX_POS_OFF   0u   // float offset of xyz.x within one vertex
 #define RT_VTX_UV_OFF    3u   // float offset of st.x within one vertex
 #define RT_VTX_NORM_OFF  5u   // float offset of normal.x within one vertex
 

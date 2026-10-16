@@ -423,6 +423,29 @@ void main()
         return;
     }
 
+    if (params.debugMode == 9)
+    {
+        // The normal actually used for the reflection plane, after branch selection.
+        imageStore(reflImage, coord, vec4(reflNormal * 0.5 + 0.5, 1.0));
+        return;
+    }
+
+    if (params.debugMode == 10)
+    {
+        // Glass only: angle between interpolated and face normal. Black 0, green 5 deg,
+        // red >= 20 deg.
+        vec3 ramp = vec3(0.0);
+        if (isGlass)
+        {
+            float deg = degrees(acos(clamp(glassProbe.smoothDot, 0.0, 1.0)));
+            ramp = (deg < 5.0) ? vec3(0.0, deg / 5.0, 0.0)
+                               : vec3(clamp((deg - 5.0) / 15.0, 0.0, 1.0),
+                                      1.0 - clamp((deg - 5.0) / 15.0, 0.0, 1.0), 0.0);
+        }
+        imageStore(reflImage, coord, vec4(ramp, 1.0));
+        return;
+    }
+
     // Bias origin off surface to avoid self-intersection
     vec3 origin = reflOrigin + reflNormal * 0.5;
 

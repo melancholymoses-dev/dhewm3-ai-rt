@@ -119,7 +119,9 @@ idCVar r_rtReflectionDebugMode(
     "7 = mode 6 scaled x8, so the subject reads through the tonemap toe while judging it.\n"
     "8 = mode 6 plus projectile emitter discs (r_rtReflGlow): green = visible, red = behind\n"
     "    the reflected surface. Emitters are collected even with r_rtReflGlow 0.\n"
-    "Modes 2-8 require r_rtReflections 1 — they ride on the reflection ray dispatch, force the\n"
+    "9 = the reflection-plane normal actually used, as RGB (after glass/G-buffer branch selection).\n"
+    "10 = glass only: angle between interpolated and face normal. Black 0, green 5, red >= 20 deg.\n"
+    "Modes 2-10 require r_rtReflections 1 — they ride on the reflection ray dispatch, force the\n"
     "full-screen launch grid, and are displayed via refl_composite.frag with blending disabled\n"
     "(replace, not add). The per-surface glass overlay is suppressed while they are active.");
 

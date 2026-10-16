@@ -19,6 +19,8 @@ Code release.
 struct GlassProbePayload {
     vec3  hitPos;     // world-space position on glass surface
     float hitT;       // ray t value; 0 = no glass found
-    vec3  hitNormal;  // world-space outward-facing normal of glass surface
+    vec3  hitNormal;  // world-space outward-facing normal of glass surface (vertex-interpolated)
+    float smoothDot;  // abs(dot(hitNormal, faceNormal)); 1 = smoothing adds no curvature
+    vec3  faceNormal; // world-space geometric (triangle) normal, camera-facing
     float pad;
 };
