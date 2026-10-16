@@ -38,9 +38,9 @@ Ranked by measured size, cheapest first within a row.
 | # | Lever | Cost to try | Why here |
 |---|---|---|---|
 | ~~X7~~ | ~~geometry submitted 3+ times~~ | — | **Closed 2026-10-14, negative.** Amplification is 2.7-4.0x against 15-42 lights in view, so per-(light, surface) culling is working and there is no resubmission to reclaim. Led to Stage L |
-| 1 | **AO ray budget** — `r_rtAOSamples` 4 → 2 leaning on the existing EMA; `aoRadius` 64 down; then half-res + bilateral upsample; then first-ray-closest-hit with the rest `TerminateOnFirstHit` | (a)(b) cvar sweep, (c)(d) code | 2.0-2.7 ms p50. `ao_ray.rgen:166` traces `gl_RayFlagsNoneEXT` — closest hit, because the `(t/R)²` falloff needs the nearest occluder, so each AO ray costs more than a shadow ray, 4x per pixel at full res |
+| 1 | ~~**AO ray budget**~~ — `r_rtAOSamples` 4 → 2 leaning on the existing EMA; `aoRadius` 64 down; then half-res + bilateral upsample; then first-ray-closest-hit with the rest `TerminateOnFirstHit` | (a)(b) cvar sweep, (c)(d) code | 2.0-2.7 ms p50. `ao_ray.rgen:166` traces `gl_RayFlagsNoneEXT` — closest hit, because the `(t/R)²` falloff needs the nearest occluder, so each AO ray costs more than a shadow ray, 4x per pixel at full res |
 | 2 | **ProbeResolve / FroxelFill sweep** — probe counts and spacing, `r_rtVolFroxel` grid dims | cvar sweep | ProbeResolve 1.0-1.4 ms is a full-res screen pass; FroxelFill 0.5-1.2 ms is the largest resolution-independent item in the engine. ProbeTrace (0.05) and ProbeBlend (0.09) are free — the GI cost is not rays |
-| 3 | **E3 leak** — VRAM and RSS growth across `vid_restart` | 1 restart | RSS 210 → 614 MB after one restart (R7 side note). See E3 below |
+| 3 | ~~**E3 leak**~~ — VRAM and RSS growth across `vid_restart` **Closed** | 1 restart | RSS 210 → 614 MB after one restart (R7 side note). See E3 below |
 | 4 | **X6** — non-opaque BLAS geometry, any-hit cost per ray | counter + tint | Compounds with row 1: every AO ray can invoke `ao_ray.rahit` |
 | 5 | **X8** — load time, ~10 s per map | read one log | Three of the four phase timers already print. See X8 below |
 | 6 | **B2 remainder, B3, B4, A3** | med | Memory, allocation-limit safety and hitches, not frame time. Read an RRA capture before B2 |

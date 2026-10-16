@@ -139,8 +139,10 @@ struct GIResolveCookie {
     vec4 planeS;
     vec4 planeT;
     vec4 planeQ;
+    vec4 planeF;        // Stage 6 — keep in step with RTLightCookie or the block size diverges
     uint imageIndex;
-    uint pad0; uint pad1; uint pad2;
+    uint falloffIndex;
+    uint pad0; uint pad1;
 };
 
 layout(set = 0, binding = 9, std430) readonly buffer GIResolveLightBuf {

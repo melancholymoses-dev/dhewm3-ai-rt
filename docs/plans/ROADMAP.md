@@ -18,9 +18,9 @@ they are things to check code against, not things to schedule.
 
 | # | Item | Doc | Status |
 |---|---|---|---|
-| 8 | **Optimization** — Vulkan core (F/A), RT uploads (R/B), not-yet-audited (X), **Stage L interaction overdraw**. Stage S shadow dispatch closed | `20261010_vk_core_audit.md`, closed half in `completed/20261010_vk_core_audit_closed.md` | **Current, and Stage L is the active lead** — see that doc's "Current lead" section for where we are in the tree. Three wins landed (S2 cull, `r_rtShadowSamples` 4 → 2, BLAS pooling); 17 findings dispatched or parked by measurement |
+| 8 | **Optimization** — Vulkan core (F/A), RT uploads (R/B), not-yet-audited (X), **Stage L interaction overdraw**. Stage S shadow dispatch closed | `20261010_vk_core_audit.md`, closed half in `completed/20261010_vk_core_audit_closed.md` | **Parked** — see that doc's "Current lead" section. Three wins (S2 cull, `r_rtShadowSamples` 4 → 2, BLAS pooling); 17 findings dispatched or parked by measurement.  Pausing |
 | 8b | **Glass reflection normals** — Mars City windows focus and invert; the panes are piecewise-flat Bezier patches whose 26.57° crease `GenerateNormals` smooths into a cylindrical mirror. Stages 1-3 | `20261013_glass_geometric_normal.md` | Unstarted. Small and bounded. Cause confirmed by hand calculation + a census of all 27 stock maps (718 glass patches: 6 `CREASE`, 21 real `ARC`, 153 `MIXED`) |
-| 8c | **Volumetrics in reflections** — the flashlight beam is absent from glass; march the reflected segment through `froxelScatter`. Stages 1-4 | `20261013_reflection_volumetrics.md` | Stages 1-3 landed 2026-10-13, **not yet validated in-game**. Stage 4 is the debug overlay + menu entries |
+| 8c | **Volumetrics in reflections** — the flashlight beam is absent from glass; march the reflected segment through `froxelScatter`. Stages 1-6 | `20261013_reflection_volumetrics.md` | Stages 1-3 landed 2026-10-13. Validated in-game 2026-10-15 and the reflected beam reads wrong: two independent causes, now Stage 5 (mean-direction grid, replaces the camera-baked phase) and Stage 6 (projected-light falloff image, replaces an invented axial ramp). Stage 4 is still the debug overlay + menu entries |
 | 8d | **Surface roughness in reflections** — extend past glass to opaque surfaces with a GGX lobe. Blocked on a reflection denoiser (the only RT pass without one) and a roughness ceiling to avoid double-counting probe GI. Stages 1-5 | `20261013_reflection_roughness.md` | Unstarted. Budget 20-40% frame time for the all-surface mode; **gates cleanup Phase 2b/2c**, which would otherwise reclaim the G-buffer alpha that F0 needs |
 | 8e | **Cleanup + polish** — debug/cvar trim (1a/1b/1c), dead-path deletion, resets, presets, comment sweep | `20261010_cleanup_polish.md` | Reordered 2026-10-13: deletion runs *after* the gaining work, since the dead GI/vol paths measure 0.001 ms. 1a and 5a are unblocked and can land any time |
 
@@ -32,7 +32,8 @@ this says *when*.
 | # | Step | From | Gate to clear |
 |---|---|---|---|
 | 1 | ~~Stage S~~ — **done 2026-10-13** | 8 | S2 + S3 landed; S2b reverted; S5-S7 dropped. Close-out in `completed/20261010_vk_core_audit_closed.md` |
-| 2 | 8c Stage 4 + validate 1-3 in-game | 8c | Already landed, unvalidated. Finish before stacking more reflection work |
+| 2 | 8c Stage 6 (projected-light falloff image) | 8c | In progress 2026-10-15. Cheap and GL-parity; fixes the pool as well as the beam |
+| 2b | 8c Stage 5 (mean-direction grid) + Stage 4 | 8c | After Stage 6, so the two causes are judged separately. ~25 MB of grids; `r_rtVolFlashlightGain` needs retuning |
 | 3 | 8b glass crease fix | 8b | Small, bounded; adds refl debug modes 9/10 |
 | 4 | Cleanup 1a + 5a | 8e | Unblocked; land whenever convenient |
 | 5 | Cleanup 1b (+ Stage S4 serial-path deletion) | 8e | Unblocked — Stage S closed |

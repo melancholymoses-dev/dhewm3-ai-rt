@@ -25,14 +25,19 @@ Code release.
 #ifndef RT_LIGHT_COOKIE_GLSL
 #define RT_LIGHT_COOKIE_GLSL
 
-// Mirrors GILightCookie (vk_gi.cpp) — one entry per RTLight slot, same index,
-// meaningful only when that light's flags has GI_LIGHT_FLAG_HAS_COOKIE set.
+// Mirrors GILightCookie (vk_gi.cpp) — one entry per RTLight slot, same index.
+// planeS/T/Q + imageIndex are meaningful only when that light's flags has
+// GI_LIGHT_FLAG_HAS_COOKIE set; planeF + falloffIndex only under
+// GI_LIGHT_FLAG_HAS_FALLOFF.  The two are independent — a projected light whose
+// stage conditions all failed has a falloff image but no projection image.
 struct RTLightCookie {
     vec4 planeS;
     vec4 planeT;
     vec4 planeQ;
-    uint imageIndex; // bindless slot into matTextures[], vk_material_table.cpp
-    uint _pad0; uint _pad1; uint _pad2;
+    vec4 planeF;       // Stage 6: lightProject[3] — the falloff texgen plane
+    uint imageIndex;   // bindless slot into matTextures[], vk_material_table.cpp
+    uint falloffIndex; // ditto, the light's lightFalloffImage
+    uint _pad0; uint _pad1;
 };
 
 // rt_SampleLightCookie — only ever called once the caller has confirmed
@@ -85,6 +90,25 @@ vec3 rt_SampleLightCookieSoft(RTLightCookie c, vec3 worldPos, float penumbra)
 
     float fade = 1.0 - smoothstep(0.0, penumbra, outside);
     return texture(matTextures[nonuniformEXT(c.imageIndex)], clamp(uv, 0.0, 1.0)).rgb * fade;
+}
+
+// rt_SampleLightFalloff — Stage 6 (20261013_reflection_volumetrics.md). The axial
+// attenuation of a projected light, read from its lightFalloffImage exactly as GL's
+// interaction pass does (interaction.vert:90 texgens S from lightProject[3],
+// interaction.frag:99 takes the red channel at T = 0.5).
+//
+// Only ever called once the caller has confirmed GI_LIGHT_FLAG_HAS_FALLOFF.
+//
+// The [0,1] test is explicit rather than left to the sampler: the real falloff images
+// are TR_CLAMP_TO_ZERO, but matTextures[] is bound through vkRT.matSampler, whose
+// address mode is not ours to assume.  Without it a point past light_end could wrap
+// back to a bright texel.
+float rt_SampleLightFalloff(RTLightCookie c, vec3 worldPos)
+{
+    float s = dot(vec4(worldPos, 1.0), c.planeF);
+    if (s < 0.0 || s > 1.0)
+        return 0.0;
+    return texture(matTextures[nonuniformEXT(c.falloffIndex)], vec2(s, 0.5)).r;
 }
 
 // Used by rt_light_eval.glsl's shadow-budget/stochastic-selection weighting,
