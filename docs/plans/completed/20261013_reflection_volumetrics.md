@@ -4,6 +4,9 @@ Reflection rays integrate no participating media, so the flashlight beam is abse
 glass. Fix: march the reflected segment through `froxelScatter`, the pre-integration
 volume the froxel path already produces.
 
+**Closed 2026-10-15.** Stages 1-6 landed and validated in-game; Stage 4's debug overlay was
+not built.
+
 ## What already exists
 
 | Resource | State | Why it fits |
@@ -94,15 +97,15 @@ The three cvars below landed with stage 3 — the march is untestable without th
 | `r_rtReflVolSteps` | 6 | Taps per reflection ray |
 | `r_rtReflVolGain` | 1.0 | Scale against the primary view |
 
-Remaining: `r_rtReflectionDebugMode 9` showing the reflected-ray volumetric term alone,
-and the first two cvars in `Dhewm3SettingsMenu.cpp` next to the reflection block.
+Menu entries landed with Stage 5. The planned debug mode (reflected-ray volumetric term
+alone) was **not built** — validation passed without it, and the refl debug range is already
+crowded. If it is ever needed, it goes in at `r_rtReflectionDebugMode 10`.
 
-**Check:** `r_rtReflVol 0` restores the current image exactly. Mode 9 shows the beam shape
-against black and nothing on surfaces the beam does not cross.
+**Check:** `r_rtReflVol 0` restores the current image exactly.
 
 ---
 
-## Stage 5 — mean-direction grid (landed 2026-10-15, unvalidated)
+## Stage 5 — mean-direction grid (landed and validated 2026-10-15)
 
 In-game 2026-10-15: the reflected flashlight beam reads too bright at high angles and far
 too dim head-on.  Cause is the baked phase angle below, measured rather than estimated.
@@ -155,7 +158,7 @@ that overlay.
 
 ---
 
-## Stage 6 — projected-light falloff image
+## Stage 6 — projected-light falloff image (landed and validated 2026-10-15)
 
 Same in-game report, second cause, independent of the phase grid: RT invents a linear axial
 ramp for projected/flashlight lights where GL uses the light's `lightFalloffImage`.

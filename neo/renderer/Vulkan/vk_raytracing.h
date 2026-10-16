@@ -805,7 +805,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // (docs/plans/20260918_reflection_brightness.md). Anything in 2..this forces the
 // full-screen launch grid, takes the replace-blend composite, and suppresses the
 // per-surface glass overlay.
-const int REFL_DEBUG_MAX_MODE = 10; // 8 = projectile emitter discs (vk_rt_emitters.cpp); 9/10 = glass normal
+const int REFL_DEBUG_MAX_MODE = 9; // 8 = projectile emitter discs (vk_rt_emitters.cpp); 9 = glass crease split
 
 // Additively composite reflBuffer onto the framebuffer (Step 8, see
 // docs/plans/gbuffer_normal_pass.md). Must be called INSIDE the main render

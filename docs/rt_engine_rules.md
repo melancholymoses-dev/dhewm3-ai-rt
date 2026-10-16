@@ -64,6 +64,7 @@ Re-litigate only with new measurements.
 | **Reflected surfaces get no indirect light** | GI modulates by the *primary* G-buffer albedo. Structural, not a tuning miss |
 | **Light falloff matches the raster path** (reach = 1) | Keeps the benefit of the original lighting art; new techniques enhance rather than fight it |
 | **A reflection threshold cannot open opaque surfaces** | The worst artifacts are the *highest*-F0 pixels while any threshold culls from the bottom. Only changing the reflection's character (roughness) can |
+| **Patch vertex normals can invent curvature on flat glass; tell creases from arcs by symmetry, not angle** | `GenerateNormals` averages across a patch crease, and a one-row flat facet then ramps its normal across its whole height — an inverting lens. Deviation size overlaps real arcs (both ~5°); lopsided per-triangle vertex tilt doesn't (`r_rtGlassNormalMode 2`) |
 | **F0 and roughness are independent, and GGX needs both** | F0 is reflectance at normal incidence, roughness is lobe width. Doom 3 has no per-material gloss (one global NdotH table), and the specular map is already spent on F0 — so roughness comes from bump-map normal variance, which is real data the assets carry |
 
 ---

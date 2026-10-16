@@ -38,6 +38,12 @@ hitAttributeEXT vec2 baryCoord;
 // Normal offset within the 15-float idDrawVert stride.
 #define RT_VTX_NORMAL_OFF 5u
 
+vec3 rt_SafeNormalize(vec3 v)
+{
+    float len2 = dot(v, v);
+    return (len2 > 1e-12) ? v * inversesqrt(len2) : vec3(0.0);
+}
+
 void main()
 {
     uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
@@ -72,6 +78,7 @@ void main()
 
     vec3 objNormal = vec3(0.0, 1.0, 0.0); // safe fallback
     vec3 objFaceNormal = objNormal;
+    float devRatio = 1.0;   // 1 = symmetric or flat: keep the interpolated normal
     bool primOk = mat.maxPrimId == 0xFFFFFFFFu || uint(gl_PrimitiveID) <= mat.maxPrimId;
     if (idxAddr != 0ul && vtxAddr != 0ul && primOk)
     {
@@ -115,6 +122,16 @@ void main()
             objFaceNormal = normalize(fn);
         else
             objFaceNormal = objNormal;   // degenerate triangle
+
+        // Crease test: on a genuine arc every vertex normal tilts off the face normal by
+        // about the same angle; on a flat facet beside a smoothed crease the far-edge
+        // vertices match it exactly. abs() because the face winding is reversed.
+        float d0 = acos(clamp(abs(dot(rt_SafeNormalize(n0), objFaceNormal)), 0.0, 1.0));
+        float d1 = acos(clamp(abs(dot(rt_SafeNormalize(n1), objFaceNormal)), 0.0, 1.0));
+        float d2 = acos(clamp(abs(dot(rt_SafeNormalize(n2), objFaceNormal)), 0.0, 1.0));
+        float maxDev = max(d0, max(d1, d2));
+        if (maxDev > radians(0.5))
+            devRatio = min(d0, min(d1, d2)) / maxDev;
     }
 
     // Transform object-space normal to world space.
@@ -136,4 +153,5 @@ void main()
     glassProbe.hitNormal  = worldNormal;
     glassProbe.faceNormal = worldFace;
     glassProbe.smoothDot  = abs(dot(worldNormal, worldFace));
+    glassProbe.devRatio   = devRatio;
 }
