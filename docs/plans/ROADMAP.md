@@ -34,7 +34,7 @@ this says *when*.
 | 2 | ~~Validate 8c Stages 5 + 6 in-game~~ — **done 2026-10-15** | 8c | Both validated. Stage 4's debug overlay not built. Doc in `completed/` |
 | 3 | ~~8b glass crease fix~~ — **done 2026-10-15** | 8b | `r_rtGlassNormalMode 2` default; refl debug mode 9. Doc in `completed/` |
 | 4 | Cleanup 1a + 5a | 8e | Unblocked; land whenever convenient |
-| 4b | 8f GUI reflections Stages 0-3 | 8f | Implemented. Profile `GuiTextures` in the bioscan room, then move the doc to completed |
+| 4b | ~~8f GUI reflections Stages 0-3~~ — **done 2026-10-16** | 8f | Doc in `completed/` |
 | 5 | Cleanup 1b (+ Stage S4 serial-path deletion) | 8e | Unblocked — Stage S closed |
 | 6 | ~~Optimization Stage L~~ — **parked 2026-10-14.** L1 landed (per-light labels); L2 blocked, L3 dropped | 8 | Four candidate causes measured negative. If optimization resumes, start with the AO ray budget or the E3 `vid_restart` leak — both cheap, neither needs new tooling |
 | 7 | 8d roughness Stages 1-5 | 8d | Denoiser first. Decide go/no-go on the 20-40% frame cost before Stage 4 |
@@ -84,7 +84,6 @@ driven by gpu.Interactions.
 | `20261010_vk_core_audit.md` | **All optimization.** Open findings, open stages (B2 remainder, B3, B4, A3, E2-E4), the X verdicts, the baseline numbers and the next levers. Closed work is in `completed/20261010_vk_core_audit_closed.md`; the profiler reference is in `../vulkan_debugging.md` |
 | `20261010_cleanup_polish.md` | **All deletion and polish, no optimization.** Phase order 1a/1b/1c, the per-phase rules (cvar+UBO+shader+menu deleted together), presets and resets, comment sweep |
 | `20261013_reflection_roughness.md` | Roughness/GGX reflections, the denoiser, and the GI handoff ceiling |
-| `20261015_gui_reflections.md` | GUI render-to-texture slots, GUI surfaces in the TLAS, reflected screen brightness |
 
 
 **Reference Documents**
