@@ -44,8 +44,12 @@ extern idCVar r_vkLogRT;
 
 idCVar r_rtGuiReflections("r_rtGuiReflections", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
                           "Render in-world GUI screens into textures so RT reflections can show them.");
-idCVar r_rtGuiTexInterval("r_rtGuiTexInterval", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
-                          "Frames between refreshes of each GUI reflection texture. 1 = every frame.", 1, 60);
+idCVar r_rtGuiTexInterval("r_rtGuiTexInterval", "2", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
+                          "Frames between refreshes of each GUI reflection texture, staggered by slot. Skips both "
+                          "the GUI redraw and the GPU pass on the other frames. 1 = every frame.",
+                          1, 60);
+idCVar r_rtGuiReflGain("r_rtGuiReflGain", "0.3", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                       "Brightness of GUI screens seen in RT reflections.", 0.0f, 16.0f);
 idCVar r_rtGuiTexRadius("r_rtGuiTexRadius", "256", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                         "Entity GUIs within this distance of the camera keep refreshing while off screen, "
                         "nearest first, so reflections of them stay live. 0 = only GUIs drawn on screen.");
@@ -159,6 +163,19 @@ static int VK_GuiTex_AcquireSlot(const idUserInterface *gui)
     return slot;
 }
 
+// A slot is due when it has never been rendered, or on its turn: staggered by slot index
+// so r_rtGuiTexInterval N spreads the cost over N frames rather than spiking every Nth.
+static bool VK_GuiTex_Due(int slot)
+{
+    const guiTexSlot_t &s = s_slots[slot];
+    if (s.renderedFrame == tr.frameCount)
+        return false;
+    const int interval = r_rtGuiTexInterval.GetInteger();
+    if (s.renderedFrame < 0 || interval <= 1)
+        return true;
+    return ((tr.frameCount + slot) % interval) == 0;
+}
+
 // True if AcquireSlot could place a new GUI this frame without failing.
 static bool VK_GuiTex_CanAcquire(void)
 {
@@ -190,7 +207,7 @@ void VK_GuiTex_CaptureFromGuiModel(const idUserInterface *gui)
 
     // Several surfaces can show one GUI; one render per refresh covers them all.
     guiTexSlot_t &s = s_slots[slot];
-    if (s.renderedFrame >= 0 && tr.frameCount - s.renderedFrame < r_rtGuiTexInterval.GetInteger())
+    if (!VK_GuiTex_Due(slot))
         return;
     if (s_pendingCount >= VK_GUITEX_SLOTS)
         return;
@@ -230,6 +247,7 @@ void VK_GuiTex_RefreshNearby(idRenderWorldLocal *world)
         tr.viewDef->renderView.viewaxis[0].LengthSqr() <= 0.0001f)
         return;
 
+    const unsigned long long startTicks = R_ProfileTicks();
     static const int MAX_CANDIDATES = 64;
     guiTexCandidate_t cands[MAX_CANDIDATES];
     int numCands = 0;
@@ -262,8 +280,7 @@ void VK_GuiTex_RefreshNearby(idRenderWorldLocal *world)
         idUserInterface *gui = cands[c].gui;
         // Drawn on screen this frame, or not due yet: keep the slot, skip the Redraw.
         const int slot = VK_GuiTex_FindSlot(gui);
-        if (slot >= 0 && s_slots[slot].renderedFrame >= 0 &&
-            tr.frameCount - s_slots[slot].renderedFrame < r_rtGuiTexInterval.GetInteger())
+        if (slot >= 0 && !VK_GuiTex_Due(slot))
         {
             s_slots[slot].lastSeenFrame = tr.frameCount;
             continue;
@@ -284,9 +301,10 @@ void VK_GuiTex_RefreshNearby(idRenderWorldLocal *world)
         redrawn++;
     }
 
+    // CPU only: the GPU side of these redraws lands in the GuiTextures profiler phase.
     if ((redrawn > 0 || skippedFull > 0) && r_vkLogRT.GetInteger() >= 2)
-        common->Printf("VK GUITEX: frame=%d off-screen candidates=%d redrew=%d skipped(pool full)=%d\n",
-                       tr.frameCount, numCands, redrawn, skippedFull);
+        common->Printf("VK GUITEX: frame=%d off-screen candidates=%d redrew=%d skipped(pool full)=%d cpu=%dus\n",
+                       tr.frameCount, numCands, redrawn, skippedFull, R_ProfileUsecSince(startTicks));
 }
 
 int VK_GuiTex_PendingCount(void)

@@ -441,6 +441,7 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_UPSCALE,
     VK_RTPROF_PHASE_BLOOM,
     VK_RTPROF_PHASE_TONEMAP,
+    VK_RTPROF_PHASE_GUI_TEXTURES, // GUI reflection slots (VK_RB_DrawGuiTextures)
 
     // Nested sub-spans of a phase above: printed, but excluded from total=/raster=.
     VK_RTPROF_PHASE_NESTED_BEGIN,
@@ -503,7 +504,7 @@ static const char *const s_rtProfPhaseNames[VK_RTPROF_PHASE_COUNT] = {
     "GIComposite",  "Vol",          "VolTemporal",   "VolBilateral",    "FroxelFill",
     "FroxelIntegrate", "FroxelResolve", "VolComposite", "DepthPrepass", "Interactions",
     "ShaderPasses", "FogLights",    "Upscale",       "Bloom",           "Tonemap",
-    "TLAS.BLAS",    "Interactions.Shadows",
+    "GuiTextures",  "TLAS.BLAS",    "Interactions.Shadows",
 };
 
 static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
@@ -5091,7 +5092,13 @@ void VK_RB_DrawView(const void *data)
         VK_RB_UpdateCinematics(cmdBuf, data);
 
         // Also outside the pass, and before any view's RT dispatch samples the slots.
-        VK_RB_DrawGuiTextures(cmdBuf);
+        {
+            const uint64_t cpuGuiTexStart = VK_RTProfile_CPUStamp();
+            int profGuiTex = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GUI_TEXTURES);
+            VK_RB_DrawGuiTextures(cmdBuf);
+            VK_RTProfile_PhaseEnd(cmdBuf, profGuiTex);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GUI_TEXTURES, cpuGuiTexStart);
+        }
 
         // Begin render pass (one pass for the entire EndFrame; all views composite into it)
         // clearValues[2] (gbufNormal, Stage 3.5) = {0.5, 0.5, 0.5, 0.0}: null normal, F0 0 —

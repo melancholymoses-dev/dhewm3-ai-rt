@@ -91,6 +91,7 @@ layout(set = 0, binding = 3) uniform ReflParams {
     float  volIsoMix;     // r_rtVolIsotropicMix — Stage 5, for rt_PhaseFromMeanDir
     int    glassNormalMode; // r_rtGlassNormalMode — 0 interpolated, 1 face, 2 crease-aware
     float  glassCreaseRatio; // r_rtGlassCreaseRatio — mode 2 flattens when devRatio < this
+    float  guiReflGain;   // r_rtGuiReflGain — scales live GUI screen hits
 } params;
 
 // Grid math only — no bindings of its own, so it can live alongside this set.
@@ -487,6 +488,10 @@ void main()
             segHitT  = reflPayload.hitT;
             segFlags = reflPayload.hitFlags;
         }
+        // A live screen's texture is the raw GUI, unblended with its housing; the gain
+        // matches it to the on-screen raster GUI.
+        if ((reflPayload.hitFlags & MAT_FLAG_GUI_LIVE) != 0u)
+            reflPayload.colour *= params.guiReflGain;
         accum  += weight * reflPayload.colour;
         weight *= reflPayload.transmittance;
         if (reflPayload.transmittance > 0.0)

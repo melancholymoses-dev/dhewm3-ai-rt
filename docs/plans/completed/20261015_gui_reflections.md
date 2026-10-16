@@ -83,19 +83,24 @@ the scanner screens in the glass and no magenta. No new shadow or AO lines aroun
 
 | Change | File |
 |---|---|
-| `GUI_LIVE` skips the ×3 / 0.2 boost; scale by `r_rtGuiReflGain` (default 1) to match the raster screen | `rt_material.glsl` |
-| Decide whether live GUIs feed probe GI. A/B in the bioscan room; the default follows the result | `vk_gi*.cpp` |
-| Done early: entity GUIs within `r_rtGuiTexRadius` (256) that the view culled are redrawn by `VK_GuiTex_RefreshNearby` (`R_RenderView`, after `R_AddModelSurfaces`), nearest first, stopping when the pool is full. At 512 in index order, door GUIs behind walls evicted the bioscan screens every frame | `vk_gui_texture.cpp`, `tr_main.cpp` |
-| `r_rtGuiReflections` (0/1) in `Dhewm3SettingsMenu.cpp`; GUI-texture pass gets its own profiler phase | settings menu, `vk_backend.cpp` |
+| `GUI_LIVE` drops `GUI_EMISSIVE` (no ×3 / 0.2 boost); rgen scales `GUI_LIVE` hits by `r_rtGuiReflGain` (default 0.3, `ReflParams` offset 260) | `VK_RT_BindGuiMaterial` (`vk_accelstruct.cpp`), `reflect_ray.rgen`, `vk_reflections.cpp` |
+| GI: decided no. Screens stay out of GI and its shadow rays (`gi_ray.rahit` ignores `GUI_SURF`) | — |
+| Entity GUIs within `r_rtGuiTexRadius` (256) that the view culled are redrawn by `VK_GuiTex_RefreshNearby` (`R_RenderView`, after `R_AddModelSurfaces`), nearest first, stopping when the pool is full. At 512 in index order, door GUIs behind walls evicted the bioscan screens every frame | `vk_gui_texture.cpp`, `tr_main.cpp` |
+| `r_rtGuiTexInterval` staggered by slot (`(frame + slot) % N`), so N > 1 spreads redraw + GPU cost instead of spiking | `vk_gui_texture.cpp` |
+| Profiler phase `GuiTextures` (raster side); off-screen redraw CPU in the `r_vkLogRT 2` `VK GUITEX` line | `vk_backend.cpp`, `vk_gui_texture.cpp` |
+| Settings menu: Screens in Reflections, brightness, refresh interval | `Dhewm3SettingsMenu.cpp` |
 
-Check: screen and its reflection side by side at similar tonemapped brightness (debug
-mode 6 for raw radiance). Turning away and back shows no black flash in the reflection.
-Frame cost from `vk_profile_report.py` in the bioscan room: < 0.1 ms.
+Check: screen and its reflection at similar tonemapped brightness. `gpu.GuiTextures` from
+`vk_profile_report.py` in the bioscan room; `cpu=` in the `VK GUITEX` line. Compare
+`r_rtGuiTexInterval` 1 vs 2.
+
+Result (bioscan room): gain 0.3 matches the screens; interval 2-3 gains 5-10 fps over 1 with
+no visible stepping, since most screens are static. Defaults set to 0.3 and 2.
 
 ## Risks
 
 | Risk | Discriminator |
 |---|---|
 | Reflected text shimmers | Toggle slot mips; compare at distance |
-| GI picks up screen glow where it didn't before | Stage 3 A/B; gate GI on `GUI_LIVE` |
-| Pool too small in GUI-dense rooms (admin offices) | Stage 0 census; LRU eviction log |
+| Pool too small in GUI-dense rooms (admin offices) | `skipped(pool full)` in the `r_vkLogRT 2` `VK GUITEX` line; raise `VK_GUITEX_SLOTS` (~1 MB each) |
+| A wall-hidden GUI within the radius takes a slot from a reflected one | Same log; lower `r_rtGuiTexRadius` |
