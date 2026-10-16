@@ -1921,7 +1921,8 @@ struct VkGBufferUBO
     // dhewm3-rt: 1 = view-local surface (first-person body, view weapon).  Shares that
     // alpha channel as a third level — see the encoding in gbuffer.frag.
     float viewLocal;               // 4 bytes
-}; // 372 bytes total
+    float roughnessFloor;          // 4 bytes — r_rtReflRoughnessFloor (Stage 2)
+}; // 376 bytes total
 
 // Every UBO here comes out of the one ring, whose stride is sized from
 // INTERACTION_UBO_SIZE.  A struct that outgrows it would silently scribble over the
@@ -3119,6 +3120,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                                    float alphaThreshold, float alphaScale) {
             extern idCVar r_rtSpecF0Scale;
             extern idCVar r_rtSpecF0Gamma;
+            extern idCVar r_rtReflRoughnessFloor;
 
             idImage *bumpImage, *specImage, *diffuseImage;
             idVec4 bumpMatrix[2], specMatrix[2], diffuseImageMatrix[2];
@@ -3210,6 +3212,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             // already in the TLAS.  The RT shadow/GI rays leaving them must skip the player
             // instances — see rt_player_exclude.glsl.
             ubo->viewLocal = surf->space->viewLocal ? 1.f : 0.f;
+            ubo->roughnessFloor = idMath::ClampFloat(0.0f, 1.0f, r_rtReflRoughnessFloor.GetFloat());
 
             VkDescriptorImageInfo bumpInfo = {}, specInfo = {};
             if (!VK_Image_GetDescriptorInfo(bumpImage, &bumpInfo))

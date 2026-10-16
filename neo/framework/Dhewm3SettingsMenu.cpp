@@ -2507,6 +2507,7 @@ struct RTCVars
     idCVar *rtGlassCreaseRatio = nullptr;
     idCVar *rtReflDenoise = nullptr;
     idCVar *rtReflDenoiseAlpha = nullptr;
+    idCVar *rtReflRoughnessFloor = nullptr;
 
     // GI fine-tuning
     idCVar *rtGITemporal = nullptr;
@@ -2645,6 +2646,7 @@ static void InitRTOptionsMenu()
     rtCVars.rtGlassCreaseRatio = cvarSystem->Find("r_rtGlassCreaseRatio");
     rtCVars.rtReflDenoise = cvarSystem->Find("r_rtReflDenoise");
     rtCVars.rtReflDenoiseAlpha = cvarSystem->Find("r_rtReflDenoiseAlpha");
+    rtCVars.rtReflRoughnessFloor = cvarSystem->Find("r_rtReflRoughnessFloor");
     rtCVars.rtGITemporal = cvarSystem->Find("r_rtGITemporal");
     rtCVars.rtGITemporalAlpha = cvarSystem->Find("r_rtGITemporalAlpha");
     rtCVars.rtGISamples = cvarSystem->Find("r_rtGISamples");
@@ -2864,6 +2866,7 @@ static void DrawRTOptionsMenu()
         ImGui::TableNextColumn();
         RTSliderFloat("Specular F0 Scale (Fresnel intensity)", rtCVars.rtSpecF0Scale, 0.0f, 1.0f);
         RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 5.0f, "%.2f");
+        RTSliderFloat("Reflection Roughness Floor", rtCVars.rtReflRoughnessFloor, 0.0f, 1.0f, "%.2f");
         RTCheckbox("Light Shafts in Reflections", rtCVars.rtReflVol);
         ImGui::BeginDisabled(!(rtCVars.rtReflVol && rtCVars.rtReflVol->GetBool()));
         RTSliderInt("Shaft Samples per Ray", rtCVars.rtReflVolSteps, 1, 32);

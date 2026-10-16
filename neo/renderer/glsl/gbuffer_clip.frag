@@ -52,6 +52,7 @@ layout(set=0, binding=0) uniform GBufferParams {
     float u_SpecF0Gamma;
     float u_TcClass;   // U4 T&C class — see gbuffer.frag
     float u_ViewLocal; // 1 = first-person body / view weapon — see gbuffer.frag
+    float u_RoughnessFloor; // r_rtReflRoughnessFloor (Stage 2) — see gbuffer.frag
 };
 
 #include "gbuf_albedo_class.glsl"
@@ -96,13 +97,19 @@ void main() {
     vec3  nTS    = nTSRaw / max(nTSLen, 1e-5);
     vec3  nWS    = normalize(mat3(T, B, N) * nTS);
 
+    // Fixed-mip Toksvig sample (distance-independent) — see gbuffer.frag for why.
+    const float GBUF_ROUGHNESS_FIXED_MIP = 4.0; // keep in step with gbuffer.frag
+    vec3  nTSFixed    = textureLod(u_BumpMap, vary_TexCoord_Bump, GBUF_ROUGHNESS_FIXED_MIP).rgb * 2.0 - 1.0;
+    float nTSFixedLen = length(nTSFixed);
+
     vec3  specMap = texture(u_SpecularMap, vary_TexCoord_Specular).rgb;
     float specLum = dot(specMap, vec3(0.299, 0.587, 0.114));
     float f0      = clamp(pow(max(specLum, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0, 1.0);
 
-    // Toksvig roughness — see gbuffer.frag for the derivation.
-    float toksvigVariance = (1.0 - nTSLen) / max(nTSLen, 1e-3);
-    float roughness       = clamp(sqrt(toksvigVariance), 0.0, 1.0);
+    // Toksvig roughness, floored at u_RoughnessFloor — see gbuffer.frag for the derivation.
+    float toksvigLen      = min(nTSLen, nTSFixedLen);
+    float toksvigVariance = (1.0 - toksvigLen) / max(toksvigLen, 1e-3);
+    float roughness       = max(clamp(sqrt(toksvigVariance), 0.0, 1.0), u_RoughnessFloor);
 
     outGbuf   = vec4(nWS * 0.5 + 0.5, f0);
     outAlbedo = vec4(diffuseSample.rgb, GBuf_PackAlbedoAlpha(GBuf_SurfaceClass(), roughness));

@@ -16,9 +16,12 @@ that surface would actually reflect.
 
 gbufAlbedo's alpha also packs a per-pixel roughness (Stage 2,
 docs/plans/20261013_reflection_roughness.md), estimated Toksvig-style from how
-much the bump map's trilinear-filtered normal has shortened at this fragment's
-mip level — sub-pixel normal variance that stands in for a gloss map Doom 3
-never shipped. See gbuf_albedo_class.glsl for the packing.
+much the bump map's normal has shortened — both at this fragment's screen-footprint
+mip level and at a second, fixed distance-independent mip, so inherent texture
+detail (grates, rivets, rust) still raises roughness up close, not only once
+minification starts blending it away. Floored at r_rtReflRoughnessFloor so a
+clean/flat bump map doesn't read as a perfect mirror. See gbuf_albedo_class.glsl
+for the packing.
 
 Used for opaque (non-alpha-tested) surfaces; see gbuffer_clip.frag for the
 MC_PERFORATED variant that additionally alpha-tests the diffuse stage.
@@ -67,6 +70,8 @@ layout(set=0, binding=0) uniform GBufferParams {
     // 1 = view-local surface (first-person body, view weapon).  Shares the same alpha
     // channel as a third level, read by the RT shadow/GI rgens.
     float u_ViewLocal;
+    // r_rtReflRoughnessFloor (Stage 2) — see the Toksvig comment below.
+    float u_RoughnessFloor;
 };
 
 #include "gbuf_albedo_class.glsl"
@@ -112,6 +117,17 @@ void main() {
     vec3  nTS    = nTSRaw / max(nTSLen, 1e-5);
     vec3  nWS    = normalize(mat3(T, B, N) * nTS);
 
+    // Second Toksvig sample at a fixed, distance-independent mip (Stage 2 refinement):
+    // nTSLen above uses the screen-footprint LOD, so a bump map's inherent detail only
+    // shows up once minification blends texels together — viewed up close, even a
+    // heavily-detailed map still measures as sharp. A fixed textureLod instead measures
+    // the TEXTURE's own high-frequency content (grates, rivets, rust) independent of
+    // camera distance. A flat/no-bump material (uniform texel colour) decodes to the
+    // same length at every mip, so this correctly contributes no extra roughness there.
+    const float GBUF_ROUGHNESS_FIXED_MIP = 4.0; // keep in step with gbuffer_clip.frag
+    vec3  nTSFixed    = textureLod(u_BumpMap, vary_TexCoord_Bump, GBUF_ROUGHNESS_FIXED_MIP).rgb * 2.0 - 1.0;
+    float nTSFixedLen = length(nTSFixed);
+
     // Same specular-luminance → F0 remap as interaction.frag's Fresnel block, so
     // r_rtReflectionDebugMode 1 (interaction.frag) and mode 3 (this G-buffer's F0,
     // see the plan's Step 9) agree on the same surfaces.
@@ -123,8 +139,13 @@ void main() {
     // averaged per-texel normal in proportion to the sub-pixel normal variance inside
     // that footprint. Doom 3 ships no gloss map, so this variance alone sources
     // per-pixel roughness. Variance-to-roughness mapping per Toksvig 2004 / LEAN mapping.
-    float toksvigVariance = (1.0 - nTSLen) / max(nTSLen, 1e-3);
-    float roughness       = clamp(sqrt(toksvigVariance), 0.0, 1.0);
+    // Take whichever of the screen-footprint and fixed-mip samples shows MORE variance
+    // (the shorter length) — either should raise roughness, and neither should mask it.
+    // Floored at u_RoughnessFloor: Toksvig only sees bump-map detail, so a clean/flat
+    // bump map would otherwise read as a perfect mirror regardless of the material.
+    float toksvigLen      = min(nTSLen, nTSFixedLen);
+    float toksvigVariance = (1.0 - toksvigLen) / max(toksvigLen, 1e-3);
+    float roughness       = max(clamp(sqrt(toksvigVariance), 0.0, 1.0), u_RoughnessFloor);
 
     outGbuf   = vec4(nWS * 0.5 + 0.5, f0);
     outAlbedo = vec4(texture(u_DiffuseMap, vary_TexCoord_Diffuse).rgb,

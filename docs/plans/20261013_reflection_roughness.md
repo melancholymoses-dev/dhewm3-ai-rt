@@ -77,8 +77,28 @@ F0, `gbufAlbedo.a` = 3-level surface class).
 The class migration changes "threshold the alpha" to "extract the top 2 bits" — mechanical,
 but it invalidates the current `never 1 - alpha` rule, so update it with the code.
 
+**Roughness floor.** Toksvig is a specular-AA signal, not authored material data: it only
+measures the bump map's own normal variance, so a clean/flat bump map reads as roughness 0
+regardless of how matte the material is meant to look — confirmed in mode 12, where large
+flat panels stayed near-black between the grates/rivets. `r_rtReflRoughnessFloor` (default
+0.2) is a flat minimum added in `gbuffer.frag`/`gbuffer_clip.frag` so no opaque surface's
+G-buffer entry is ever a perfect mirror once Stage 3's lobe reads it; Toksvig's variance
+still rides on top. Does not touch glass — Stage 3 keeps glass hardcoded to roughness 0
+independent of the G-buffer.
+
+**Fixed-mip second sample.** The base Toksvig sample uses the screen-footprint LOD, which
+only reveals a bump map's detail once minification has blended texels together — up close,
+even a heavily-detailed map (grates, rivets, rust) still measures as sharp. Both prepasses
+now also sample the same bump map via `textureLod` at a fixed mip (4), independent of
+camera distance, and take whichever of the two samples shows more variance (the shorter raw
+length). A flat/no-bump material decodes to the same length at every mip, so this adds no
+roughness there — only genuinely detailed textures are affected, and only at close range
+where the footprint sample would otherwise miss them.
+
 **Check:** debug mode 12 — roughness as greyscale. Rough concrete bright, polished trim and
 glass dark, and the gradient tracks visible surface detail rather than the diffuse texture.
+With the floor, "dark" means `r_rtReflRoughnessFloor`, not 0 — sweep it to 0 to see the raw
+Toksvig signal underneath when judging the gradient.
 
 ---
 

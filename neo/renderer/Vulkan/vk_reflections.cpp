@@ -115,6 +115,17 @@ idCVar r_rtReflDenoiseAlpha("r_rtReflDenoiseAlpha", "0.35", CVAR_RENDERER | CVAR
                             "raised above this per-pixel when the accumulated variance says the signal hasn't\n"
                             "converged, so moving glass does not lag behind a fixed low alpha.");
 
+// Stage 2 (20261013_reflection_roughness.md). The Toksvig estimate (gbuffer.frag) is a
+// specular-AA signal — it only measures bump-map normal variance, so a flat/clean bump
+// map reads as roughness 0 regardless of how matte the material should look. This floor
+// guarantees no opaque surface renders as a delta mirror once Stage 3's lobe exists;
+// Toksvig's variance rides on top of it. Does not touch glass — see reflect_ray.rgen,
+// Stage 3 keeps glass hardcoded to roughness 0 regardless of what's in the G-buffer.
+idCVar r_rtReflRoughnessFloor("r_rtReflRoughnessFloor", "0.2", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                              "Minimum roughness for any opaque surface's G-buffer entry (r_rtReflectionDebugMode\n"
+                              "12 previews it). 0 = Toksvig-only, flat bump maps can read as a perfect mirror.",
+                              0.0f, 1.0f);
+
 idCVar r_rtGlassNormalMode("r_rtGlassNormalMode", "2", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                            "Reflection-plane normal on glass.\n"
                            "0 = vertex-interpolated (smooth; patch creases read as curved mirrors).\n"
