@@ -102,19 +102,27 @@ Toksvig signal underneath when judging the gradient.
 
 ---
 
-## Stage 3 — GGX lobe, glass still sharp
+## Stage 3 — GGX lobe, glass still sharp — done 2026-10-16, unbuilt/unverified
 
 | File | Change |
 |---|---|
-| `glsl/reflect_ray.rgen` | Sample a GGX VNDF lobe around `reflDir` using roughness; roughness 0 reduces to today's exact mirror ray |
-| `glsl/reflect_ray.rgen` | Replace the `grazingGain`/`grazingMax`/smoothstep stack (lines 309-311) with real Schlick-GGX. That hack exists only because opaque surfaces were once in this pass |
-| `vk_reflections.cpp` | `r_rtReflRoughnessScale`; retire `r_rtSpecGrazingMax/Gain` |
+| `glsl/rt_ggx.glsl` | **New.** `rt_SampleGGXReflection`: isotropic GGX VNDF importance sampling (Heitz 2018). Pipeline-agnostic, no bindings — reusable outside this one rgen |
+| `glsl/reflect_ray.rgen` | Opaque branch (`!isGlass`) samples `rt_SampleGGXReflection(reflNormal, viewDir, alpha, u1, u2)` in place of the plain mirror `reflDir`; `alpha = (roughness * r_rtReflRoughnessScale)^2` from Stage 2's packed roughness (`gbufAlbedoSampler`, binding 9). One sample per pixel, world-anchored seed (`rt_WorldAnchoredSeed`/`rt_PixelPhiOffset`, same as `gi_ray.rgen`) — Stage 1's temporal denoiser resolves the variance, not a sample-count loop here |
+| `glsl/reflect_ray.rgen` | Replaced the `grazingGain`/`grazingMax`/smoothstep stack with plain Schlick (`f0 + (1-f0)*(1-NdotV)^5`), still evaluated against the macro normal (not `H`) so R1's pre-trace cull stays exact and pre-sampling |
+| `vk_reflections.cpp` | Added `r_rtReflRoughnessScale` (default 1.0); retired `r_rtSpecGrazingMax/Gain` (cvars, UBO fields, settings-menu entries all removed — `ReflParamsUBO` stays 272 bytes, an explicit `_padBeforeViewProj` float replaces the implicit std140 alignment pad GLSL now inserts in the same spot) |
 
 Glass takes roughness 0 and keeps its current path — a delta BRDF is physically right for a
-pane, and it is the cheap case.
+pane, and it is the cheap case. Enforced structurally, not by a zero roughness value: the
+`isGlass` branch never calls `rt_SampleGGXReflection` at all, so nothing can make glass pick
+up a lobe by accident.
 
-**Check:** glass screenshots identical to Stage 1's output. A forced `r_rtReflRoughnessScale`
-sweep on glass shows the lobe widening smoothly with no energy change at grazing angles.
+**Check:** glass screenshots identical to Stage 1's output (structurally guaranteed above, not
+just a zero-roughness coincidence — worth confirming anyway). For the lobe-widening sweep,
+glass itself can't be forced to pick it up (see above), so use `r_rtReflectionMode 2` on a
+shiny opaque surface (F0 > 0): the exact same `!isGlass` code path reflections already go
+through in mode 1 for any non-glass reflective geometry near a glass rect, just without the
+mode-1 launch-grid restriction. Sweep `r_rtReflRoughnessScale` there and confirm the lobe
+widens smoothly with no energy change at grazing angles.
 
 ---
 

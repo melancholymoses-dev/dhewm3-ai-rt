@@ -59,13 +59,15 @@ idCVar r_rtSpecF0Gamma("r_rtSpecF0Gamma", "3", CVAR_RENDERER | CVAR_FLOAT | CVAR
                        "Higher values restrict reflections to only the brightest specular texels (true metal/wet).\n"
                        "Tune with r_rtReflectionDebugMode 1 or 3.");
 
-idCVar r_rtSpecGrazingMax("r_rtSpecGrazingMax", "0.25", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                          "Clamp on the grazing-angle Fresnel lobe for low-F0 (rough) surfaces, applied in\n"
-                          "reflect_ray.rgen");
-
-idCVar r_rtSpecGrazingGain("r_rtSpecGrazingGain", "4.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                           "Grazing-angle Fresnel ceiling for low-F0 surfaces, as a multiple of F0 (still capped by\n"
-                           "r_rtSpecGrazingMax). Only affects legacy mode 2. Set very high for pre-R2 behaviour.");
+// Stage 3 (20261013_reflection_roughness.md) retires r_rtSpecGrazingMax/Gain: that
+// ad-hoc grazing-angle clamp existed only to tame full-screen opaque reflections
+// before real per-pixel roughness (Stage 2) and a GGX lobe existed to do the job
+// physically — plain Schlick Fresnel replaces it in reflect_ray.rgen.
+idCVar r_rtReflRoughnessScale("r_rtReflRoughnessScale", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                              "Multiplies Stage 2's packed per-pixel roughness before the GGX lobe samples it.\n"
+                              "1.0 = roughness as written to the G-buffer. Retune here once real geometry (not\n"
+                              "just the r_rtReflectionDebugMode 12 preview) is visible through the lobe.",
+                              0.0f, 4.0f);
 
 idCVar r_rtReflectionMinWeight(
     "r_rtReflectionMinWeight", "0.04", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
@@ -182,17 +184,20 @@ idCVar r_rtReflectionDebugMode(
 //   uint   frameIndex   offset 68  size  4
 //   ivec2  screenSize   offset 72  size  8  (ivec2 std140 align=8 → 72 is fine)
 //   float  reflBlend      offset 80  size  4  (r_rtReflectionBlend, applied at imageStore)
-//   float  grazingMax     offset 84  size  4  (r_rtSpecGrazingMax, Step 8)
+//   float  roughnessScale offset 84  size  4  (r_rtReflRoughnessScale, Stage 3 — was grazingMax)
 //   int    debugMode      offset 88  size  4  (r_rtReflectionDebugMode, Step 9)
 //   int    sceneHasGlass  offset 92  size  4  (P6 — skip glass probe when 0)
 //   float  minWeight      offset 96  size  4  (r_rtReflectionMinWeight, R1)
-//   float  grazingGain    offset 100 size  4  (r_rtSpecGrazingGain, R2)
-//   int    rectOriginX    offset 104 size  4  (R6 launch-grid origin)
-//   int    rectOriginY    offset 108 size  4
-//   int    reflMode       offset 112 size  4  (r_rtReflectionMode)
-//   int    emitterCount   offset 116 size  4  (vk_rt_emitters.cpp, 0 = none)
-//   float  glowGain       offset 120 size  4  (r_rtReflGlowGain, 0 when r_rtReflGlow is off)
-//   int    glowTriCount   offset 124 size  4  (vk_rt_emitters.cpp glow triangles)
+//   int    rectOriginX    offset 100 size  4  (R6 launch-grid origin — was 104; grazingGain's
+//                                               old slot is gone, not reused — see _padBeforeViewProj)
+//   int    rectOriginY    offset 104 size  4
+//   int    reflMode       offset 108 size  4  (r_rtReflectionMode)
+//   int    emitterCount   offset 112 size  4  (vk_rt_emitters.cpp, 0 = none)
+//   float  glowGain       offset 116 size  4  (r_rtReflGlowGain, 0 when r_rtReflGlow is off)
+//   int    glowTriCount   offset 120 size  4  (vk_rt_emitters.cpp glow triangles)
+//   float  _padBeforeViewProj offset 124 size 4  (std140 mat4 alignment — GLSL inserts this
+//                                                  implicitly once grazingGain is gone; this
+//                                                  struct must do so explicitly to match)
 //   mat4   viewProj       offset 128 size 64  (froxel grid's own, GL convention)
 //   vec4   froxelCamPos   offset 192 size 16  (xyz)
 //   vec4   froxelCamFwd   offset 208 size 16  (xyz)
@@ -218,17 +223,20 @@ struct ReflParamsUBO
     int32_t screenWidth;
     int32_t screenHeight;
     float reflBlend;       // r_rtReflectionBlend — baked into imageStore in rgen
-    float grazingMax;      // r_rtSpecGrazingMax — grazing-angle Fresnel clamp (Step 8)
+    float roughnessScale;  // r_rtReflRoughnessScale (Stage 3) — was grazingMax's slot
     int32_t debugMode;     // r_rtReflectionDebugMode — 2/3/4 handled in rgen (Step 9)
     int32_t sceneHasGlass; // P6 — 0 when no MAT_FLAG_GLASS geometry in the TLAS
     float minWeight;       // r_rtReflectionMinWeight — pre-trace Fresnel cull (R1)
-    float grazingGain;     // r_rtSpecGrazingGain — low-F0 grazing ceiling as a multiple of F0 (R2)
     int32_t rectOriginX;   // R6 — launch-grid origin; rgen adds this to gl_LaunchIDEXT
     int32_t rectOriginY;
     int32_t reflMode;     // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen
     int32_t emitterCount; // projectile glow discs in the emitter SSBO (binding 6)
     float glowGain;       // r_rtReflGlowGain
     int32_t glowTriCount; // additive translucent triangles after the discs in binding 6
+    // Stage 3 retired r_rtSpecGrazingGain, whose slot sat right before this mat4.
+    // GLSL's std140 layout inserts the resulting 4 bytes of alignment padding here
+    // implicitly; this struct has no such mechanism, so it's explicit.
+    float _padBeforeViewProj;
 
     // Froxel scatter grid (20261013_reflection_volumetrics.md). Mirrors
     // VolFroxelSlices in vol_froxel_sample.glsl plus the forward projection the
@@ -247,7 +255,9 @@ struct ReflParamsUBO
     int32_t glassNormalMode; // r_rtGlassNormalMode — 0 interpolated, 1 face, 2 crease-aware
     float glassCreaseRatio;  // r_rtGlassCreaseRatio — mode 2 flattens when devRatio < this
     float guiReflGain;       // r_rtGuiReflGain — scales live GUI screen hits (MAT_FLAG_GUI_LIVE)
-    float _pad0[2];          // std140 rounds the block to 272
+    float _pad0[2];          // std140 rounds the block to 272 — unchanged by Stage 3: everything
+                             // from viewProj on is still byte-for-byte where it was, since
+                             // _padBeforeViewProj already restored the original 128-byte prefix
 };
 static_assert(sizeof(ReflParamsUBO) == 272, "ReflParamsUBO size mismatch");
 
@@ -1676,11 +1686,11 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.screenHeight = (int32_t)vk.renderExtent.height;
     // Ceiling matches the settings-menu slider range.
     ubo.reflBlend = idMath::ClampFloat(0.0f, 10.0f, r_rtReflectionBlend.GetFloat());
-    ubo.grazingMax = idMath::ClampFloat(0.0f, 1.0f, r_rtSpecGrazingMax.GetFloat());
+    ubo.roughnessScale = idMath::ClampFloat(0.0f, 4.0f, r_rtReflRoughnessScale.GetFloat());
     ubo.debugMode = r_rtReflectionDebugMode.GetInteger();
     ubo.sceneHasGlass = vkRT.sceneHasGlass ? 1 : 0;
     ubo.minWeight = idMath::ClampFloat(0.0f, 1.0f, r_rtReflectionMinWeight.GetFloat());
-    ubo.grazingGain = Max(1.0f, r_rtSpecGrazingGain.GetFloat());
+    ubo._padBeforeViewProj = 0.0f;
 
     ubo.rectOriginX = rectX;
     ubo.rectOriginY = rectY;

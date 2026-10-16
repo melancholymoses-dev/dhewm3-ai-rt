@@ -14,10 +14,14 @@ For every non-sky pixel:
      Early-out on pixels with no glass in front and F0 ~ 0 (skips the reflect
      ray + shadow rays — the perf win this buffer exists for).
   2. Compute the Schlick Fresnel term ONCE per pixel (not per-light — the bug this
-     effort exists to fix, Step 8) from the bump-mapped shading normal. R1 does this
-     BEFORE the trace and returns early under r_rtReflectionMinWeight — an exact cull,
-     since nothing in the weight depends on the trace. R2 scales the grazing ceiling
-     with F0 (r_rtSpecGrazingGain) instead of a flat r_rtSpecGrazingMax.
+     effort exists to fix, Step 8) from the bump-mapped shading normal, evaluated
+     against the macro normal (not the GGX half-vector below) so R1's pre-trace cull
+     stays exact and doesn't need the lobe sampled first. R1 does this BEFORE the
+     trace and returns early under r_rtReflectionMinWeight.
+  2b. Opaque pixels past that cull replace the mirror direction with a GGX VNDF
+     sample (Stage 3, 20261013_reflection_roughness.md, rt_ggx.glsl) using Stage 2's
+     per-pixel roughness; roughness 0 reduces exactly to the same mirror direction.
+     Glass never takes this branch — see the isGlass check below.
   3. Trace the reflection ray. Glass along it is skipped in rahit (pure
      transmission), so rchit/rmiss return the opaque hit or sky. The bounce loop
      only continues if a hit shader sets transmittance > 0 (none currently do).
@@ -71,11 +75,11 @@ layout(set = 0, binding = 3) uniform ReflParams {
     uint   frameIndex;
     ivec2  screenSize;
     float  reflBlend;     // r_rtReflectionBlend — scale baked in at imageStore time
-    float  grazingMax;    // r_rtSpecGrazingMax — grazing-angle Fresnel clamp (Step 8)
+    float  roughnessScale; // r_rtReflRoughnessScale (Stage 3) — multiplies Stage 2's packed
+                           // roughness before squaring to GGX alpha; retunes the lobe width
     int    debugMode;     // r_rtReflectionDebugMode — 2/3/4/12 and 5/6/7 (B0) handled here
     int    sceneHasGlass; // P6 — 0 when no MAT_FLAG_GLASS geometry is in the TLAS; skips the glass probe
     float  minWeight;     // r_rtReflectionMinWeight — pre-trace Fresnel cull (R1)
-    float  grazingGain;   // r_rtSpecGrazingGain — low-F0 grazing ceiling as a multiple of F0 (R2)
     int    rectOriginX;   // R6 — launch-grid origin, added to gl_LaunchIDEXT below
     int    rectOriginY;
     int    reflMode;      // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen
@@ -104,6 +108,7 @@ layout(set = 0, binding = 3) uniform ReflParams {
 #include "vol_froxel_sample.glsl"
 #include "rt_phase.glsl"
 #include "gbuf_albedo_class.glsl"
+#include "rt_ggx.glsl"
 
 // binding 7: the scatter grid itself. rgb = in-scatter per unit length and, since
 // Stage 5, WITHOUT the phase function; a = extinction. No camera-path integration
@@ -417,7 +422,11 @@ void main()
         pathClass  = vec3(1.0, 1.0, 0.0);   // yellow
     }
 
-    // Mirror-reflect view direction around surface normal
+    // Mirror-reflect view direction around surface normal. Exact for glass (Stage 3,
+    // 20261013_reflection_roughness.md: a pane stays a delta BRDF) and the degenerate
+    // rt_ReconstructNormal fallback; replaced below by a GGX sample for real opaque
+    // geometry — rt_SampleGGXReflection collapses to this same formula at alpha 0, so
+    // that replacement never changes glass's own path, only the branch glass skips.
     vec3 reflDir  = reflect(viewDir, reflNormal);
 
     // R1: the weight depends only on f0/normal/viewDir — all known pre-trace — so cull
@@ -426,17 +435,33 @@ void main()
     if (!isGlass)
     {
         float NdotV = clamp(dot(reflNormal, -viewDir), 0.0, 1.0);
-        // R2: ceiling scales with F0 so near-matte stays near-matte at glancing angles.
-        // grazingMax is still the hard cap; max() keeps the lobe monotonic above it.
-        float grazingLow = max(f0, min(f0 * params.grazingGain, params.grazingMax));
-        float grazing    = mix(grazingLow, 1.0, smoothstep(0.3, 0.7, f0));
-        fresnel = f0 + (grazing - f0) * pow(1.0 - NdotV, 5.0);
+        // Schlick (Stage 3) — replaces the old grazingGain/grazingMax/smoothstep stack,
+        // which existed only to tame full-screen opaque reflections before real
+        // roughness existed to do that job physically (r_rtSpecGrazingMax/Gain retired).
+        fresnel = f0 + (1.0 - f0) * pow(1.0 - NdotV, 5.0);
 
         if (fresnel * params.reflBlend < params.minWeight)
         {
             imageStore(reflImage, coord, vec4(0.0));
             return;
         }
+
+        // GGX VNDF lobe (Stage 3): single sample per pixel, same world-anchored-seed
+        // strategy as gi_ray.rgen so the noise is stable under a static camera and
+        // decorrelates frame to frame — Stage 1's temporal denoiser resolves the
+        // resulting variance over frames rather than this file sampling more of them.
+        ivec2 albedoSize = textureSize(gbufAlbedoSampler, 0);
+        float roughness  = GBuf_UnpackRoughness(texelFetch(gbufAlbedoSampler, min(coord, albedoSize - 1), 0).a);
+        // r_rtReflRoughnessScale retunes Stage 2's packed roughness before the standard
+        // perceptual-roughness-squared remap to GGX alpha.
+        float perceptualRoughness = clamp(roughness * params.roughnessScale, 0.0, 1.0);
+        float alpha = perceptualRoughness * perceptualRoughness;
+
+        uint  seed      = rt_WorldAnchoredSeed(worldPos, params.frameIndex);
+        float phiOffset = rt_PixelPhiOffset(coord, params.frameIndex);
+        float u1 = randFloat(seed);
+        float u2 = fract(randFloat(seed + 1u) + phiOffset);
+        reflDir  = rt_SampleGGXReflection(reflNormal, viewDir, alpha, u1, u2);
     }
 
     if (params.debugMode == 5)

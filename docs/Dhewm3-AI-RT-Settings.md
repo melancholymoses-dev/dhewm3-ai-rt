@@ -114,8 +114,11 @@ Needs fixing if they stay in the menu: `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIR
 | `r_rtReflGlowSmokeCell` | Reflections | Smoke glow grid cell size | 32 | D | = |
 | `r_rtSpecF0Scale` | Reflections | Fresnel F0 scale | 0.2 | A | = |
 | `r_rtSpecF0Gamma` | Reflections | Fresnel F0 gamma | 3 | A | = |
-| `r_rtSpecGrazingMax` | Reflections | Grazing-angle cap | 0.25 | D | = |
-| `r_rtSpecGrazingGain` | Reflections | Grazing-angle gain | 4.0 | D | = |
+<!-- r_rtSpecGrazingMax/Gain retired, roughness plan Stage 3 (2026-10-16): real Schlick-GGX
+     replaced the grazing-angle hack they tuned. This inventory predates Stages 1-3 of
+     20261013_reflection_roughness.md (r_rtReflDenoise*, r_rtReflRoughness*) — it's a
+     point-in-time audit, not kept in lockstep with every cvar change. -->
+| `r_rtReflRoughnessScale` | Reflections | GGX lobe width multiplier on Stage 2's packed roughness | 1.0 | A | = |
 
 ### Global illumination (screen-space bounce)
 

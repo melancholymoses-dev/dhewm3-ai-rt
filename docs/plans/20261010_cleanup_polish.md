@@ -94,7 +94,7 @@ Current state: reflections are glass-only, per-material F0 dropped. F0 is still 
 | Step | Detail |
 |---|---|
 | 2a. Prove | Log counts of pixels where `f0 >= 1/255` and no glass probe hit, in mode 1. If 0 reflection rays trace, F0 is dead |
-| 2b. Remove | `r_rtReflectionMode` (2 = legacy), `r_rtReflectionMinWeight`, `r_rtSpecF0Scale/Gamma`, `r_rtSpecGrazingMax/Gain`, `r_rtReflectionBlend` if unused for glass; F0 remap in `gbuffer.frag`, `gbuffer_clip.frag`, `interaction.frag`; UBO fields in `vk_backend.cpp:1422/3036`, `vk_pipeline.cpp:58`, `vk_reflections.cpp:113-143` |
+| 2b. Remove | `r_rtReflectionMode` (2 = legacy), `r_rtReflectionMinWeight`, `r_rtSpecF0Scale/Gamma`, `r_rtReflectionBlend` if unused for glass; F0 remap in `gbuffer.frag`, `gbuffer_clip.frag`, `interaction.frag`; UBO fields in `vk_backend.cpp:1422/3036`, `vk_pipeline.cpp:58`, `vk_reflections.cpp:113-143`. `r_rtSpecGrazingMax/Gain` already retired (roughness plan Stage 3, 2026-10-16) — real Schlick-GGX replaced the hack they tuned |
 | 2c. Reclaim | G-buffer alpha channel (F0) freed; decide reuse (e.g. material class) or shrink the format |
 | 2d. Keep | `GLASS_F0` constant, glass Fresnel, glow/emitter cvars |
 
