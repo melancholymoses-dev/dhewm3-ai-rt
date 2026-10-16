@@ -413,6 +413,7 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_SHADOWS,
     VK_RTPROF_PHASE_AO,
     VK_RTPROF_PHASE_REFLECTIONS,
+    VK_RTPROF_PHASE_REFL_TEMPORAL,
     VK_RTPROF_PHASE_GI,
     VK_RTPROF_PHASE_GI_TEMPORAL,
     VK_RTPROF_PHASE_GI_ATROUS,
@@ -499,12 +500,12 @@ static uint64_t s_rtProfFrameStart[VK_MAX_FRAMES_IN_FLIGHT] = {};
 // registry (gpu.<name> / cpu.<name>) and label every pass for GPU capture tools,
 // so a phase added to the enum without a name here shows up as a hole.
 static const char *const s_rtProfPhaseNames[VK_RTPROF_PHASE_COUNT] = {
-    "TLAS",         "Shadows",      "AO",            "Refl",            "GI",
-    "GITemporal",   "GIAtrous",     "ProbeTrace",    "ProbeBlend",      "ProbeResolve",
-    "GIComposite",  "Vol",          "VolTemporal",   "VolBilateral",    "FroxelFill",
-    "FroxelIntegrate", "FroxelResolve", "VolComposite", "DepthPrepass", "Interactions",
-    "ShaderPasses", "FogLights",    "Upscale",       "Bloom",           "Tonemap",
-    "GuiTextures",  "TLAS.BLAS",    "Interactions.Shadows",
+    "TLAS",         "Shadows",      "AO",            "Refl",            "ReflTemporal",
+    "GI",           "GITemporal",   "GIAtrous",      "ProbeTrace",      "ProbeBlend",
+    "ProbeResolve", "GIComposite",  "Vol",           "VolTemporal",     "VolBilateral",
+    "FroxelFill",   "FroxelIntegrate", "FroxelResolve", "VolComposite", "DepthPrepass",
+    "Interactions", "ShaderPasses", "FogLights",     "Upscale",         "Bloom",
+    "Tonemap",      "GuiTextures",  "TLAS.BLAS",     "Interactions.Shadows",
 };
 
 static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
@@ -1639,7 +1640,9 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE)
     {
         reflMapInfo.sampler = vkRT.reflSampler;
-        reflMapInfo.imageView = vkRT.reflBuffer[vk.currentFrame].view;
+        // VK_RT_GetReflReadView: reflHistory when the Stage-1 temporal denoiser
+        // (r_rtReflDenoise) is on and has valid data, else reflBuffer unfiltered.
+        reflMapInfo.imageView = VK_RT_GetReflReadView(vk.currentFrame);
         reflMapInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
     else
@@ -2689,7 +2692,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
         VkDescriptorImageInfo ovReflInfo = {};
         ovReflInfo.sampler = vkRT.reflSampler;
-        ovReflInfo.imageView = vkRT.reflBuffer[vk.currentFrame].view;
+        // VK_RT_GetReflReadView: reflHistory when the Stage-1 temporal denoiser
+        // (r_rtReflDenoise) is on and has valid data, else reflBuffer unfiltered.
+        ovReflInfo.imageView = VK_RT_GetReflReadView(vk.currentFrame);
         ovReflInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
         VkWriteDescriptorSet ovWrites[2] = {};
@@ -5356,11 +5361,15 @@ void VK_RB_DrawView(const void *data)
         // here for the whole RT block below, since multiple RT passes will read it.
         // gbufAlbedo (gi_albedo_target.md) rides the same round-trip — the GI albedo
         // modulate pass at the end of the RT block needs it in SHADER_READ_ONLY too.
+        // motionVectors (Stage 1, 20261013_reflection_roughness.md) joins the same
+        // round-trip: VK_RT_DispatchReflTemporal samples it later in this block and
+        // was otherwise reading it straight out of COLOR_ATTACHMENT_OPTIMAL.
         if (vk.gbufferSupported)
         {
-            vkRTImage_t *gbufImages[2] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame]};
-            VkImageMemoryBarrier gbufToRead[2] = {};
-            for (int gi = 0; gi < 2; gi++)
+            vkRTImage_t *gbufImages[3] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame],
+                                          &vkRT.motionVectors[vk.currentFrame]};
+            VkImageMemoryBarrier gbufToRead[3] = {};
+            for (int gi = 0; gi < 3; gi++)
             {
                 gbufToRead[gi].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
                 gbufToRead[gi].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -5372,7 +5381,7 @@ void VK_RB_DrawView(const void *data)
             }
             vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                                  VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
-                                 0, NULL, 0, NULL, 2, gbufToRead);
+                                 0, NULL, 0, NULL, 3, gbufToRead);
         }
 
         // P1b: assign one shadow mask array layer per shadow-casting light, then clear
@@ -5499,6 +5508,16 @@ void VK_RB_DrawView(const void *data)
                     return;
             }
 
+            // Stage 1 (20261013_reflection_roughness.md): temporal EMA denoise of
+            // reflBuffer, consumed instead of the raw buffer by every downstream
+            // reader (VK_RT_GetReflReadView). No-op when r_rtReflDenoise is 0.
+            VK_SetRenderStage("RT_Reflections_Temporal");
+            const uint64_t rtCpuReflTemporalStart = VK_RTProfile_CPUStamp();
+            int rtProfReflTemporal = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_REFL_TEMPORAL);
+            VK_RT_DispatchReflTemporal(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfReflTemporal);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_REFL_TEMPORAL, rtCpuReflTemporalStart);
+
             VK_SetRenderStage("RT_GI");
             const uint64_t rtCpuGIStart = VK_RTProfile_CPUStamp();
             int rtProfGI = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI);
@@ -5619,15 +5638,17 @@ void VK_RB_DrawView(const void *data)
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_FROXEL_RESOLVE, rtCpuFroxelResStart);
         }
 
-        // Stage 3.5: restore gbufNormal (+ gbufAlbedo, gi_albedo_target.md) to
+        // Stage 3.5: restore gbufNormal (+ gbufAlbedo, gi_albedo_target.md, +
+        // motionVectors — Stage 1, 20261013_reflection_roughness.md) to
         // COLOR_ATTACHMENT_OPTIMAL before the resume render pass reopens — their
         // declared initialLayout for these attachments (Step 2 in the plan) expects
         // that, matching the depth-barrier round-trip symmetry.
         if (vk.gbufferSupported)
         {
-            vkRTImage_t *gbufImages[2] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame]};
-            VkImageMemoryBarrier gbufToAttach[2] = {};
-            for (int gi = 0; gi < 2; gi++)
+            vkRTImage_t *gbufImages[3] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame],
+                                          &vkRT.motionVectors[vk.currentFrame]};
+            VkImageMemoryBarrier gbufToAttach[3] = {};
+            for (int gi = 0; gi < 3; gi++)
             {
                 gbufToAttach[gi].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
                 gbufToAttach[gi].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
@@ -5639,7 +5660,7 @@ void VK_RB_DrawView(const void *data)
             }
             vkCmdPipelineBarrier(cmdBuf,
                                  VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, NULL, 0, NULL, 2, gbufToAttach);
+                                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, NULL, 0, NULL, 3, gbufToAttach);
         }
 
         VK_SetRenderStage("ResumeRenderPass");

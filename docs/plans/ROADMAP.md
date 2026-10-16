@@ -19,7 +19,7 @@ they are things to check code against, not things to schedule.
 | # | Item | Doc | Status |
 |---|---|---|---|
 | 8 | **Optimization** — Vulkan core (F/A), RT uploads (R/B), not-yet-audited (X), **Stage L interaction overdraw**. Stage S shadow dispatch closed | `20261010_vk_core_audit.md`, closed half in `completed/20261010_vk_core_audit_closed.md` | **Parked** — see that doc's "Current lead" section. Three wins (S2 cull, `r_rtShadowSamples` 4 → 2, BLAS pooling); 17 findings dispatched or parked by measurement.  Pausing |
-| 8d | **Surface roughness in reflections** — extend past glass to opaque surfaces with a GGX lobe. Blocked on a reflection denoiser (the only RT pass without one) and a roughness ceiling to avoid double-counting probe GI. Stages 1-5 | `20261013_reflection_roughness.md` | Unstarted. Budget 20-40% frame time for the all-surface mode; **gates cleanup Phase 2b/2c**, which would otherwise reclaim the G-buffer alpha that F0 needs |
+| 8d | **Surface roughness in reflections** — extend past glass to opaque surfaces with a GGX lobe. Blocked on a reflection denoiser (the only RT pass without one) and a roughness ceiling to avoid double-counting probe GI. Stages 1-5 | `20261013_reflection_roughness.md` | Stage 1 (denoiser) written 2026-10-16, **unbuilt/unverified** — needs the Stage 1 Check run before Stage 2. Stages 2-5 unstarted. Budget 20-40% frame time for the all-surface mode; **gates cleanup Phase 2b/2c**, which would otherwise reclaim the G-buffer alpha that F0 needs |
 | 8e | **Cleanup + polish** — debug/cvar trim (1a/1b/1c), dead-path deletion, resets, presets, comment sweep | `20261010_cleanup_polish.md` | Reordered 2026-10-13: deletion runs *after* the gaining work, since the dead GI/vol paths measure 0.001 ms. 1a and 5a are unblocked and can land any time |
 | 8f | **Live GUI screens in reflections** — render GUIs to slot textures, admit GUI surfaces to the TLAS. Stages 0-3 | `completed/20261015_gui_reflections.md` | **Done 2026-10-16.** Bioscan screens live in the glass; gain 0.3, refresh every 2nd frame. Unchecked: pool size in the admin offices |
 
@@ -37,7 +37,7 @@ this says *when*.
 | 4b | ~~8f GUI reflections Stages 0-3~~ — **done 2026-10-16** | 8f | Doc in `completed/` |
 | 5 | Cleanup 1b (+ Stage S4 serial-path deletion) | 8e | Unblocked — Stage S closed |
 | 6 | ~~Optimization Stage L~~ — **parked 2026-10-14.** L1 landed (per-light labels); L2 blocked, L3 dropped | 8 | Four candidate causes measured negative. If optimization resumes, start with the AO ray budget or the E3 `vid_restart` leak — both cheap, neither needs new tooling |
-| 7 | 8d roughness Stages 1-5 | 8d | Denoiser first. Decide go/no-go on the 20-40% frame cost before Stage 4 |
+| 7 | 8d roughness Stages 1-5 | 8d | Stage 1 written, needs build + the Stage 1 Check (bit-identical at `r_rtReflDenoise 0`, no ghosting) before Stage 2. Decide go/no-go on the 20-40% frame cost before Stage 4 |
 | 8 | Cleanup 1c + Phase 2 | 8e | Needs the reflection arc resolved — **2c is irreversible** |
 | 9 | Cleanup 3, 4 | 8e | Biggest surgery, 0.001 ms gain. Last of the code changes |
 | 10 | Cleanup 5b presets, then Phase 7 comments | 8e | Needs the final cvar set |

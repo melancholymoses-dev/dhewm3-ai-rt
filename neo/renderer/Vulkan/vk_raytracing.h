@@ -433,6 +433,38 @@ struct vkRTState_t
     VkDescriptorPool reflCompositeDescPool;
     VkDescriptorSet reflCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
 
+    // --------------------------------------------------------------------------
+    // Reflection temporal denoiser (20261013_reflection_roughness.md Stage 1)
+    //
+    // SHARED, not per slot — same reasoning as aoHistory/giHistory: the EMA
+    // recurrence is sequential across frames. But unlike AO/GI's temporal passes,
+    // this one reprojects (reads a DIFFERENT pixel, Q, than it writes, P), so a
+    // single read-write image per buffer is a data race within the dispatch —
+    // nothing orders "has Q already been written this dispatch" against "read Q".
+    // Ping-pong across frames instead, same idiom as aoHistory/aoScratch's
+    // within-frame ping-pong: reflPingPong is the index most recently WRITTEN
+    // (what consumers should read); VK_RT_DispatchReflTemporal reads index
+    // reflPingPong and writes 1-reflPingPong, then flips.
+    //
+    // reflHistory carries rgb (EMA'd radiance) and a (always the CURRENT frame's
+    // Schlick weight/sentinel, never filtered). reflMoments carries (mean,
+    // mean^2, history depth, history age) per pixel for the variance-driven
+    // alpha and the depth disocclusion test.
+    // --------------------------------------------------------------------------
+    vkRTImage_t reflHistory[2]; // RGBA16F accumulated reflection history, ping-pong
+    vkRTImage_t reflMoments[2]; // RGBA16F: mean, mean^2, historyDepthRaw, age, ping-pong
+    int reflPingPong;           // index of the buffer most recently written
+    bool reflHistoryValid;
+    idVec3 reflPrevCamPos;
+    idVec3 reflPrevCamFwd;
+
+    VkPipeline reflTemporalPipeline;
+    VkPipelineLayout reflTemporalPipelineLayout;
+    VkDescriptorSetLayout reflTemporalDescLayout;
+    VkDescriptorPool reflTemporalDescPool;
+    VkDescriptorSet reflTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int reflTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
     // SBT buffers
     VkBuffer sbtBuffer;
     VkDeviceMemory sbtMemory;
@@ -804,13 +836,21 @@ void VK_RT_ResizeReflections(uint32_t width, uint32_t height);
 // Output: reflBuffer[currentFrame] is ready for FRAGMENT sampling when this returns.
 void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
+// Temporal EMA denoise of reflBuffer (Stage 1, 20261013_reflection_roughness.md).
+// Must be called after VK_RT_DispatchReflections and before any consumer of the
+// reflection buffer (composite, interaction, glass overlay). No-op when
+// r_rtReflDenoise is 0 — VK_RT_GetReflReadView then just returns reflBuffer[slot],
+// so r_rtReflDenoise 0 is bit-identical to the pre-Stage-1 path.
+void VK_RT_DispatchReflTemporal(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
 // Highest r_rtReflectionDebugMode handled inside reflect_ray.rgen. Modes 2-4 are the
 // G-buffer checks (docs/plans/gbuffer_normal_pass.md); 5-7 are B0
 // (docs/plans/20260918_reflection_brightness.md). Anything in 2..this forces the
 // full-screen launch grid, takes the replace-blend composite, and suppresses the
 // per-surface glass overlay.
-// 8 = projectile emitter discs (vk_rt_emitters.cpp); 9 = glass crease split; 10 = GUI hits
-const int REFL_DEBUG_MAX_MODE = 10;
+// 8 = projectile emitter discs (vk_rt_emitters.cpp); 9 = glass crease split; 10 = GUI hits;
+// 11 = reflection denoiser history age / rejection mask (VK_RT_DispatchReflTemporal)
+const int REFL_DEBUG_MAX_MODE = 11;
 
 // Additively composite reflBuffer onto the framebuffer (Step 8, see
 // docs/plans/gbuffer_normal_pass.md). Must be called INSIDE the main render
@@ -818,6 +858,11 @@ const int REFL_DEBUG_MAX_MODE = 10;
 // Selects a blend-disabled variant when r_rtReflectionDebugMode is 2-7, so the
 // debug visualization replaces rather than adds onto the lit scene.
 void VK_RT_CompositeReflections(VkCommandBuffer cmd);
+
+// View to sample for any downstream reflection consumer (composite, interaction
+// binding 9, glass overlay): reflHistory when the denoiser is active and valid
+// for this slot, else reflBuffer[slot] directly.
+VkImageView VK_RT_GetReflReadView(int frameIdx);
 
 void VK_RT_DestroyBLAS(vkBLAS_t *blas);
 

@@ -1,0 +1,232 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — refl_temporal_resolve.comp — temporal denoiser for RT
+reflections (Stage 1, docs/plans/20261013_reflection_roughness.md).
+
+Unlike temporal_resolve.comp (AO) and gi_temporal_resolve.comp (GI), this pass
+actually reprojects: reflections are screen-space and move with both the
+camera and the reflected geometry, so a fixed-alpha EMA either lags behind
+real motion or fails to smooth anything. Per pixel:
+
+  1. Reproject through the motion vector written by the G-buffer prepass to
+     find last frame's screen location Q for this frame's pixel P.
+  2. Disocclusion test: reconstruct P's current world position and project it
+     through the PREVIOUS camera (viewDef->prevViewProjMatrix) to get the
+     depth Q should have recorded; compare against the depth actually stored
+     in history when Q was written (reflMoments.z). Also compare the current
+     G-buffer normal at P and at Q — a cheap proxy for "is this still the same
+     surface", since nothing but the camera moves for the overwhelming
+     majority of reflective (glass) surfaces.
+  3. On reset (first use / camera cut) or rejection, history is replaced
+     outright, same NaN-avoidance reasoning as the AO/GI passes.
+  4. Otherwise, EMA both the colour and its first two luminance moments at the
+     same per-pixel alpha, floor = r_rtReflDenoiseAlpha, raised when the
+     moments say the signal hasn't converged (relative variance high) — see
+     the "Alpha must be adaptive" note in the plan: a fixed low alpha
+     low-passes a scene that's still moving.
+
+Alpha channel is passed through from the CURRENT frame always, never EMA'd:
+it carries reflect_ray.rgen's Schlick weight and its negative-sign "skip me"
+sentinel for refl_composite.frag, both recomputed fresh every frame and
+neither a noisy quantity.
+
+Debug mode 11 (r_rtReflectionDebugMode): replaces the output colour with
+green = history age (brighter = older/more converged) or red = rejected this
+frame, so a flat green field under a static camera and red only at genuine
+disocclusions is the expected picture.
+
+Descriptors (set 0). src/dst are separate images (ping-ponged across frames by
+VK_RT_DispatchReflTemporal), not one read-write pair: this pass reprojects, so
+it reads a DIFFERENT pixel (Q) than it writes (P), and P == Q for some other
+invocation with no ordering between them within the dispatch. See the binding
+declarations below for why that would race:
+  binding 0 — currentImage (reflBuffer[slot], rgba16f storage, readonly)
+  binding 1 — srcHistory   (last frame's reflHistory, rgba16f storage, readonly)
+  binding 2 — dstHistory   (this frame's reflHistory, rgba16f storage, writeonly)
+  binding 3 — srcMoments   (last frame's reflMoments, rgba16f storage, readonly:
+              x=mean luminance, y=mean^2 luminance, z=historyDepthRaw, w=age)
+  binding 4 — dstMoments   (this frame's reflMoments, rgba16f storage, writeonly)
+  binding 5 — depthSampler
+  binding 6 — gbufNormalSampler
+  binding 7 — motionSampler (motionVectors[slot], GL NDC, Y up)
+  binding 8 — ReflTemporalParams UBO (dynamic)
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// src/dst are separate bindings into separate ping-pong images (vk_raytracing.h /
+// VK_RT_DispatchReflTemporal), not one read-write image: this pass reprojects —
+// it reads at Q and writes at P — and some other invocation in this same
+// dispatch has P as ITS Q (or vice versa), with no ordering between them.
+// Splitting src (strictly last frame's data) from dst (strictly this frame's)
+// removes the race entirely instead of relying on dispatch-order luck.
+layout(set = 0, binding = 0, rgba16f) uniform readonly image2D currentImage;
+layout(set = 0, binding = 1, rgba16f) uniform readonly image2D srcHistory;
+layout(set = 0, binding = 2, rgba16f) uniform writeonly image2D dstHistory;
+layout(set = 0, binding = 3, rgba16f) uniform readonly image2D srcMoments;
+layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D dstMoments;
+layout(set = 0, binding = 5) uniform sampler2D depthSampler;
+layout(set = 0, binding = 6) uniform sampler2D gbufNormalSampler;
+layout(set = 0, binding = 7) uniform sampler2D motionSampler;
+
+layout(set = 0, binding = 8) uniform ReflTemporalParams {
+    mat4  invViewProj;       // current frame, GL convention
+    mat4  prevViewProj;      // previous frame, GL convention
+    int   screenWidth;       // render-resolution extent — matches depth/gbuf/motion
+    int   screenHeight;
+    float baseAlpha;         // r_rtReflDenoiseAlpha
+    float varianceGain;
+    float depthRejectThresh; // fixed tolerance on raw [0,1] depth
+    float normalRejectCos;
+    ivec2 scissorOffset;
+    ivec2 scissorExtent;
+    int   resetHistory;      // camera cut or first use — force every pixel
+    int   debugMode;         // r_rtReflectionDebugMode
+    int   maxAge;
+};
+
+// Satisfies rt_indirect.glsl's includer contract (sampler2D depthSampler + a
+// mat4 invViewProj in scope) for rt_ReconstructWorldPos.
+#include "rt_indirect.glsl"
+
+// Raw decode of the G-buffer shading normal, no orientation gate — this pass
+// only needs "is it the same surface", not a camera-facing guarantee.
+// Returns vec3(0) for the "no data here" sentinel (sky, unwritten pixel).
+vec3 ReflTemporal_DecodeNormal(ivec2 coord)
+{
+    ivec2 sz = textureSize(gbufNormalSampler, 0);
+    vec4 g = texelFetch(gbufNormalSampler, clamp(coord, ivec2(0), sz - 1), 0);
+    if (all(lessThanEqual(abs(g.rgb - vec3(0.5)), vec3(1.0 / 255.0))))
+        return vec3(0.0);
+    vec3 n = g.rgb * 2.0 - 1.0;
+    float len = length(n);
+    return (len < 0.5) ? vec3(0.0) : (n / len);
+}
+
+void main()
+{
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 rectExtent = max(scissorExtent, ivec2(0));
+    if (local.x >= rectExtent.x || local.y >= rectExtent.y)
+        return;
+
+    ivec2 coord = local + scissorOffset;
+    ivec2 dims = imageSize(dstHistory);
+    if (coord.x < 0 || coord.y < 0 || coord.x >= dims.x || coord.y >= dims.y)
+        return;
+
+    ivec2 rectMin = max(scissorOffset, ivec2(0));
+    ivec2 rectMax = min(scissorOffset + rectExtent - ivec2(1), dims - ivec2(1));
+
+    vec4 current = imageLoad(currentImage, coord);
+    float curLum = dot(current.rgb, vec3(0.2126, 0.7152, 0.0722));
+
+    bool rejected = false;
+    float age = 0.0;
+    vec4 outColor;
+    vec4 outMoments;
+
+    if (resetHistory == 0)
+    {
+        // GBuf_MotionVector (gbuffer.frag) stores prevNDC - curNDC, i.e. it already
+        // points back to where this content was last frame: prevNDC = curNDC + mv.
+        // NDC is Y up, pixels are Y down, hence the negated y on the pixel-space term.
+        vec2 mv = texelFetch(motionSampler, coord, 0).xy;
+        vec2 mvPix = vec2(mv.x, -mv.y) * 0.5 * vec2(screenWidth, screenHeight);
+        ivec2 q = coord + ivec2(round(mvPix));
+
+        if (q.x < rectMin.x || q.y < rectMin.y || q.x > rectMax.x || q.y > rectMax.y)
+        {
+            rejected = true;
+        }
+        else
+        {
+            vec4 hist = imageLoad(srcHistory, q);
+            vec4 mom = imageLoad(srcMoments, q);
+            bool histBad = any(isnan(hist)) || any(isinf(hist)) || any(isnan(mom)) || any(isinf(mom));
+
+            if (histBad)
+            {
+                rejected = true;
+            }
+            else
+            {
+                // Depth disocclusion: project P's current world position through the
+                // PREVIOUS camera and compare to what was actually recorded at Q when
+                // Q was written (under the then-current, i.e. previous, camera).
+                vec3 worldP = rt_ReconstructWorldPos(coord, ivec2(screenWidth, screenHeight), invViewProj);
+                vec4 prevClip = prevViewProj * vec4(worldP, 1.0);
+                float expectedPrevDepth = (prevClip.z / prevClip.w) * 0.5 + 0.5;
+                float histDepthRaw = mom.z;
+                // Fixed tolerance on raw (non-linear) NDC depth, same unit convention as
+                // r_rtAtrousSigmaDepth. Deliberately not scaled by histDepthRaw: that
+                // scaling makes the test near-unusable at both ends — far too loose deep
+                // in a corridor, far too tight close to the camera.
+                bool depthOk = abs(expectedPrevDepth - histDepthRaw) <= depthRejectThresh;
+
+                vec3 nP = ReflTemporal_DecodeNormal(coord);
+                vec3 nQ = ReflTemporal_DecodeNormal(q);
+                bool haveNormals = (length(nP) > 0.5) && (length(nQ) > 0.5);
+                bool normalOk = !haveNormals || dot(nP, nQ) >= normalRejectCos;
+
+                if (!depthOk || !normalOk)
+                {
+                    rejected = true;
+                }
+                else
+                {
+                    float histMean = mom.x;
+                    float histMean2 = mom.y;
+                    float variance = max(0.0, histMean2 - histMean * histMean);
+                    float relVar = variance / max(histMean * histMean, 1e-4);
+
+                    float alpha = clamp(baseAlpha * (1.0 + varianceGain * sqrt(relVar)), baseAlpha, 1.0);
+
+                    outColor = vec4(mix(hist.rgb, current.rgb, alpha), current.a);
+                    float newMean = mix(histMean, curLum, alpha);
+                    float newMean2 = mix(histMean2, curLum * curLum, alpha);
+                    age = min(mom.w + 1.0, float(maxAge));
+
+                    float curDepthRaw = texelFetch(depthSampler, coord, 0).r;
+                    outMoments = vec4(newMean, newMean2, curDepthRaw, age);
+                }
+            }
+        }
+    }
+
+    if (resetHistory != 0 || rejected)
+    {
+        outColor = current;
+        age = 1.0;
+        float curDepthRaw = texelFetch(depthSampler, coord, 0).r;
+        outMoments = vec4(curLum, curLum * curLum, curDepthRaw, age);
+    }
+
+    if (debugMode == 11)
+    {
+        // Alpha forced to 1.0: current.a carries glass's negative skip-sentinel
+        // (reflect_ray.rgen), which refl_composite.frag discards. The visualization
+        // must survive on glass too, where this denoiser actually operates.
+        // Known Stage-1 trade-off: this overwrites the real EMA'd colour in dstHistory
+        // (there is no separate display-only buffer), so toggling mode 11 off leaves a
+        // few frames of visible tint while alpha >= baseAlpha reconverges — same shape
+        // as a disocclusion reset, not a lasting corruption.
+        vec3 vis = rejected ? vec3(1.0, 0.0, 0.0) : vec3(0.0, clamp(age / float(maxAge), 0.0, 1.0), 0.0);
+        outColor = vec4(vis, 1.0);
+    }
+
+    imageStore(dstHistory, coord, outColor);
+    imageStore(dstMoments, coord, outMoments);
+}

@@ -2505,6 +2505,8 @@ struct RTCVars
     idCVar *rtGuiTexInterval = nullptr;
     idCVar *rtGlassNormalMode = nullptr;
     idCVar *rtGlassCreaseRatio = nullptr;
+    idCVar *rtReflDenoise = nullptr;
+    idCVar *rtReflDenoiseAlpha = nullptr;
 
     // GI fine-tuning
     idCVar *rtGITemporal = nullptr;
@@ -2641,6 +2643,8 @@ static void InitRTOptionsMenu()
     rtCVars.rtGuiTexInterval = cvarSystem->Find("r_rtGuiTexInterval");
     rtCVars.rtGlassNormalMode = cvarSystem->Find("r_rtGlassNormalMode");
     rtCVars.rtGlassCreaseRatio = cvarSystem->Find("r_rtGlassCreaseRatio");
+    rtCVars.rtReflDenoise = cvarSystem->Find("r_rtReflDenoise");
+    rtCVars.rtReflDenoiseAlpha = cvarSystem->Find("r_rtReflDenoiseAlpha");
     rtCVars.rtGITemporal = cvarSystem->Find("r_rtGITemporal");
     rtCVars.rtGITemporalAlpha = cvarSystem->Find("r_rtGITemporalAlpha");
     rtCVars.rtGISamples = cvarSystem->Find("r_rtGISamples");
@@ -2870,6 +2874,11 @@ static void DrawRTOptionsMenu()
                 IM_ARRAYSIZE(glassNormalModes));
         ImGui::BeginDisabled(!(rtCVars.rtGlassNormalMode && rtCVars.rtGlassNormalMode->GetInteger() == 2));
         RTSliderFloat("Glass Crease Ratio", rtCVars.rtGlassCreaseRatio, 0.0f, 1.0f, "%.2f");
+        ImGui::EndDisabled();
+        static const char *const reflDenoiseModes[] = {"Off", "Temporal", "Temporal + Spatial (not yet implemented)"};
+        RTCombo("Reflection Denoise", rtCVars.rtReflDenoise, reflDenoiseModes, IM_ARRAYSIZE(reflDenoiseModes));
+        ImGui::BeginDisabled(!(rtCVars.rtReflDenoise && rtCVars.rtReflDenoise->GetInteger() > 0));
+        RTSliderFloat("Denoise Alpha Floor", rtCVars.rtReflDenoiseAlpha, 0.0f, 1.0f, "%.2f");
         ImGui::EndDisabled();
 
         ImGui::EndTable();

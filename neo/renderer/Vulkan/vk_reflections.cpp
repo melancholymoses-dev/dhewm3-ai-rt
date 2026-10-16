@@ -100,6 +100,21 @@ idCVar r_rtReflectionMode("r_rtReflectionMode", "1", CVAR_RENDERER | CVAR_INTEGE
                           "    remap (r_rtSpecF0Scale/Gamma) plus r_rtReflectionMinWeight.\n"
                           "Use r_rtReflections 0 to turn the feature off entirely.");
 
+// Temporal denoiser (Stage 1, docs/plans/20261013_reflection_roughness.md). Mirrors
+// vk_temporal.cpp's AO EMA pattern, but with a per-pixel variance-driven alpha and a
+// depth/normal disocclusion test instead of a single fixed alpha — see
+// VK_RT_DispatchReflTemporal. Mode 2 (spatial) is not implemented yet and currently
+// behaves like mode 1.
+idCVar r_rtReflDenoise("r_rtReflDenoise", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
+                      "0 = off (reflections sampled raw, pre-Stage-1 behaviour).\n"
+                      "1 = temporal EMA accumulation.\n"
+                      "2 = reserved for temporal+spatial; currently identical to 1.",
+                      0, 2);
+idCVar r_rtReflDenoiseAlpha("r_rtReflDenoiseAlpha", "0.35", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                            "EMA floor: 0=use only history, 1=use only current frame. The effective alpha is\n"
+                            "raised above this per-pixel when the accumulated variance says the signal hasn't\n"
+                            "converged, so moving glass does not lag behind a fixed low alpha.");
+
 idCVar r_rtGlassNormalMode("r_rtGlassNormalMode", "2", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                            "Reflection-plane normal on glass.\n"
                            "0 = vertex-interpolated (smooth; patch creases read as curved mirrors).\n"
@@ -137,6 +152,10 @@ idCVar r_rtReflectionDebugMode(
     "10 = GUI screens in reflections (docs/plans/20261015_gui_reflections.md): green = hit bound\n"
     "    to a live GUI texture, else mode 6 dimmed x0.25. Unbound screens are ignored by the ray,\n"
     "    so magenta should not appear.\n"
+    "11 = reflection denoiser history age / rejection mask (needs r_rtReflDenoise >= 1, else this\n"
+    "    just shows the normal unfiltered reflection — reflect_ray.rgen has no mode-11 case of\n"
+    "    its own): green = accepted, brightness = history age; red = rejected this frame\n"
+    "    (disocclusion or camera cut).\n"
     "Modes 2-10 require r_rtReflections 1 — they ride on the reflection ray dispatch, force the\n"
     "full-screen launch grid, and are displayed via refl_composite.frag with blending disabled\n"
     "(replace, not add). The per-surface glass overlay is suppressed while they are active.");
@@ -217,6 +236,52 @@ struct ReflParamsUBO
     float _pad0[2];          // std140 rounds the block to 272
 };
 static_assert(sizeof(ReflParamsUBO) == 272, "ReflParamsUBO size mismatch");
+
+// ---------------------------------------------------------------------------
+// UBO layout matching refl_temporal_resolve.comp's ReflTemporalParams block.
+// Two mat4s alone exceed the guaranteed 128-byte push-constant minimum, hence
+// a UBO (same VK_AllocUBOForShadow dynamic-UBO path ReflParamsUBO uses above).
+//
+//   mat4  invViewProj        offset   0  size 64  (current frame, GL convention)
+//   mat4  prevViewProj       offset  64  size 64  (previous frame, GL convention —
+//                                                   viewDef->prevViewProjMatrix)
+//   int   screenWidth        offset 128  size  4
+//   int   screenHeight       offset 132  size  4
+//   float baseAlpha          offset 136  size  4  (r_rtReflDenoiseAlpha)
+//   float varianceGain       offset 140  size  4
+//   float depthRejectThresh  offset 144  size  4
+//   float normalRejectCos    offset 148  size  4
+//   int   scissorOffsetX     offset 152  size  4
+//   int   scissorOffsetY     offset 156  size  4
+//   int   scissorExtentX     offset 160  size  4
+//   int   scissorExtentY     offset 164  size  4
+//   int   resetHistory       offset 168  size  4  (camera cut or first use)
+//   int   debugMode          offset 172  size  4  (r_rtReflectionDebugMode)
+//   int   maxAge             offset 176  size  4
+//   float _pad0[3]           offset 180  size 12
+//   total: 192 bytes, already a multiple of 16.
+// ---------------------------------------------------------------------------
+
+struct ReflTemporalUBO
+{
+    float invViewProj[16];
+    float prevViewProj[16];
+    int32_t screenWidth;
+    int32_t screenHeight;
+    float baseAlpha;
+    float varianceGain;
+    float depthRejectThresh;
+    float normalRejectCos;
+    int32_t scissorOffsetX;
+    int32_t scissorOffsetY;
+    int32_t scissorExtentX;
+    int32_t scissorExtentY;
+    int32_t resetHistory;
+    int32_t debugMode;
+    int32_t maxAge;
+    float _pad0[3];
+};
+static_assert(sizeof(ReflTemporalUBO) == 192, "ReflTemporalUBO size mismatch");
 
 // ---------------------------------------------------------------------------
 // Forward declarations (defined in other files)
@@ -568,6 +633,181 @@ static void VK_RT_DestroyReflImages(void)
         rb.width = 0;
         rb.height = 0;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Reflection temporal denoiser images (Stage 1, 20261013_reflection_roughness.md)
+//
+// Single shared instance each, not per-slot — same reasoning as aoHistory/
+// giHistory: the EMA recurrence is sequential across frames, and all RT work
+// goes through one queue in submission order, so a shared image never races.
+// ---------------------------------------------------------------------------
+
+static bool VK_RT_AllocReflAuxImage(vkRTImage_t &img, uint32_t width, uint32_t height, VkImageUsageFlags usage)
+{
+    img.width = width;
+    img.height = height;
+
+    VkImageCreateInfo imgInfo = {};
+    imgInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imgInfo.imageType = VK_IMAGE_TYPE_2D;
+    imgInfo.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    imgInfo.extent = {width, height, 1};
+    imgInfo.mipLevels = 1;
+    imgInfo.arrayLayers = 1;
+    imgInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imgInfo.usage = usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VK_CHECK(vkCreateImage(vk.device, &imgInfo, NULL, &img.image));
+
+    VkMemoryRequirements memReq;
+    vkGetImageMemoryRequirements(vk.device, img.image, &memReq);
+
+    VkPhysicalDeviceMemoryProperties memProps;
+    vkGetPhysicalDeviceMemoryProperties(vk.physicalDevice, &memProps);
+    uint32_t memTypeIdx = UINT32_MAX;
+    for (uint32_t m = 0; m < memProps.memoryTypeCount; m++)
+    {
+        if ((memReq.memoryTypeBits & (1u << m)) &&
+            (memProps.memoryTypes[m].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+        {
+            memTypeIdx = m;
+            break;
+        }
+    }
+    if (memTypeIdx == UINT32_MAX)
+    {
+        common->Warning("VK RT Refl: no device-local memory type for denoiser aux image");
+        vkDestroyImage(vk.device, img.image, NULL);
+        img.image = VK_NULL_HANDLE;
+        return false;
+    }
+
+    VkMemoryAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReq.size;
+    allocInfo.memoryTypeIndex = memTypeIdx;
+    VK_CHECK(vkAllocateMemory(vk.device, &allocInfo, NULL, &img.memory));
+    VK_CHECK(vkBindImageMemory(vk.device, img.image, img.memory, 0));
+
+    VkImageViewCreateInfo viewInfo = {};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = img.image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &img.view));
+
+    // Transition UNDEFINED -> GENERAL and clear to black, same one-time pattern as
+    // VK_RT_CreateReflImages. Stage mask is broad (ALL_COMMANDS) rather than one
+    // specific consumer's stage: reflHistory is read by the compute resolve pass,
+    // the composite/overlay fragment shaders, and the legacy interaction shader.
+    VkCommandBuffer tmpCmd = VK_NULL_HANDLE;
+    {
+        VkCommandBufferAllocateInfo cbAlloc = {};
+        cbAlloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cbAlloc.commandPool = vk.commandPool;
+        cbAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cbAlloc.commandBufferCount = 1;
+        VK_CHECK(vkAllocateCommandBuffers(vk.device, &cbAlloc, &tmpCmd));
+
+        VkCommandBufferBeginInfo beginInfo = {};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(tmpCmd, &beginInfo);
+
+        VkImageSubresourceRange subRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+        VkImageMemoryBarrier barrier = {};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.image = img.image;
+        barrier.subresourceRange = subRange;
+        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0,
+                             NULL, 1, &barrier);
+
+        VkClearColorValue clearBlack = {};
+        vkCmdClearColorImage(tmpCmd, img.image, VK_IMAGE_LAYOUT_GENERAL, &clearBlack, 1, &subRange);
+
+        VkImageMemoryBarrier barrier2 = {};
+        barrier2.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier2.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier2.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        barrier2.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier2.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier2.image = img.image;
+        barrier2.subresourceRange = subRange;
+        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0,
+                             NULL, 1, &barrier2);
+
+        vkEndCommandBuffer(tmpCmd);
+
+        VkSubmitInfo submitInfo = {};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &tmpCmd;
+        VK_CHECK(vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE));
+        VK_Prof_QueueWaitIdle(VKPROF_WAIT_REFLECTIONS, vk.graphicsQueue);
+        vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
+    }
+
+    return true;
+}
+
+static void VK_RT_FreeReflAuxImage(vkRTImage_t &img)
+{
+    if (img.view != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(vk.device, img.view, NULL);
+        img.view = VK_NULL_HANDLE;
+    }
+    if (img.image != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(vk.device, img.image, NULL);
+        img.image = VK_NULL_HANDLE;
+    }
+    if (img.memory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(vk.device, img.memory, NULL);
+        img.memory = VK_NULL_HANDLE;
+    }
+    img.width = 0;
+    img.height = 0;
+}
+
+static void VK_RT_CreateReflDenoiseImages(uint32_t width, uint32_t height)
+{
+    // reflHistory is sampled by the composite/overlay/interaction fragment shaders;
+    // reflMoments is read back only by this file's own compute pass. Both are
+    // ping-ponged (see vk_raytracing.h) to avoid a read/write race between the
+    // reprojected read at Q and this frame's write at P within one dispatch.
+    for (int i = 0; i < 2; i++)
+    {
+        if (!VK_RT_AllocReflAuxImage(vkRT.reflHistory[i], width, height,
+                                     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT))
+            common->Warning("VK RT Refl: failed to allocate reflHistory[%d]", i);
+        if (!VK_RT_AllocReflAuxImage(vkRT.reflMoments[i], width, height, VK_IMAGE_USAGE_STORAGE_BIT))
+            common->Warning("VK RT Refl: failed to allocate reflMoments[%d]", i);
+    }
+
+    vkRT.reflPingPong = 0;
+    vkRT.reflHistoryValid = false;
+    vkRT.reflPrevCamPos.Zero();
+    vkRT.reflPrevCamFwd.Zero();
+}
+
+static void VK_RT_DestroyReflDenoiseImages(void)
+{
+    for (int i = 0; i < 2; i++)
+    {
+        VK_RT_FreeReflAuxImage(vkRT.reflHistory[i]);
+        VK_RT_FreeReflAuxImage(vkRT.reflMoments[i]);
+    }
+    vkRT.reflHistoryValid = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -986,12 +1226,119 @@ static void VK_RT_InitReflPipeline(void)
 static void VK_RT_InitReflCompositePipeline(void);
 
 // ---------------------------------------------------------------------------
+// VK_RT_InitReflTemporalPipeline (Stage 1, 20261013_reflection_roughness.md)
+// Compute pipeline for refl_temporal_resolve.comp. Mirrors
+// vk_temporal.cpp's VK_RT_InitTemporalPipeline (AO's EMA pass), with three
+// storage images instead of two and a UBO instead of a push-constant block
+// (see ReflTemporalUBO's comment for why).
+// ---------------------------------------------------------------------------
+
+static void VK_RT_InitReflTemporalPipeline(void)
+{
+    // binding 0: currentImage  (reflBuffer[slot], readonly)
+    // binding 1: srcHistory    (reflHistory[ping], readonly — last frame's result)
+    // binding 2: dstHistory    (reflHistory[pong], writeonly — this frame's result)
+    // binding 3: srcMoments    (reflMoments[ping], readonly)
+    // binding 4: dstMoments    (reflMoments[pong], writeonly)
+    // binding 5: depthSampler
+    // binding 6: gbufNormalSampler
+    // binding 7: motionSampler (motionVectors[slot])
+    // binding 8: ReflTemporalUBO (dynamic)
+    //
+    // src/dst are separate bindings, not one read-write image, because this pass
+    // reprojects: it reads at Q and writes at P, and P == Q for some other
+    // invocation in the same dispatch with no ordering between them. A single
+    // read-write image would race; ping-ponging across frames (vk_raytracing.h)
+    // avoids it entirely — src is strictly last frame's, dst is strictly this
+    // frame's, and nothing in this dispatch ever writes what it also reads.
+    VkDescriptorSetLayoutBinding bindings[9] = {};
+
+    for (int i = 0; i < 5; i++)
+    {
+        bindings[i].binding = (uint32_t)i;
+        bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        bindings[i].descriptorCount = 1;
+        bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    for (int i = 5; i < 8; i++)
+    {
+        bindings[i].binding = (uint32_t)i;
+        bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[i].descriptorCount = 1;
+        bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    bindings[8].binding = 8;
+    bindings[8].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    bindings[8].descriptorCount = 1;
+    bindings[8].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutCI = {};
+    layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCI.bindingCount = 9;
+    layoutCI.pBindings = bindings;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.reflTemporalDescLayout));
+
+    VkPipelineLayoutCreateInfo plCI = {};
+    plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plCI.setLayoutCount = 1;
+    plCI.pSetLayouts = &vkRT.reflTemporalDescLayout;
+    VK_CHECK(vkCreatePipelineLayout(vk.device, &plCI, NULL, &vkRT.reflTemporalPipelineLayout));
+
+    VkShaderModule compModule = VK_LoadSPIRV("glprogs/glsl/refl_temporal_resolve.comp.spv");
+    if (compModule == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT Refl: failed to load refl_temporal_resolve.comp.spv — denoiser disabled");
+        return;
+    }
+
+    VkPipelineShaderStageCreateInfo stageCI = {};
+    stageCI.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageCI.module = compModule;
+    stageCI.pName = "main";
+
+    VkComputePipelineCreateInfo pipeCI = {};
+    pipeCI.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeCI.stage = stageCI;
+    pipeCI.layout = vkRT.reflTemporalPipelineLayout;
+    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipeCI, NULL, &vkRT.reflTemporalPipeline));
+    vkDestroyShaderModule(vk.device, compModule, NULL);
+
+    VkDescriptorPoolSize poolSizes[3] = {
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 5 * VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 * VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_MAX_FRAMES_IN_FLIGHT},
+    };
+    VkDescriptorPoolCreateInfo poolCI = {};
+    poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCI.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
+    poolCI.poolSizeCount = 3;
+    poolCI.pPoolSizes = poolSizes;
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &vkRT.reflTemporalDescPool));
+
+    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        layouts[i] = vkRT.reflTemporalDescLayout;
+    VkDescriptorSetAllocateInfo dsAlloc = {};
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkRT.reflTemporalDescPool;
+    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
+    dsAlloc.pSetLayouts = layouts;
+    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.reflTemporalDescSets));
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        vkRT.reflTemporalDescSetLastUpdatedFrameCount[i] = -1;
+
+    common->Printf("VK RT Refl: temporal denoiser pipeline initialized\n");
+}
+
+// ---------------------------------------------------------------------------
 // VK_RT_InitReflections (public entry)
 // ---------------------------------------------------------------------------
 
 void VK_RT_InitReflections(void)
 {
     VK_RT_InitReflPipeline();
+    VK_RT_InitReflTemporalPipeline();
     VK_RT_ResizeReflections(vk.swapchainExtent.width, vk.swapchainExtent.height);
     // Step 8: only when vk.gbufferSupported — reflect_ray.rgen's Fresnel/debug-mode
     // work (which this composite pass displays) needs gbufNormal to exist.
@@ -1066,6 +1413,29 @@ void VK_RT_ShutdownReflections(void)
         vkDestroyPipelineLayout(vk.device, vkRT.reflCompositeLayout, NULL);
         vkRT.reflCompositeLayout = VK_NULL_HANDLE;
     }
+    // Temporal denoiser (Stage 1)
+    if (vkRT.reflTemporalDescPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(vk.device, vkRT.reflTemporalDescPool, NULL);
+        vkRT.reflTemporalDescPool = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflTemporalDescLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.reflTemporalDescLayout, NULL);
+        vkRT.reflTemporalDescLayout = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflTemporalPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.reflTemporalPipeline, NULL);
+        vkRT.reflTemporalPipeline = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflTemporalPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(vk.device, vkRT.reflTemporalPipelineLayout, NULL);
+        vkRT.reflTemporalPipelineLayout = VK_NULL_HANDLE;
+    }
+    VK_RT_DestroyReflDenoiseImages();
+
     VK_RT_DestroyNullLightSsbo();
     VK_RT_DestroyNullGbufNormal();
     VK_RT_ShutdownReflEmitters();
@@ -1081,10 +1451,15 @@ void VK_RT_ResizeReflections(uint32_t width, uint32_t height)
     VK_Prof_DeviceWaitIdle(VKPROF_WAIT_REFLECTIONS);
     VK_RT_DestroyReflImages();
     VK_RT_CreateReflImages(width, height);
+    VK_RT_DestroyReflDenoiseImages();
+    VK_RT_CreateReflDenoiseImages(width, height);
 
     // Force descriptor set refresh at next dispatch
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
         vkRT.reflDescSetLastUpdatedFrameCount[i] = -1;
+        vkRT.reflTemporalDescSetLastUpdatedFrameCount[i] = -1;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1166,6 +1541,12 @@ static bool VK_RT_GlassScreenRect(const viewDef_t *viewDef, uint32_t bufW, uint3
     *outH = (uint32_t)idMath::ClampInt(1, h - y, rh);
     return true;
 }
+
+// The launch rect actually traced this frame, and the frame it was traced on — read
+// by VK_RT_DispatchReflTemporal so it blends exactly the pixels reflect_ray.rgen
+// wrote and nothing stale outside that rect (debug mode or glass-rect dependent).
+static VkRect2D s_reflDispatchRect[VK_MAX_FRAMES_IN_FLIGHT] = {};
+static int s_reflDispatchRectFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
 
 void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
@@ -1506,17 +1887,22 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
             "VK RT Refl: dispatch %ux%u at (%d,%d) mode=%d maxDist=%.1f emitters=%d glowTris=%d volSteps=%d\n", rectW,
             rectH, rectX, rectY, ubo.reflMode, ubo.maxDist, ubo.emitterCount, ubo.glowTriCount, ubo.volSteps);
 
+    s_reflDispatchRect[frameIdx] = VkRect2D{{rectX, rectY}, {rectW, rectH}};
+    s_reflDispatchRectFrame[frameIdx] = tr.frameCount;
+
     vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion, rectW,
                       rectH, 1);
 
-    // --- Barrier: reflection write -> fragment shader read ---
+    // --- Barrier: reflection write -> fragment shader read, and (Stage 1,
+    // 20261013_reflection_roughness.md) -> VK_RT_DispatchReflTemporal's compute read ---
     {
         VkMemoryBarrier memBarrier = {};
         memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                             0, 1, &memBarrier, 0, NULL, 0, NULL);
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                             &memBarrier, 0, NULL, 0, NULL);
     }
 
     // --- Depth barrier: restore ATTACHMENT_OPTIMAL for the upcoming render pass ---
@@ -1536,6 +1922,283 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT Refl: dispatch complete\n");
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_DispatchReflTemporal (public)
+// Temporal EMA denoise of reflBuffer (Stage 1). See refl_temporal_resolve.comp
+// for the per-pixel algorithm. No-op (and reflHistoryValid stays whatever it
+// was) whenever nothing new was traced into reflBuffer this frame — matches
+// VK_RT_DispatchReflections's own early-outs exactly via s_reflDispatchRectFrame.
+// ---------------------------------------------------------------------------
+
+void VK_RT_DispatchReflTemporal(VkCommandBuffer cmd, const viewDef_t *viewDef)
+{
+    if (!vkRT.isInitialized)
+        return;
+    if (!r_useRayTracing.GetBool() || !r_rtReflections.GetBool() || r_rtReflDenoise.GetInteger() <= 0)
+        return;
+    if (vkRT.reflTemporalPipeline == VK_NULL_HANDLE)
+        return;
+    if (!vk.gbufferSupported)
+        return; // no motion vectors / G-buffer normal to reproject against
+
+    const int frameIdx = vk.currentFrame;
+
+    // Guard against duplicate dispatch in the same frame (weapon subview etc.) — mirrors
+    // VK_RT_DispatchReflections's own guard. Without it, a second call this frame would
+    // re-run the EMA against reflBuffer a second time and read back what it just wrote.
+    static int s_lastReflTemporalDispatchFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
+    if (s_lastReflTemporalDispatchFrame[frameIdx] == tr.frameCount)
+        return;
+
+    if (s_reflDispatchRectFrame[frameIdx] != tr.frameCount)
+        return; // VK_RT_DispatchReflections traced nothing this frame — nothing to blend
+
+    const VkRect2D dispatchRect = s_reflDispatchRect[frameIdx];
+    if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
+        return;
+
+    if (vkRT.reflHistory[0].image == VK_NULL_HANDLE || vkRT.reflHistory[1].image == VK_NULL_HANDLE ||
+        vkRT.reflMoments[0].image == VK_NULL_HANDLE || vkRT.reflMoments[1].image == VK_NULL_HANDLE ||
+        vkRT.gbufNormal[frameIdx].view == VK_NULL_HANDLE || vkRT.motionVectors[frameIdx].view == VK_NULL_HANDLE)
+        return;
+
+    s_lastReflTemporalDispatchFrame[frameIdx] = tr.frameCount;
+
+    // reflHistory/reflMoments are shared across both frame-in-flight slots (ping-ponged
+    // across frames, not slots), so this dispatch's read of last frame's slot and write
+    // of this frame's slot must be ordered after whatever last touched them — the other
+    // slot's compute write, or that write's own downstream fragment consumers. Same
+    // reasoning and same barrier shape as VK_RT_DispatchTemporalResolveAO's equivalent
+    // (vk_temporal.cpp): submission order on the single RT queue already sequences the
+    // two; this barrier supplies the memory-visibility guarantee ordering alone doesn't.
+    {
+        VkMemoryBarrier reflHistBarrier = {};
+        reflHistBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        reflHistBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        reflHistBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &reflHistBarrier, 0, NULL, 0, NULL);
+    }
+
+    // --- Depth barrier: ATTACHMENT -> READ_ONLY, same dance as VK_RT_DispatchReflections ---
+    VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+    if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
+        vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
+        depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+
+    {
+        VkImageMemoryBarrier depthToRead = {};
+        depthToRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthToRead.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthToRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        depthToRead.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthToRead.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        depthToRead.image = vk.depthImage;
+        depthToRead.subresourceRange = {depthAspect, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
+                             NULL, 0, NULL, 1, &depthToRead);
+    }
+
+    // --- Camera-cut detection (shared helper — vk_temporal.cpp) ---
+    vkRTCameraCutResult_t cut =
+        VK_RT_DetectCameraCut(viewDef, vkRT.reflPrevCamPos, vkRT.reflPrevCamFwd, vkRT.reflHistoryValid, "ReflTemporal");
+    // !prevFrameValid (subview/mirror/2D-overlay/first-frame boundary, tr_local.h) means
+    // viewDef->prevViewProjMatrix may be stale or zeroed — the depth disocclusion test
+    // would divide by a zero prevClip.w. Force a reset rather than letting that surface
+    // as a NaN-driven rejection.
+    const bool reset = !vkRT.reflHistoryValid || cut.isCut || !viewDef->prevFrameValid;
+    if (reset && cut.isCut && r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT Refl Temporal: camera cut detected posDelta=%.3f angleDelta=%.3f — resetting history\n",
+                       cut.posDelta, cut.angleDelta);
+    vkRT.reflHistoryValid = true;
+
+    // --- Build UBO ---
+    VkBuffer uboBuf;
+    uint32_t uboOff;
+    void *uboMapped;
+    VK_AllocUBOForShadow(&uboBuf, &uboOff, &uboMapped);
+
+    ReflTemporalUBO ubo = {};
+    {
+        const float *proj = viewDef->projectionMatrix;
+        const float *mv = viewDef->worldSpace.modelViewMatrix;
+        float vp[16];
+        for (int r = 0; r < 4; r++)
+            for (int c = 0; c < 4; c++)
+            {
+                vp[c * 4 + r] = 0.0f;
+                for (int k = 0; k < 4; k++)
+                    vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
+            }
+        idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
+                     idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
+        idMat4 invVP = vpMat.Inverse();
+        memcpy(ubo.invViewProj, invVP.ToFloatPtr(), 16 * sizeof(float));
+    }
+    memcpy(ubo.prevViewProj, viewDef->prevViewProjMatrix, 16 * sizeof(float));
+    ubo.screenWidth = (int32_t)vk.renderExtent.width;
+    ubo.screenHeight = (int32_t)vk.renderExtent.height;
+    // Floor at 0.01, not 0.0: an exact-zero alpha can never rise even under high
+    // variance (alpha = baseAlpha * (1 + gain*sqrt(relVar)) is 0 whenever baseAlpha
+    // is), which would freeze history forever rather than merely smoothing hard.
+    ubo.baseAlpha = idMath::ClampFloat(0.01f, 1.0f, r_rtReflDenoiseAlpha.GetFloat());
+    // Not exposed as cvars (Stage 1 scope, see the plan) — tune here if a scene needs it.
+    ubo.varianceGain = 4.0f;
+    ubo.depthRejectThresh = 0.02f;
+    ubo.normalRejectCos = 0.8f;
+    ubo.scissorOffsetX = dispatchRect.offset.x;
+    ubo.scissorOffsetY = dispatchRect.offset.y;
+    ubo.scissorExtentX = (int32_t)dispatchRect.extent.width;
+    ubo.scissorExtentY = (int32_t)dispatchRect.extent.height;
+    ubo.resetHistory = reset ? 1 : 0;
+    ubo.debugMode = r_rtReflectionDebugMode.GetInteger();
+    ubo.maxAge = 32;
+    memcpy(uboMapped, &ubo, sizeof(ReflTemporalUBO));
+
+    // Read last frame's result, write the other slot — see vk_raytracing.h's comment
+    // on reflPingPong for why this can't be one read-write image per buffer.
+    const int srcIdx = vkRT.reflPingPong;
+    const int dstIdx = 1 - srcIdx;
+
+    // --- Update descriptor set (once per frame slot; src/dst flip every frame, so this
+    // must actually run every frame rather than being skipped as "already up to date") ---
+    bool refreshSet = (vkRT.reflTemporalDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount);
+    if (refreshSet)
+    {
+        VkDescriptorSet ds = vkRT.reflTemporalDescSets[frameIdx];
+
+        VkDescriptorImageInfo currInfo = {};
+        currInfo.imageView = vkRT.reflBuffer[frameIdx].view;
+        currInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkDescriptorImageInfo srcHistInfo = {};
+        srcHistInfo.imageView = vkRT.reflHistory[srcIdx].view;
+        srcHistInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkDescriptorImageInfo dstHistInfo = {};
+        dstHistInfo.imageView = vkRT.reflHistory[dstIdx].view;
+        dstHistInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkDescriptorImageInfo srcMomInfo = {};
+        srcMomInfo.imageView = vkRT.reflMoments[srcIdx].view;
+        srcMomInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkDescriptorImageInfo dstMomInfo = {};
+        dstMomInfo.imageView = vkRT.reflMoments[dstIdx].view;
+        dstMomInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkDescriptorImageInfo depthInfo = {};
+        depthInfo.sampler = vkRT.depthSampler;
+        depthInfo.imageView = vk.depthSampledView;
+        depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+        VkDescriptorImageInfo gbufInfo = {};
+        gbufInfo.sampler = vkRT.depthSampler; // texelFetch ignores filter/wrap state
+        gbufInfo.imageView = vkRT.gbufNormal[frameIdx].view;
+        gbufInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkDescriptorImageInfo motionInfo = {};
+        motionInfo.sampler = vkRT.depthSampler; // texelFetch ignores filter/wrap state
+        motionInfo.imageView = vkRT.motionVectors[frameIdx].view;
+        motionInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkDescriptorBufferInfo uboInfo = {};
+        uboInfo.buffer = uboBuf;
+        uboInfo.offset = 0;
+        uboInfo.range = sizeof(ReflTemporalUBO);
+
+        VkWriteDescriptorSet writes[9] = {};
+        VkDescriptorImageInfo *imgInfos[8] = {&currInfo,  &srcHistInfo, &dstHistInfo, &srcMomInfo,
+                                              &dstMomInfo, &depthInfo,   &gbufInfo,    &motionInfo};
+        VkDescriptorType imgTypes[8] = {
+            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,          VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,          VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,          VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        };
+        for (int i = 0; i < 8; i++)
+        {
+            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i].dstSet = ds;
+            writes[i].dstBinding = (uint32_t)i;
+            writes[i].descriptorCount = 1;
+            writes[i].descriptorType = imgTypes[i];
+            writes[i].pImageInfo = imgInfos[i];
+        }
+        writes[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[8].dstSet = ds;
+        writes[8].dstBinding = 8;
+        writes[8].descriptorCount = 1;
+        writes[8].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        writes[8].pBufferInfo = &uboInfo;
+
+        vkUpdateDescriptorSets(vk.device, 9, writes, 0, NULL);
+        vkRT.reflTemporalDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+    }
+
+    // --- Dispatch ---
+    uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
+    uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.reflTemporalPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.reflTemporalPipelineLayout, 0, 1,
+                            &vkRT.reflTemporalDescSets[frameIdx], 1, &uboOff);
+    vkCmdDispatch(cmd, groupsX, groupsY, 1);
+
+    // dstIdx now holds this frame's result — next frame (and this frame's fragment
+    // consumers, via VK_RT_GetReflReadView) read from here.
+    vkRT.reflPingPong = dstIdx;
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT Refl Temporal: dispatch slot=%d alpha=%.3f rect=(%d,%d %u,%u) reset=%d ping=%d->%d\n",
+                       frameIdx, ubo.baseAlpha, dispatchRect.offset.x, dispatchRect.offset.y,
+                       (unsigned int)dispatchRect.extent.width, (unsigned int)dispatchRect.extent.height,
+                       ubo.resetHistory, srcIdx, dstIdx);
+
+    // --- Barrier: compute write -> fragment read (composite/overlay/interaction) and
+    // next frame's own compute read of reflHistory/reflMoments ---
+    {
+        VkMemoryBarrier memBarrier = {};
+        memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                             &memBarrier, 0, NULL, 0, NULL);
+    }
+
+    // --- Depth barrier: restore ATTACHMENT_OPTIMAL for the upcoming render pass ---
+    {
+        VkImageMemoryBarrier depthRestore = {};
+        depthRestore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthRestore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        depthRestore.dstAccessMask =
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthRestore.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthRestore.image = vk.depthImage;
+        depthRestore.subresourceRange = {depthAspect, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0,
+                             NULL, 0, NULL, 1, &depthRestore);
+    }
+}
+
+// View for any downstream reflection consumer. See the header comment.
+VkImageView VK_RT_GetReflReadView(int frameIdx)
+{
+    const int debugMode = r_rtReflectionDebugMode.GetInteger();
+    // Modes 2-10 are instantaneous per-frame visualizations baked into reflBuffer by
+    // reflect_ray.rgen itself — routing them through the EMA'd history would smear
+    // them across frames and defeat the point. Mode 11 is the one exception: it IS
+    // the denoiser's own history/rejection state.
+    if (debugMode >= 2 && debugMode <= REFL_DEBUG_MAX_MODE && debugMode != 11)
+        return vkRT.reflBuffer[frameIdx].view;
+    if (r_rtReflDenoise.GetInteger() > 0 && vkRT.reflHistoryValid &&
+        vkRT.reflHistory[vkRT.reflPingPong].view != VK_NULL_HANDLE)
+        return vkRT.reflHistory[vkRT.reflPingPong].view;
+    return vkRT.reflBuffer[frameIdx].view;
 }
 
 // ---------------------------------------------------------------------------
@@ -1755,9 +2418,11 @@ void VK_RT_CompositeReflections(VkCommandBuffer cmd)
 
     // Update the descriptor set for this frame slot. The reflection image may
     // have been recreated (resize), so always write it before drawing.
+    // VK_RT_GetReflReadView: reflHistory when the denoiser is on and valid (except
+    // debug modes 2-10, which are rgen's own unfiltered per-frame visualizations).
     VkDescriptorImageInfo imgInfo = {};
     imgInfo.sampler = vkRT.reflSampler;
-    imgInfo.imageView = rb.view;
+    imgInfo.imageView = VK_RT_GetReflReadView(frameIdx);
     imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
     VkWriteDescriptorSet write = {};
