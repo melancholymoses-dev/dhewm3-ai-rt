@@ -5,8 +5,9 @@ dhewm3-rt Vulkan — Reflection ray generation shader.
 
 For every non-sky pixel:
   0. Sample the G-buffer normal/F0 (Stage 3.5, see docs/plans/gbuffer_normal_pass.md)
-     written by the depth prepass. r_rtReflectionDebugMode 2/3/4 short-circuit here
-     to visualize it directly, before any ray tracing. Modes 5/6/7 (B0, see
+     written by the depth prepass. r_rtReflectionDebugMode 2/3/4/12 short-circuit here
+     to visualize it directly, before any ray tracing (12 is Stage 2's roughness —
+     20261013_reflection_roughness.md). Modes 5/6/7 (B0, see
      docs/plans/20260918_reflection_brightness.md) short-circuit later: 5 once the
      path is chosen, 6/7 after the bounce loop but before any Fresnel weighting.
   1. Reconstruct world-space position and the mirror-reflected view direction.
@@ -58,6 +59,11 @@ layout(set = 0, binding = 2) uniform sampler2D depthSampler;
 // sampler's filter/wrap state is irrelevant; always valid (real image when
 // vk.gbufferSupported, a 1x1 null image with a=0 otherwise — see VK_RT_DispatchReflections).
 layout(set = 0, binding = 5) uniform sampler2D gbufNormalSampler;
+// gbufAlbedo's alpha (Stage 2, 20261013_reflection_roughness.md): packed class +
+// roughness, see gbuf_albedo_class.glsl. Debug mode 12 only for now; Stage 3's GGX
+// lobe is the real consumer. Same fallback convention as gbufNormalSampler — the
+// shared 1x1 null image when !gbufferSupported (VK_RT_GetNullGbufNormalView).
+layout(set = 0, binding = 9) uniform sampler2D gbufAlbedoSampler;
 
 layout(set = 0, binding = 3) uniform ReflParams {
     mat4   invViewProj;
@@ -66,7 +72,7 @@ layout(set = 0, binding = 3) uniform ReflParams {
     ivec2  screenSize;
     float  reflBlend;     // r_rtReflectionBlend — scale baked in at imageStore time
     float  grazingMax;    // r_rtSpecGrazingMax — grazing-angle Fresnel clamp (Step 8)
-    int    debugMode;     // r_rtReflectionDebugMode — 2/3/4 and 5/6/7 (B0) handled here
+    int    debugMode;     // r_rtReflectionDebugMode — 2/3/4/12 and 5/6/7 (B0) handled here
     int    sceneHasGlass; // P6 — 0 when no MAT_FLAG_GLASS geometry is in the TLAS; skips the glass probe
     float  minWeight;     // r_rtReflectionMinWeight — pre-trace Fresnel cull (R1)
     float  grazingGain;   // r_rtSpecGrazingGain — low-F0 grazing ceiling as a multiple of F0 (R2)
@@ -97,6 +103,7 @@ layout(set = 0, binding = 3) uniform ReflParams {
 // Grid math only — no bindings of its own, so it can live alongside this set.
 #include "vol_froxel_sample.glsl"
 #include "rt_phase.glsl"
+#include "gbuf_albedo_class.glsl"
 
 // binding 7: the scatter grid itself. rgb = in-scatter per unit length and, since
 // Stage 5, WITHOUT the phase function; a = extinction. No camera-path integration
@@ -304,6 +311,15 @@ void main()
         // test f0 here: black/absent specular maps legitimately write f0 == 0.
         bool noData = all(lessThanEqual(abs(gbuf.rgb - vec3(0.5)), vec3(1.0 / 255.0)));
         imageStore(reflImage, coord, noData ? vec4(1.0, 0.0, 1.0, 1.0) : vec4(0.0));
+        return;
+    }
+    if (params.debugMode == 12)
+    {
+        // Stage 2 roughness as greyscale — rough concrete bright, polished trim and
+        // glass dark, gradient should track visible surface detail.
+        ivec2 albedoSize = textureSize(gbufAlbedoSampler, 0);
+        float roughness = GBuf_UnpackRoughness(texelFetch(gbufAlbedoSampler, min(coord, albedoSize - 1), 0).a);
+        imageStore(reflImage, coord, vec4(vec3(roughness), 1.0));
         return;
     }
 

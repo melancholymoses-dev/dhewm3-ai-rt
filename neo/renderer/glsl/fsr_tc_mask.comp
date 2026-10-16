@@ -12,12 +12,12 @@ Alpha carries the mask because gbufAlbedo's rgb is the only part anything reads
 channel that avoids a fifth colour attachment and the ten pipeline-creation
 sites that would come with one.
 
-The prepass writes a three-level class (gbuffer.frag, GBuf_AlphaClass), so:
-  alpha == 1.0  ->  mask 0  (ordinary surface, or a pixel the prepass never
-                             wrote: sky and translucents clear to white)
-  alpha <  1.0  ->  mask 1  (0.0 = motion vectors known wrong, 0.5 = view-local
-                             geometry, which is a skinned mesh or the viewmodel
-                             and so wants the same full reactivity)
+Stage 2 (20261013_reflection_roughness.md) repacked alpha to carry a roughness
+estimate too (gbuf_albedo_class.glsl), so the class is no longer a bare alpha
+threshold — it's the top 2 bits:
+  class ORDINARY or the clear-to-white "never written" sentinel -> mask 0
+  class MVWRONG or VIEWLOCAL                                     -> mask 1
+Same two cases as before the repack, just decoded differently.
 
 FSR 2's depth-clip pass already 3x3 max-dilates whatever it is given
 (PreProcessReactiveMasks, ffx_fsr2_depth_clip.h), so no dilation happens here.
@@ -44,6 +44,8 @@ Code release.
 #version 460
 layout(local_size_x = 8, local_size_y = 8) in;
 
+#include "gbuf_albedo_class.glsl"
+
 layout(set = 0, binding = 0) uniform sampler2D srcAlbedo;
 layout(set = 0, binding = 1, r8) uniform image2D dstMask;
 
@@ -57,8 +59,8 @@ void main()
     if (coord.x >= pc.renderExtent.x || coord.y >= pc.renderExtent.y)
         return;
 
-    // Threshold, not 1 - alpha: the channel carries three levels now and every one
-    // below 1.0 is fully reactive.  Identical output to the old two-level encoding.
-    float packed = texelFetch(srcAlbedo, coord, 0).a;
-    imageStore(dstMask, coord, vec4(packed < 0.99 ? 1.0 : 0.0));
+    // Decode the class bits, not a threshold: see gbuf_albedo_class.glsl.
+    int cls = GBuf_UnpackClass(texelFetch(srcAlbedo, coord, 0).a);
+    bool reactive = (cls == GBUF_CLASS_MVWRONG) || (cls == GBUF_CLASS_VIEWLOCAL);
+    imageStore(dstMask, coord, vec4(reactive ? 1.0 : 0.0));
 }

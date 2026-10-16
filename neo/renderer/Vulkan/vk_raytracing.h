@@ -850,7 +850,7 @@ void VK_RT_DispatchReflTemporal(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // per-surface glass overlay.
 // 8 = projectile emitter discs (vk_rt_emitters.cpp); 9 = glass crease split; 10 = GUI hits;
 // 11 = reflection denoiser history age / rejection mask (VK_RT_DispatchReflTemporal)
-const int REFL_DEBUG_MAX_MODE = 11;
+const int REFL_DEBUG_MAX_MODE = 12;
 
 // Additively composite reflBuffer onto the framebuffer (Step 8, see
 // docs/plans/gbuffer_normal_pass.md). Must be called INSIDE the main render

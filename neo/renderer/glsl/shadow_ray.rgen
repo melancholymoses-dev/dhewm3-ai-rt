@@ -29,9 +29,10 @@ layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 // lights can be traced back-to-back with no render-pass breaks in the interaction loop.
 layout(set = 0, binding = 1, r8) uniform image2DArray shadowMask;
 layout(set = 0, binding = 2) uniform sampler2D depthSampler;
-// gbufAlbedo from the depth prepass; only alpha is read here, as the three-level
-// surface class (gbuffer.frag, GBuf_AlphaClass).  Always a valid binding — the 1x1
-// null image when there is no G-buffer this frame, with playerClassValid 0 to match.
+// gbufAlbedo from the depth prepass; only alpha is read here, as the packed surface
+// class (gbuffer.frag, GBuf_SurfaceClass; gbuf_albedo_class.glsl).  Always a valid
+// binding — the 1x1 null image when there is no G-buffer this frame, with
+// playerClassValid 0 to match.
 layout(set = 0, binding = 4) uniform sampler2D gbufClassSampler;
 
 layout(set = 0, binding = 3) uniform ShadowParams {

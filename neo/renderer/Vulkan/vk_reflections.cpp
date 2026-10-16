@@ -156,9 +156,12 @@ idCVar r_rtReflectionDebugMode(
     "    just shows the normal unfiltered reflection — reflect_ray.rgen has no mode-11 case of\n"
     "    its own): green = accepted, brightness = history age; red = rejected this frame\n"
     "    (disocclusion or camera cut).\n"
-    "Modes 2-10 require r_rtReflections 1 — they ride on the reflection ray dispatch, force the\n"
-    "full-screen launch grid, and are displayed via refl_composite.frag with blending disabled\n"
-    "(replace, not add). The per-surface glass overlay is suppressed while they are active.");
+    "12 = Stage 2 per-pixel roughness (gbufAlbedo alpha, Toksvig estimate) as greyscale —\n"
+    "    rough concrete should read bright, polished trim and glass dark, and the gradient\n"
+    "    should track visible bump detail rather than the diffuse texture.\n"
+    "Modes 2-10 and 12 require r_rtReflections 1 — they ride on the reflection ray dispatch,\n"
+    "force the full-screen launch grid, and are displayed via refl_composite.frag with blending\n"
+    "disabled (replace, not add). The per-surface glass overlay is suppressed while they are active.");
 
 // ---------------------------------------------------------------------------
 // UBO layout matching reflect_ray.rgen ReflParams block
@@ -835,7 +838,11 @@ static void VK_RT_InitReflPipeline(void)
     //            (20261013_reflection_volumetrics.md).
     // binding 8: froxel mean-direction grid, sampler3D — Stage 5. Bound as a pair
     //            with 7; the scatter grid is unphased without it.
-    VkDescriptorSetLayoutBinding bindings[9] = {};
+    // binding 9: G-buffer albedo sampler (Stage 2, 20261013_reflection_roughness.md) —
+    //            only its alpha (packed class + roughness) is read here, for debug
+    //            mode 12 today and the GGX lobe from Stage 3 on. Same fallback
+    //            convention as binding 5 — VK_RT_GetNullGbufNormalView() when unsupported.
+    VkDescriptorSetLayoutBinding bindings[10] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -883,9 +890,14 @@ static void VK_RT_InitReflPipeline(void)
     bindings[8].descriptorCount = 1;
     bindings[8].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
+    bindings[9].binding = 9;
+    bindings[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[9].descriptorCount = 1;
+    bindings[9].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 9;
+    layoutInfo.bindingCount = 10;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.reflDescLayout));
 
@@ -1177,8 +1189,8 @@ static void VK_RT_InitReflPipeline(void)
     VkDescriptorPoolSize poolSizes[5] = {
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_MAX_FRAMES_IN_FLIGHT},
-        // depth + gbufNormal + froxelScatter + froxelDir (Stage 5)
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT * 4},
+        // depth + gbufNormal + froxelScatter + froxelDir + gbufAlbedo (Stage 2)
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT * 5},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_MAX_FRAMES_IN_FLIGHT * 2}, // GI light SSBO + emitters
     };
@@ -1705,6 +1717,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     static VkImageView s_lastReflDepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkBuffer s_lastReflLightSsbo[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastReflGbufView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastReflGbufAlbedoView[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastReflFroxelView[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastReflFroxelDirView[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
@@ -1718,6 +1731,12 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     const bool haveGbuf = vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE;
     VkImageView gbufView = haveGbuf ? vkRT.gbufNormal[frameIdx].view : s_nullGbufView;
 
+    // gbufAlbedo (Stage 2): same supported/null fallback as gbufNormal above — the
+    // shared null image is never written, so the class decodes to the "ordinary, zero
+    // roughness" default rather than anything path-dependent.
+    const bool haveGbufAlbedo = vk.gbufferSupported && vkRT.gbufAlbedo[frameIdx].view != VK_NULL_HANDLE;
+    VkImageView gbufAlbedoView = haveGbufAlbedo ? vkRT.gbufAlbedo[frameIdx].view : s_nullGbufView;
+
     // Swaps between the live grid and the null one whenever r_rtVolFroxel is toggled,
     // and changes outright when the res cvars force a realloc.
     const VkImageView froxelView = VK_RT_GetFroxelScatterView();
@@ -1729,6 +1748,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         (s_lastReflTlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
         (s_lastReflStorageView[frameIdx] != rb.view) || (s_lastReflDepthView[frameIdx] != vk.depthSampledView) ||
         (s_lastReflLightSsbo[frameIdx] != lightSsbo) || (s_lastReflGbufView[frameIdx] != gbufView) ||
+        (s_lastReflGbufAlbedoView[frameIdx] != gbufAlbedoView) ||
         (s_lastReflFroxelView[frameIdx] != froxelView) || (s_lastReflFroxelDirView[frameIdx] != froxelDirView);
 
     if (reflResourceChanged && vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] == tr.frameCount &&
@@ -1774,6 +1794,11 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         gbufInfo.imageView = gbufView;
         gbufInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
+        VkDescriptorImageInfo gbufAlbedoInfo = {};
+        gbufAlbedoInfo.sampler = vkRT.depthSampler; // texelFetch only, same reasoning as gbufInfo
+        gbufAlbedoInfo.imageView = gbufAlbedoView;
+        gbufAlbedoInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
         VkDescriptorBufferInfo emitterInfo = {};
         emitterInfo.buffer = VK_RT_GetReflEmitterBuffer(frameIdx);
         emitterInfo.offset = 0;
@@ -1795,7 +1820,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         froxelDirInfo.imageView = froxelDirView;
         froxelDirInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-        VkWriteDescriptorSet writes[9] = {};
+        VkWriteDescriptorSet writes[10] = {};
 
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].pNext = &tlasWrite;
@@ -1860,13 +1885,21 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[8].pImageInfo = &froxelDirInfo;
 
-        vkUpdateDescriptorSets(vk.device, 9, writes, 0, NULL);
+        writes[9].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[9].dstSet = ds;
+        writes[9].dstBinding = 9;
+        writes[9].descriptorCount = 1;
+        writes[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[9].pImageInfo = &gbufAlbedoInfo;
+
+        vkUpdateDescriptorSets(vk.device, 10, writes, 0, NULL);
         vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
         s_lastReflTlasHandle[frameIdx] = vkRT.tlas[frameIdx].handle;
         s_lastReflStorageView[frameIdx] = rb.view;
         s_lastReflDepthView[frameIdx] = vk.depthSampledView;
         s_lastReflLightSsbo[frameIdx] = lightSsbo;
         s_lastReflGbufView[frameIdx] = gbufView;
+        s_lastReflGbufAlbedoView[frameIdx] = gbufAlbedoView;
         s_lastReflFroxelView[frameIdx] = froxelInfo.imageView;
         s_lastReflFroxelDirView[frameIdx] = froxelDirInfo.imageView;
     }
