@@ -47,18 +47,18 @@ Results (mars_city1, bioscan room):
 
 | Change | File |
 |---|---|
-| Pool of N colour images (start 16 × 512×384 RGBA8, mipped), each a bindless `idImage` | new `vk_gui_texture.cpp` |
-| Map `idUserInterface*` → slot; assign on first lookup, LRU evict by last frame drawn; reset on level load | same |
-| `idGuiModel::EmitToTexture(slot)`: copy of `EmitFullScreen` with a 640×480 ortho view and `viewDef->guiTargetSlot` | `GuiModel.cpp`, `tr_local.h` |
-| `R_RenderGuiSurf`: in the primary view only, also call `EmitToTexture` after `Redraw` | `tr_guisurf.cpp` |
-| Backend: a view with `guiTargetSlot >= 0` renders into the slot image (clear, GUI pipelines, generate mips) | `vk_backend.cpp` |
-| Skip GUIs that draw a `renderDef` window (PDA) — recursive 3D | `tr_guisurf.cpp` |
+| Pool of 16 `_guiTex<N>` idImages, 512×384 RGBA8, mipped; `idUserInterface*` → slot, LRU by last frame seen; mapping reset in `VK_RT_BeginLevelLoad` | new `vk_gui_texture.cpp/.h` |
+| `idGuiModel::EmitToTextureView(w, h)`: `EmitFullScreen`'s ortho view at 512×384, returned instead of `R_AddDrawViewCmd` | `GuiModel.cpp/.h` |
+| `R_RenderGuiSurf` → `VK_GuiTex_CaptureFromGuiModel` after `EmitToCurrentView`: reuses the one `Redraw`, so no recursion and no PDA special case. Primary view, top-level GUI, once per GUI per refresh | `tr_guisurf.cpp` |
+| Offscreen RGBA16F target + depth/aux attachments; render pass compatible with `hdrRenderPass`, so `VK_RB_DrawShaderPasses` and its pipelines run unchanged | `vk_gui_texture.cpp` |
+| `VK_RB_DrawGuiTextures`: at frame start, before the first view's render pass, draw each queued view, blit to the slot, rebuild mips. `s_guiTexExtent` makes the draw-extent helpers unscaled | `vk_backend.cpp` |
+| `r_rtGuiReflections` (gate), `r_rtGuiTexInterval` (frames between refreshes), `r_vkGuiTextureDump [slot]` | `vk_gui_texture.cpp`, `RenderSystem_init.cpp` |
 
-GUI-texture views are queued during the main view's frontend, so they run before its
-`RC_DRAW_VIEW` and its reflection dispatch (`tr_main.cpp:1401`).
+No screens on screen → nothing queued → no cost.
 
-Check: a `r_vkGuiTextureDump <slot>` command writes a slot to TGA. The bioscan text is readable
-and the right way up. Raster GUIs are unchanged.
+Check: `r_vkLogRT 1` logs `VK GUITEX: slot N <- '<gui>'` on entering the bioscan room.
+`r_vkGuiTextureDump` lists slots; `r_vkGuiTextureDump <slot>` writes `guitex_<slot>.tga`, which
+shows the bioscan text readable and the right way up. Raster GUIs are unchanged.
 
 ## Stage 2 — Into the TLAS, bound to the slot
 
@@ -80,7 +80,7 @@ contact lines around screens (A/B with the BLAS admit cvar-gated).
 | `GUI_LIVE` skips the ×3 / 0.2 boost; scale by `r_rtGuiReflGain` (default 1) to match the raster screen | `rt_material.glsl` |
 | Decide whether live GUIs feed probe GI. A/B in the bioscan room; the default follows the result | `vk_gi*.cpp` |
 | Off-screen screens keep their last texture (no redraw when culled) | `vk_gui_texture.cpp` |
-| `r_rtGuiReflections` (0/1) in `Dhewm3SettingsMenu.cpp` | settings menu |
+| `r_rtGuiReflections` (0/1) in `Dhewm3SettingsMenu.cpp`; GUI-texture pass gets its own profiler phase | settings menu, `vk_backend.cpp` |
 
 Check: screen and its reflection side by side at similar tonemapped brightness (debug
 mode 6 for raw radiance). Turning away and back shows no black flash in the reflection.

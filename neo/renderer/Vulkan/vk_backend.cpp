@@ -31,6 +31,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Vulkan/vk_bloom.h"
 #include "renderer/Vulkan/vk_gbuffer.h"
 #include "renderer/Vulkan/vk_rt_emitters.h"
+#include "renderer/Vulkan/vk_gui_texture.h"
 #include "sys/sys_imgui.h"
 #include <SDL.h>
 #include <cmath>
@@ -49,6 +50,10 @@ static bool s_upscaleDone = false;
 // fallback does not composite a second time on a frame that had a GUI overlay view.
 static bool s_bloomDone = false;
 
+// Non-zero only while VK_RB_DrawGuiTextures draws into the GUI reflection target: that
+// target is its own unscaled space, neither the render sub-rect nor the display.
+static VkExtent2D s_guiTexExtent = {0, 0};
+
 // The extent every raster draw must use *right now*.  The 3D scene renders into
 // the top-left renderExtent sub-rect; once VK_RT_DispatchUpscale has resolved it
 // the frame is display-space again.  Every viewport and render-pass renderArea
@@ -56,13 +61,15 @@ static bool s_bloomDone = false;
 // afterwards (UI, ImGui, the GI composite) back into the sub-rect.
 static VkExtent2D VK_CurrentDrawExtent(void)
 {
+    if (s_guiTexExtent.width != 0)
+        return s_guiTexExtent;
     return s_upscaleDone ? vk.swapchainExtent : vk.renderExtent;
 }
 
 // Frontend screen rect (always display space) -> current draw space.
 static idScreenRect VK_ScaleToDrawSpace(const idScreenRect &s)
 {
-    return s_upscaleDone ? s : VK_RT_ScaleDisplayRect(s);
+    return (s_upscaleDone || s_guiTexExtent.width != 0) ? s : VK_RT_ScaleDisplayRect(s);
 }
 
 // Current view's scissor rect in VK coordinates (Y-down).
@@ -1122,6 +1129,8 @@ static VkViewport VK_ComputeViewViewport(const viewDef_t *viewDef)
     const float dw = (float)drawExtent.width;
     const float dh = (float)drawExtent.height;
     VkViewport full = {0.0f, dh, dw, -dh, 0.0f, 1.0f};
+    if (s_guiTexExtent.width != 0)
+        return full;
 
     // Full-display views (main view, 2D overlay, SS_SUBVIEW mirrors) keep the exact extent.
     const idScreenRect &v = viewDef->viewport;
@@ -4730,6 +4739,60 @@ static void VK_RB_FogAllLights(VkCommandBuffer cmd)
 }
 
 // ---------------------------------------------------------------------------
+// VK_RB_DrawGuiTextures — GUI reflections Stage 1 (docs/plans/20261015_gui_reflections.md).
+// Draws the GUI views queued by the frontend into their slot textures, reusing the
+// shader-pass path against vk_gui_texture.cpp's hdrRenderPass-compatible target.
+// Runs once per frame, outside any render pass, before the first view opens it, so
+// every RT dispatch this frame sees the updated slots.
+// ---------------------------------------------------------------------------
+static void VK_RB_DrawGuiTextures(VkCommandBuffer cmd)
+{
+    const int count = VK_GuiTex_PendingCount();
+    if (count == 0)
+        return;
+
+    const viewDef_t *savedViewDef = backEnd.viewDef;
+    float savedProj[16];
+    memcpy(savedProj, s_projVk, sizeof(savedProj));
+    const VkViewport savedViewport = s_viewViewport;
+    const VkRect2D savedScissor = s_viewScissor;
+
+    VK_SetRenderStage("GuiTextures");
+    s_guiTexExtent = {VK_GUITEX_WIDTH, VK_GUITEX_HEIGHT};
+    for (int i = 0; i < count; i++)
+    {
+        int slot = -1;
+        viewDef_t *view = VK_GuiTex_Pending(i, &slot);
+        if (!view || !VK_GuiTex_BeginPass(cmd, slot))
+            continue;
+
+        backEnd.viewDef = view;
+        // Same GL->VK Z remap as VK_RB_DrawView.
+        const float *src = view->projectionMatrix;
+        memcpy(s_projVk, src, 64);
+        for (int c = 0; c < 4; c++)
+            s_projVk[c * 4 + 2] = 0.5f * src[c * 4 + 2] + 0.5f * src[c * 4 + 3];
+        s_viewViewport = VK_ComputeViewViewport(view);
+        s_viewScissor = VK_ComputeViewScissor(view);
+        vkCmdSetViewport(cmd, 0, 1, &s_viewViewport);
+        vkCmdSetScissor(cmd, 0, 1, &s_viewScissor);
+
+        VK_RB_DrawShaderPasses(cmd);
+        VK_GuiTex_EndPassAndCopy(cmd, slot);
+    }
+    s_guiTexExtent = {0, 0};
+    VK_GuiTex_ClearPending();
+
+    if (r_vkLogRT.GetInteger() >= 2)
+        common->Printf("VK GUITEX: frame=%d rendered %d GUI texture(s)\n", tr.frameCount, count);
+
+    backEnd.viewDef = savedViewDef;
+    memcpy(s_projVk, savedProj, sizeof(savedProj));
+    s_viewViewport = savedViewport;
+    s_viewScissor = savedScissor;
+}
+
+// ---------------------------------------------------------------------------
 // VK_RB_DrawView / VK_RB_SwapBuffers - main per-frame view rendering
 //
 // Doom 3 submits multiple RC_DRAW_VIEW commands per EndFrame (e.g. the 3D
@@ -5026,6 +5089,9 @@ void VK_RB_DrawView(const void *data)
         // Upload any cinematic frames before the render pass opens
         // (transfer ops are illegal inside a render pass).
         VK_RB_UpdateCinematics(cmdBuf, data);
+
+        // Also outside the pass, and before any view's RT dispatch samples the slots.
+        VK_RB_DrawGuiTextures(cmdBuf);
 
         // Begin render pass (one pass for the entire EndFrame; all views composite into it)
         // clearValues[2] (gbufNormal, Stage 3.5) = {0.5, 0.5, 0.5, 0.0}: null normal, F0 0 —

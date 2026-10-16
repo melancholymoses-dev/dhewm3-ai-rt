@@ -239,6 +239,12 @@ void R_RenderGuiSurf(idUserInterface *gui, drawSurf_t *drawSurf)
     tr.guiModel->Clear();
     gui->Redraw(tr.viewDef->renderView.time);
     tr.guiModel->EmitToCurrentView(modelMatrix, drawSurf->space->weaponDepthHack);
+    // dhewm3-rt: also queue the same quads for this GUI's reflection texture (Vulkan RT only).
+    if (glConfig.isVulkan)
+    {
+        extern void VK_GuiTex_CaptureFromGuiModel(const idUserInterface *gui);
+        VK_GuiTex_CaptureFromGuiModel(gui);
+    }
     tr.guiModel->Clear();
 
     tr.guiRecursionLevel--;

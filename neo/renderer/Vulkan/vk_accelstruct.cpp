@@ -19,6 +19,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/VertexCache.h"
 #include "ui/UserInterface.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_gui_texture.h"
 #include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_upscale.h"
@@ -2278,6 +2279,8 @@ void VK_RT_BeginLevelLoad(void)
     VK_Pool_TrimEmpty(&s_blasScratchPool);
     VK_Pool_TrimEmpty(&s_blasGeomPool);
 
+    VK_GuiTex_BeginLevelLoad();
+
     // Destroy all per-frame TLAS resources.
     // The new level's first RebuildTLAS call will allocate fresh buffers.
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
@@ -2378,6 +2381,8 @@ void VK_RT_Shutdown(void)
     VK_Pool_Destroy(&s_blasStoragePool);
     VK_Pool_Destroy(&s_blasScratchPool);
     VK_Pool_Destroy(&s_blasGeomPool);
+
+    VK_GuiTex_Shutdown();
 
     // Destroy TLAS (one per frame-in-flight slot)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
