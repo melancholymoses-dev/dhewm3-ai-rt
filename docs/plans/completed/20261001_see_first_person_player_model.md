@@ -70,7 +70,8 @@ Why separate model is preferred:
 |---|---|
 | Source | `spplayer.md5mesh`, trimmed in Blender above Z≈60 (below `Shoulders` at 61.9) |
 | Joints | 75, names/order/parents/bind pose identical to source — all 19 stock `.md5anim` remain valid |
-| Meshes | 1 (`models/characters/player/body`); `soldier` and `marine2` arm mesh removed |
+| Meshes | 2: `models/characters/player/body` (hand-edited); `soldier` (t-shirt, for skin `tshirt_mp` in mars_city1) added by `tools/fp_body_add_soldier.py`, unedited stock verts cut at Z≤60 and to the body's joints. `marine2` arm mesh removed |
+| Re-run after a body re-export | `python tools/fp_body_add_soldier.py <pak002>/models/md5/characters/npcs/playermoves/spplayer.md5mesh` |
 | Verts / tris | 1071 / 2082 |
 | Weighted joints | 19: legs, `Hips`, `Waist`, `Belly`, `Chest`, `Lrib`/`Rrib`, `Lshldr`/`Rshldr` |
 | Unweighted but present | 56, incl. `Head`, `Loneck`, arms, fingers, all `*_ATTACHER` |
