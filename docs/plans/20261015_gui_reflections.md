@@ -64,14 +64,19 @@ shows the bioscan text readable and the right way up. Raster GUIs are unchanged.
 
 | Change | File |
 |---|---|
-| BLAS filter: admit `shader->HasGui()` surfaces despite `MF_NOSHADOWS` | `vk_accelstruct.cpp:614` |
-| Material entry: GUI surfaces get no `GLASS`, but get `EMISSIVE` + new `MAT_FLAG_GUI_LIVE`, with `emissiveTexIndex` = slot image | `vk_material_table.cpp`, `rt_material.glsl` |
-| Resolve GUI per instance (entity `gui[]` / `GlobalGui`), same rule as `tr_light.cpp:1671` | `vk_accelstruct.cpp` (4 entry sites) |
-| Shadow/AO/GI rays ignore `GUI_LIVE` geometry (it is flush with its housing) | shadow/AO/GI any-hit |
-| First slot assignment for a static instance forces `rewriteStatic` | `vk_accelstruct.cpp` |
+| `VK_RT_NoShadowsExcluded`: translucent GUI surfaces join window glass in the BLAS; shared with the dynamic address refresh, which must walk the same surfaces | `vk_accelstruct.cpp` |
+| `GUI_SURF` only for stage-less (translucent) GUI surfaces; GUI materials with stages keep their opaque `GUI_EMISSIVE` path untouched | `vk_material_table.cpp` |
+| `VK_RT_BindGuiMaterial` at the 4 entry sites: GUI per instance (`tr_light.cpp:1671` rule) → slot; clear `GLASS`, set `EMISSIVE`+`GUI_LIVE`, `emissiveTexIndex` = slot image. Static sites fold slot+index into `staticSignature` | `vk_accelstruct.cpp` |
+| Any-hit: reflection accepts `GUI_LIVE` (no terminate, closest wins) and ignores unbound; shadow and GI ignore `GUI_SURF`; AO already ignores non-opaque | `reflect_ray/shadow_ray/gi_ray.rahit` |
+| `reflect_ray.rchit`: `GUI_LIVE` returns its emission even where dark | `reflect_ray.rchit` |
+| Glow-only harvest excludes GUI surfaces (they are no longer BLAS-dropped) | `vk_rt_emitters.cpp` |
+| `MatTable` log adds `gui-surf=` / `gui-live=` | `vk_material_table.cpp` |
 
-Check: debug mode 10 shows green on the scanner screens in the glass. No new shadow or AO
-contact lines around screens (A/B with the BLAS admit cvar-gated).
+`r_rtGuiReflections 0` unbinds every slot, which restores the pre-Stage-2 result (A/B).
+
+Check: `r_vkLogRT 1` shows `gui-live` > 0 in the bioscan room. Debug mode 10 shows green on
+the scanner screens in the glass and no magenta. No new shadow or AO lines around screens
+(A/B `r_rtGuiReflections`).
 
 ## Stage 3 — Brightness and polish
 

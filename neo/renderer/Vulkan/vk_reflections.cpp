@@ -134,9 +134,9 @@ idCVar r_rtReflectionDebugMode(
     "    the reflected surface. Emitters are collected even with r_rtReflGlow 0.\n"
     "9 = glass only: r_rtGlassNormalMode 2's split. Red = face normal (crease-adjacent flat facet),\n"
     "    green = interpolated (arc or flat). Brighter = more lopsided vertex normals.\n"
-    "10 = GUI surfaces in reflections: magenta = GUI hit, green = GUI hit bound to a live GUI\n"
-    "    texture, else mode 6 dimmed x0.25. GUI surfaces reach the TLAS only from Stage 2 of\n"
-    "    docs/plans/20261015_gui_reflections.md.\n"
+    "10 = GUI screens in reflections (docs/plans/20261015_gui_reflections.md): green = hit bound\n"
+    "    to a live GUI texture, else mode 6 dimmed x0.25. Unbound screens are ignored by the ray,\n"
+    "    so magenta should not appear.\n"
     "Modes 2-10 require r_rtReflections 1 — they ride on the reflection ray dispatch, force the\n"
     "full-screen launch grid, and are displayed via refl_composite.frag with blending disabled\n"
     "(replace, not add). The per-surface glass overlay is suppressed while they are active.");

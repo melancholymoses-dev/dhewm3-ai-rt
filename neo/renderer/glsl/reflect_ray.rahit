@@ -59,6 +59,15 @@ void main()
 
     MaterialEntry mat = materials[matIdx];
 
+    // GUI screen: seen only once it has a live texture. Accept without terminating so
+    // a nearer surface still wins.
+    if ((mat.flags & MAT_FLAG_GUI_SURF) != 0u)
+    {
+        if ((mat.flags & MAT_FLAG_GUI_LIVE) == 0u)
+            ignoreIntersectionEXT;
+        return;
+    }
+
     if ((mat.flags & MAT_FLAG_ALPHA_TESTED) != 0u)
     {
         vec2  uv    = rt_InterpolateUV(matIdx, gl_PrimitiveID, baryCoord);

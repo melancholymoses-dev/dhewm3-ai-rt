@@ -80,9 +80,11 @@ static bool VK_GuiTex_Enabled(void)
 static void R_GuiTexPlaceholder(idImage *image)
 {
     // Real size comes from VK_Image_Upload in VK_GuiTex_BeginPass; GenerateImage would round to POT.
+    // Repeat, not clamp: R_SurfaceToTextureAxis maps the GUI to frac(st), so a screen's
+    // UVs may span 1..2.
     byte data[8 * 8 * 4];
     memset(data, 0, sizeof(data));
-    image->GenerateImage(data, 8, 8, TF_DEFAULT, false, TR_CLAMP, TD_HIGH_QUALITY);
+    image->GenerateImage(data, 8, 8, TF_DEFAULT, false, TR_REPEAT, TD_HIGH_QUALITY);
 }
 
 idImage *VK_GuiTex_SlotImage(int slot)
@@ -96,7 +98,8 @@ idImage *VK_GuiTex_SlotImage(int slot)
 
 int VK_GuiTex_FindSlot(const idUserInterface *gui)
 {
-    if (!gui)
+    // Disabled reads as "no slot", so r_rtGuiReflections 0 also unbinds the materials (A/B).
+    if (!gui || !VK_GuiTex_Enabled())
         return -1;
     for (int i = 0; i < VK_GUITEX_SLOTS; i++)
     {

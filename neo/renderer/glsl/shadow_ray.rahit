@@ -46,6 +46,13 @@ void main()
     uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
     MaterialEntry mat = materials[matIdx];
 
+    // GUI screens sit flush on their housing, which already casts the shadow.
+    if ((mat.flags & MAT_FLAG_GUI_SURF) != 0u)
+    {
+        ignoreIntersectionEXT;
+        return;
+    }
+
     if ((mat.flags & MAT_FLAG_ALPHA_TESTED) != 0u)
     {
         vec2  uv    = rt_InterpolateUV(matIdx, gl_PrimitiveID, baryCoords);

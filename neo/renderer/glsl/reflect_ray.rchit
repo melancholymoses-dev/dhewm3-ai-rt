@@ -91,8 +91,9 @@ void main()
     reflPayload.hitFlags = materials[matIdx].flags;
 
     // Emissive surfaces return their emitted colour directly (no lighting evaluation).
+    // A live GUI screen is pure emission, dark texels included; it has no diffuse stage.
     vec3 emissive = rt_EvalEmissiveRadiance(matIdx, gl_PrimitiveID, baryCoord);
-    if (dot(emissive, emissive) > 0.001)
+    if ((materials[matIdx].flags & MAT_FLAG_GUI_LIVE) != 0u || dot(emissive, emissive) > 0.001)
     {
         reflPayload.colour        = emissive * rtLightBuf.emissiveScale;
         reflPayload.transmittance = 0.0;
