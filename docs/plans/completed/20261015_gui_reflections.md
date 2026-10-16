@@ -104,3 +104,8 @@ no visible stepping, since most screens are static. Defaults set to 0.3 and 2.
 | Reflected text shimmers | Toggle slot mips; compare at distance |
 | Pool too small in GUI-dense rooms (admin offices) | `skipped(pool full)` in the `r_vkLogRT 2` `VK GUITEX` line; raise `VK_GUITEX_SLOTS` (~1 MB each) |
 | A wall-hidden GUI within the radius takes a slot from a reflected one | Same log; lower `r_rtGuiTexRadius` |
+| Off-screen GUI cinematic shows the wrong movie | One shared cinematic image per frame; GUI views claim it only when no scene view did. Needs a per-`idCinematic` image cache to fix fully |
+
+Review fixes (2026-10-16): empty GUI redraws now clear their slot; texture views use the source
+view's `floatTime`; off-screen redraws use the `tr_light.cpp` fast-time bracket (RoE slow
+motion); only mip 0 is refreshed, since RT `texture()` samples LOD 0.

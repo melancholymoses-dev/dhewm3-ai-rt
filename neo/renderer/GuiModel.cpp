@@ -342,11 +342,8 @@ texture slot before the main view (docs/plans/20261015_gui_reflections.md Stage 
 */
 viewDef_t *idGuiModel::EmitToTextureView(int width, int height)
 {
-    if (surfaces[0].numVerts == 0)
-    {
-        return NULL;
-    }
-
+    // No early-out on an empty model: an empty view still clears the slot, so a GUI that
+    // hides everything (or a slot's new owner) doesn't keep the previous image.
     viewDef_t *viewDef = (viewDef_t *)R_ClearedFrameAlloc(sizeof(*viewDef));
 
     viewDef->renderView.width = SCREEN_WIDTH;
@@ -356,7 +353,9 @@ viewDef_t *idGuiModel::EmitToTextureView(int width, int height)
     viewDef->viewport.x2 = width - 1;
     viewDef->viewport.y2 = height - 1;
     viewDef->scissor = viewDef->viewport;
-    viewDef->floatTime = tr.frameShaderTime;
+    // The source view's clock: in-world GUIs run on game fast time (tr_light.cpp), and the
+    // reflection must evaluate time-dependent stages exactly as the screen does.
+    viewDef->floatTime = tr.viewDef ? tr.viewDef->floatTime : tr.frameShaderTime;
 
     viewDef->projectionMatrix[0] = 2.0f / 640.0f;
     viewDef->projectionMatrix[5] = -2.0f / 480.0f;

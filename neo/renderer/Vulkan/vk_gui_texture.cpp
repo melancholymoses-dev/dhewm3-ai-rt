@@ -10,7 +10,7 @@ VK_GuiTex_CaptureFromGuiModel, which builds a second 640x480 ortho view of the s
 quads and queues it against the GUI's slot. The backend renders the queue at the start
 of the frame into a private 512x384 target whose render pass is compatible with
 vk.hdrRenderPass (so VK_RB_DrawShaderPasses and its pipelines are reused unchanged),
-then blits into the slot's mipped RGBA8 idImage.
+then blits into mip 0 of the slot's RGBA8 idImage (RT stages sample LOD 0 only).
 
 Only GUIs drawn in the primary view are captured, so cost scales with the screens on
 screen and is zero elsewhere. r_rtGuiTexInterval trades refresh rate for cost.
@@ -27,6 +27,7 @@ Code release.
 
 #include "sys/platform.h"
 #include "framework/CmdSystem.h"
+#include "framework/Game.h"
 #include "renderer/tr_local.h"
 #include "renderer/RenderWorld_local.h"
 #include "renderer/GuiModel.h"
@@ -291,13 +292,21 @@ void VK_GuiTex_RefreshNearby(idRenderWorldLocal *world)
             break;
         }
 
-        // Same bracket as R_RenderGuiSurf, minus the on-surface emit.
+        // Same brackets as tr_light.cpp + R_RenderGuiSurf, minus the on-surface emit. GUIs
+        // run on game fast time; the camera clock is slow.time under RoE slow motion and
+        // would step a GUI's clock backwards when the player looks away.
+        const float oldFloatTime = tr.viewDef->floatTime;
+        const int oldTime = tr.viewDef->renderView.time;
+        tr.viewDef->floatTime = game->GetTimeGroupTime(1) * 0.001f;
+        tr.viewDef->renderView.time = game->GetTimeGroupTime(1);
         tr.guiRecursionLevel++;
         tr.guiModel->Clear();
         gui->Redraw(tr.viewDef->renderView.time);
         VK_GuiTex_CaptureFromGuiModel(gui);
         tr.guiModel->Clear();
         tr.guiRecursionLevel--;
+        tr.viewDef->floatTime = oldFloatTime;
+        tr.viewDef->renderView.time = oldTime;
         redrawn++;
     }
 
@@ -532,14 +541,6 @@ void VK_GuiTex_Shutdown(void)
     s_pendingCount = 0;
 }
 
-static uint32_t VK_GuiTex_MipLevels(void)
-{
-    uint32_t levels = 1;
-    for (int d = VK_GUITEX_WIDTH > VK_GUITEX_HEIGHT ? VK_GUITEX_WIDTH : VK_GUITEX_HEIGHT; d > 1; d >>= 1)
-        levels++;
-    return levels;
-}
-
 static VkPipelineStageFlags VK_GuiTex_SampleStages(void)
 {
     VkPipelineStageFlags stages = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -627,14 +628,15 @@ void VK_GuiTex_EndPassAndCopy(VkCommandBuffer cmd, int slot)
     if (!VK_Image_GetHandle(VK_GuiTex_SlotImage(slot), &dst) || dst == VK_NULL_HANDLE)
         return;
 
-    const uint32_t mips = VK_GuiTex_MipLevels();
+    // Mip 0 only: the RT stages sample with implicit-LOD texture(), which is LOD 0 there.
+    // The image keeps VK_Image_Upload's chain, but nothing reads levels 1+.
     const VkPipelineStageFlags sampleStages = VK_GuiTex_SampleStages();
 
     VK_GuiTex_ImageBarrier(cmd, s_color.image, 0, 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
                            VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                            VK_PIPELINE_STAGE_TRANSFER_BIT);
-    VK_GuiTex_ImageBarrier(cmd, dst, 0, mips, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+    VK_GuiTex_ImageBarrier(cmd, dst, 0, 1, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
                            VK_ACCESS_TRANSFER_WRITE_BIT, sampleStages, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
@@ -647,30 +649,7 @@ void VK_GuiTex_EndPassAndCopy(VkCommandBuffer cmd, int slot)
     vkCmdBlitImage(cmd, s_color.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                    1, &blit, VK_FILTER_NEAREST);
 
-    // Mip chain, as VK_Image_Upload builds it; reflections sample these at distance.
-    int mw = VK_GUITEX_WIDTH, mh = VK_GUITEX_HEIGHT;
-    for (uint32_t i = 1; i < mips; i++)
-    {
-        VK_GuiTex_ImageBarrier(cmd, dst, i - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                               VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
-                               VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                               VK_PIPELINE_STAGE_TRANSFER_BIT);
-        const int nw = mw > 1 ? mw >> 1 : 1;
-        const int nh = mh > 1 ? mh >> 1 : 1;
-        VkImageBlit mb = {};
-        mb.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i - 1, 0, 1};
-        mb.srcOffsets[1] = {mw, mh, 1};
-        mb.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1};
-        mb.dstOffsets[1] = {nw, nh, 1};
-        vkCmdBlitImage(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &mb,
-                       VK_FILTER_LINEAR);
-        VK_GuiTex_ImageBarrier(cmd, dst, i - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
-                               VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, sampleStages);
-        mw = nw;
-        mh = nh;
-    }
-    VK_GuiTex_ImageBarrier(cmd, dst, mips - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    VK_GuiTex_ImageBarrier(cmd, dst, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
                            VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, sampleStages);
 }

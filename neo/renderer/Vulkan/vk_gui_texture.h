@@ -41,7 +41,7 @@ void VK_GuiTex_ClearPending(void);
 
 // Backend, outside any render pass: BeginPass sizes the slot image, then opens the
 // offscreen pass (compatible with vk.hdrRenderPass, so every GUI pipeline draws into it).
-// EndPassAndCopy closes it, blits into the slot image and rebuilds its mips.
+// EndPassAndCopy closes it and blits into the slot image's mip 0 (all the RT stages read).
 bool VK_GuiTex_BeginPass(VkCommandBuffer cmd, int slot);
 void VK_GuiTex_EndPassAndCopy(VkCommandBuffer cmd, int slot);
 

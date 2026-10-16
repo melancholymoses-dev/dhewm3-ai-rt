@@ -59,6 +59,7 @@ class idGuiModel
     void EmitFullScreen();
     // dhewm3-rt: like EmitFullScreen, but into a width x height offscreen view that is
     // returned instead of queued as a draw command (GUI reflections, vk_gui_texture.cpp).
+    // Never NULL; an empty model gives an empty view, which clears the target.
     struct viewDef_s *EmitToTextureView(int width, int height);
 
     // these calls are forwarded from the renderer
