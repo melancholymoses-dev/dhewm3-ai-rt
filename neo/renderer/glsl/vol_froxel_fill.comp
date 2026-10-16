@@ -10,11 +10,20 @@ at the cell's jittered centre, and writes the result as a scattering
 coefficient per unit length — the path integral itself belongs to
 vol_froxel_integrate.comp, not here.
 
-Output (rgba16f 3D image):
+Output — froxelScatter (rgba16f 3D image):
   rgb — in-scattered radiance per unit length, with each light's per-class
-        density*strength already folded in (the integrate pass is class-blind).
+        density*strength already folded in (the integrate pass is class-blind),
+        and since Stage 5 WITHOUT the phase function.
   a   — extinction coefficient at the cell.  Uniform (global density) today;
         stored per cell so a spatially varying medium needs no format change.
+
+Output — froxelDir (rgba8_snorm 3D image, Stage 5 of
+20261013_reflection_volumetrics.md):
+  xyz — mean scattering direction, cell toward the light, length = effective
+        mean cosine g.  The consumer evaluates the phase from this and its own
+        ray direction, which is what lets a reflected ray read the grid
+        correctly; see rt_phase.glsl for why baking it here was wrong.
+  a   — unused.
 
 Descriptors (set 0):
   binding 0 — TLAS                 (ray queries for shadow tests)
@@ -22,6 +31,7 @@ Descriptors (set 0):
   binding 2 — VolFroxelParams UBO  (declared by vol_froxel_common.glsl)
   binding 3 — VolLightBuf SSBO     (vol's own light selection -- NOT GI's
                                     giLightSsbo; see vk_vol.cpp)
+  binding 4 — froxelDir rgba8_snorm 3D  (output storage image)
 
 Descriptors (set 1): shared vkRT.matDescLayout/matDescSet, for cookie
   sampling.  Only matTextures[4096] is used; see the declaration below for why
@@ -47,6 +57,10 @@ layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
 layout(set = 0, binding = 1, rgba16f) uniform image3D froxelScatter;
+// Stage 5 (20261013_reflection_volumetrics.md): xyz = mean scattering direction,
+// |xyz| = effective mean cosine g.  snorm8 is ample for a phase direction (~0.8
+// deg) and halves the memory against a second rgba16f grid.
+layout(set = 0, binding = 4, rgba8_snorm) uniform writeonly image3D froxelDir;
 
 #include "vol_froxel_common.glsl"
 
@@ -92,21 +106,10 @@ layout(set = 0, binding = 3, std430) readonly buffer GILightBuf {
 // fan/grate fixtures it was added for.  See rt_SampleLightCookieSoft.
 #define VOL_COOKIE_PENUMBRA 0.08
 
-// Identical to vol_march.comp's.
-float HenyeyGreenstein(float cosTheta, float g)
-{
-    float g2    = g * g;
-    float denom = 1.0 + g2 - 2.0 * g * cosTheta;
-    return (1.0 - g2) / (4.0 * 3.14159265359 * pow(max(denom, 1e-2), 1.5));
-}
-
-// Forward HG lobe + isotropic lobe; see vol_march.comp for the rationale, and
-// keep the two copies identical so the r_rtVolFroxel 0/1 A/B stays meaningful.
-float PhaseFunction(float cosTheta, float g, float isoMix)
-{
-    const float INV_4PI = 0.0795774715;
-    return mix(HenyeyGreenstein(cosTheta, g), INV_4PI, clamp(isoMix, 0.0, 1.0));
-}
+// Stage 5: the phase function moved to rt_phase.glsl, shared with the march, the
+// integrate pass and reflect_ray.rgen.  This shader no longer evaluates it at all
+// — it records the direction the integrate pass needs to evaluate it from.
+#include "rt_phase.glsl"
 
 void main()
 {
@@ -121,6 +124,10 @@ void main()
     int maxLights = min(fp.misc.y, giLightBuf.numLights);
 
     vec3 scatter = vec3(0.0);
+    // Stage 5: sum(w * g_i * lightDir_i) and sum(w), w being each light's own
+    // unphased contribution luminance. See rt_PhaseFromMeanDir.
+    vec3  dirAccum = vec3(0.0);
+    float dirWeight = 0.0;
     // Debug mode 2 only: how many lights actually reached this cell (survived the
     // cull AND the occlusion ray). Written to alpha in place of extinction — see
     // the imageStore at the end.
@@ -203,13 +210,14 @@ void main()
         if (atten < 0.001)
             continue;
 
-        vec3  lightDir = toLight / max(dist, 0.001);
-        float cosTheta = dot(rayDir, lightDir);
+        vec3 lightDir = toLight / max(dist, 0.001);
 
+        // Stage 5: no phase evaluated here. The cell's mean direction below carries
+        // this light's g, and whoever reads the grid applies the phase for its own
+        // ray. rayDir (camera->cell) is now used only by vf_CellWorldPos's slice math.
         float localAniso = isFlashlight ? fp.anisos.z
                          : isDirected   ? fp.anisos.y
                                         : fp.anisos.x;
-        float phase = PhaseFunction(cosTheta, localAniso, fp.strengths.w);
 
         // Projected emitters usually sit inside their own fixture; stop the ray short.
         float tShadow = max(0.01, dist - ((lt != 0u) ? max(fp.rangeParams.w, VOL_SHADOW_BIAS)
@@ -244,12 +252,19 @@ void main()
                          : isDirected   ? fp.strengths.y
                                         : fp.strengths.x;
 
-        vec3 contrib = lightColor * lightIntens * phase * atten * classScale;
+        vec3 contrib = lightColor * lightIntens * atten * classScale;
 
         if ((giLightBuf.lights[li].flags & GI_LIGHT_FLAG_HAS_COOKIE) != 0u)
             contrib *= rt_SampleLightCookieSoft(giLightBuf.cookies[li], cellPos, VOL_COOKIE_PENUMBRA);
 
         scatter += contrib;
+
+        // Weighted by the POST-cookie contribution: a fan blade's shadowed half
+        // should not steer the cell's direction as strongly as its lit half.
+        float w = rt_LightLuminance(contrib);
+        dirAccum  += lightDir * (localAniso * w);
+        dirWeight += w;
+
         litCount++;
     }
 
@@ -264,4 +279,11 @@ void main()
                                       : fp.densities.x;
 
     imageStore(froxelScatter, cell, vec4(scatter, alphaOut));
+
+    // Stage 5: each term's length is g_i <= 0.99, so the weighted mean is in range
+    // for snorm8 by construction; the clamp is belt-and-braces. Zero means "no
+    // dominant direction", which rt_PhaseFromMeanDir reads as isotropic — the same
+    // thing the grid's black clear gives a cell the fill never reached.
+    vec3 meanDir = (dirWeight > 1e-6) ? dirAccum / dirWeight : vec3(0.0);
+    imageStore(froxelDir, cell, vec4(clamp(meanDir, vec3(-1.0), vec3(1.0)), 0.0));
 }

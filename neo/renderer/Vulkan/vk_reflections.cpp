@@ -82,14 +82,15 @@ static idCVar r_rtReflVol("r_rtReflVol", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_A
 static idCVar r_rtReflVolSteps("r_rtReflVolSteps", "6", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                                "samples per reflection ray through the froxel scatter grid (1-32). Raise if the "
                                "reflected beam bands; brightness should not change with this.");
-// 2.0, not 1.0: the froxel cell bakes the phase function at the CAMERA's angle
-// (vol_froxel_fill.comp), so a reflected ray sampling it sits off the forward lobe and
-// reads low. Tuned by eye 2026-10-13. Raising r_rtVolIsotropicMix attacks the same bias
-// at its source — the isotropic fraction is direction-independent and so is exact for
-// any ray — and should let this come back down.
-static idCVar r_rtReflVolGain("r_rtReflVolGain", "2.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                              "scale on reflected in-scatter. 1.0 is the literal integral; the default "
-                              "compensates for the reflected ray inheriting the camera's phase angle.");
+// Back to 1.0 with Stage 5. The 2.0 existed because the froxel cell baked the phase
+// function at the CAMERA's angle, so a reflected ray read the wrong end of the lobe —
+// but a scalar cannot stand in for a missing angular term, and at 2.0 the reflected
+// beam was still ~11x short head-on while running 1.2-1.7x over at high angles. The
+// reflected segment now evaluates its own phase from the mean-direction grid, so this
+// is the literal integral again.
+static idCVar r_rtReflVolGain("r_rtReflVolGain", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                              "scale on reflected in-scatter. 1.0 is the literal integral — since the "
+                              "mean-direction grid landed, there is no phase-angle bias left to compensate for.");
 
 idCVar r_rtReflectionMode("r_rtReflectionMode", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                           "1 = glass only (default). Reflections are dispatched over the union screen rect of the\n"
@@ -150,6 +151,7 @@ idCVar r_rtReflectionDebugMode(
 //   int    froxelNz       offset 236 size  4
 //   int    volSteps       offset 240 size  4  (0 = no volume bound this frame)
 //   float  volGain        offset 244 size  4
+//   float  volIsoMix      offset 248 size  4  (r_rtVolIsotropicMix, Stage 5)
 //   total: 256 bytes — std140 rounds the block up to a multiple of
 //   16, and uboInfo.range is sizeof(ReflParamsUBO), which must not be smaller.
 // ---------------------------------------------------------------------------
@@ -187,7 +189,8 @@ struct ReflParamsUBO
     int32_t froxelNz;
     int32_t volSteps; // 0 = no usable grid this frame; the rgen takes no samples
     float volGain;
-    float _pad0[2]; // std140 rounds the block to 256
+    float volIsoMix; // r_rtVolIsotropicMix — Stage 5, for rt_PhaseFromMeanDir
+    float _pad0[1];  // std140 rounds the block to 256
 };
 static_assert(sizeof(ReflParamsUBO) == 256, "ReflParamsUBO size mismatch");
 
@@ -207,8 +210,9 @@ extern uint32_t VK_RT_GetGILightBufferSize(void);
 
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
-extern idCVar r_rtReflGlow;     // vk_rt_emitters.cpp
-extern idCVar r_rtReflGlowGain; // vk_rt_emitters.cpp
+extern idCVar r_rtReflGlow;         // vk_rt_emitters.cpp
+extern idCVar r_rtReflGlowGain;     // vk_rt_emitters.cpp
+extern idCVar r_rtVolIsotropicMix;  // vk_vol.cpp — Stage 5, shared phase parameter
 
 // ---------------------------------------------------------------------------
 // Null light SSBO — zeroed buffer with numLights = 0, bound when the GI light
@@ -565,7 +569,9 @@ static void VK_RT_InitReflPipeline(void)
 
     // binding 7: froxel scatter grid, sampler3D — in-scatter along the reflected ray
     //            (20261013_reflection_volumetrics.md).
-    VkDescriptorSetLayoutBinding bindings[8] = {};
+    // binding 8: froxel mean-direction grid, sampler3D — Stage 5. Bound as a pair
+    //            with 7; the scatter grid is unphased without it.
+    VkDescriptorSetLayoutBinding bindings[9] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -608,9 +614,14 @@ static void VK_RT_InitReflPipeline(void)
     bindings[7].descriptorCount = 1;
     bindings[7].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
+    bindings[8].binding = 8;
+    bindings[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[8].descriptorCount = 1;
+    bindings[8].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 8;
+    layoutInfo.bindingCount = 9;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.reflDescLayout));
 
@@ -902,8 +913,8 @@ static void VK_RT_InitReflPipeline(void)
     VkDescriptorPoolSize poolSizes[5] = {
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_MAX_FRAMES_IN_FLIGHT},
-        // depth + gbufNormal + froxelScatter
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT * 3},
+        // depth + gbufNormal + froxelScatter + froxelDir (Stage 5)
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT * 4},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_MAX_FRAMES_IN_FLIGHT * 2}, // GI light SSBO + emitters
     };
@@ -1270,6 +1281,9 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
             ubo.froxelNz = fs.nz;
             ubo.volSteps = r_rtReflVol.GetBool() ? idMath::ClampInt(1, 32, r_rtReflVolSteps.GetInteger()) : 0;
             ubo.volGain = Max(0.0f, r_rtReflVolGain.GetFloat());
+            // Stage 5: the same clamp vk_vol_froxel.cpp applies, so the reflected
+            // segment and the primary view evaluate one phase function, not two.
+            ubo.volIsoMix = idMath::ClampFloat(0.0f, 1.0f, r_rtVolIsotropicMix.GetFloat());
         }
     }
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
@@ -1283,6 +1297,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     static VkBuffer s_lastReflLightSsbo[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastReflGbufView[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastReflFroxelView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastReflFroxelDirView[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
     // Pick the GI light SSBO for this frame; fall back to the null SSBO if not ready.
     VkBuffer lightSsbo = (vkRT.giLightSsbo[frameIdx] != VK_NULL_HANDLE) ? vkRT.giLightSsbo[frameIdx] : s_nullLightSsbo;
@@ -1297,12 +1312,15 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // Swaps between the live grid and the null one whenever r_rtVolFroxel is toggled,
     // and changes outright when the res cvars force a realloc.
     const VkImageView froxelView = VK_RT_GetFroxelScatterView();
+    // Stage 5: fetched through the same predicate, so the pair can never end up
+    // split across a toggle or a realloc.
+    const VkImageView froxelDirView = VK_RT_GetFroxelDirView();
 
     const bool reflResourceChanged =
         (s_lastReflTlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
         (s_lastReflStorageView[frameIdx] != rb.view) || (s_lastReflDepthView[frameIdx] != vk.depthSampledView) ||
         (s_lastReflLightSsbo[frameIdx] != lightSsbo) || (s_lastReflGbufView[frameIdx] != gbufView) ||
-        (s_lastReflFroxelView[frameIdx] != froxelView);
+        (s_lastReflFroxelView[frameIdx] != froxelView) || (s_lastReflFroxelDirView[frameIdx] != froxelDirView);
 
     if (reflResourceChanged && vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] == tr.frameCount &&
         r_vkLogRT.GetInteger() >= 1)
@@ -1360,7 +1378,15 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         froxelInfo.imageView = froxelView;
         froxelInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-        VkWriteDescriptorSet writes[8] = {};
+        // Stage 5's mean-direction grid. Same trilinear sampler: interpolating the
+        // vector shortens it where neighbouring cells disagree, which reads as more
+        // isotropic — the correct degradation, see rt_PhaseFromMeanDir.
+        VkDescriptorImageInfo froxelDirInfo = {};
+        froxelDirInfo.sampler = VK_RT_GetFroxelSampler();
+        froxelDirInfo.imageView = froxelDirView;
+        froxelDirInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkWriteDescriptorSet writes[9] = {};
 
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].pNext = &tlasWrite;
@@ -1418,7 +1444,14 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[7].pImageInfo = &froxelInfo;
 
-        vkUpdateDescriptorSets(vk.device, 8, writes, 0, NULL);
+        writes[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[8].dstSet = ds;
+        writes[8].dstBinding = 8;
+        writes[8].descriptorCount = 1;
+        writes[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[8].pImageInfo = &froxelDirInfo;
+
+        vkUpdateDescriptorSets(vk.device, 9, writes, 0, NULL);
         vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
         s_lastReflTlasHandle[frameIdx] = vkRT.tlas[frameIdx].handle;
         s_lastReflStorageView[frameIdx] = rb.view;
@@ -1426,6 +1459,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         s_lastReflLightSsbo[frameIdx] = lightSsbo;
         s_lastReflGbufView[frameIdx] = gbufView;
         s_lastReflFroxelView[frameIdx] = froxelInfo.imageView;
+        s_lastReflFroxelDirView[frameIdx] = froxelDirInfo.imageView;
     }
 
     // --- Dispatch ---

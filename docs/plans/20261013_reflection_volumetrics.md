@@ -102,7 +102,7 @@ against black and nothing on surfaces the beam does not cross.
 
 ---
 
-## Stage 5 — mean-direction grid (unstarted)
+## Stage 5 — mean-direction grid (landed 2026-10-15, unvalidated)
 
 In-game 2026-10-15: the reflected flashlight beam reads too bright at high angles and far
 too dim head-on.  Cause is the baked phase angle below, measured rather than estimated.
@@ -132,17 +132,26 @@ toward isotropic.  This makes `froxelScatter`'s advertised ray-agnosticism true.
 
 | File | Change |
 |---|---|
-| `vk_vol_froxel.cpp` | New `froxelDir[slot]`, rgba8_snorm, froxel dims (12.4 MB/slot at 240x135x96) |
-| `vol_froxel_fill.comp` | Drop `phase` from the contrib line; write `D` to the new grid |
-| `vol_froxel_integrate.comp` / resolve | Apply the phase at sample time from `D` |
-| `reflect_ray.rgen` | Same, with the reflected `d`; `r_rtReflVolGain` back to 1.0 |
-| `vk_reflections.cpp` | Bind the direction grid; null 1x1x1 stand-in as for `froxelScatter` |
+| `rt_phase.glsl` | **New.** `rt_HenyeyGreenstein` / `rt_PhaseFunction` (the three duplicated copies) + `rt_PhaseFromMeanDir` |
+| `vk_vol_froxel.cpp` | `froxelDir[slot]`, rgba8_snorm, froxel dims (12.4 MiB/slot at 240x135x96); `VK_RT_AllocFroxelImage` takes a format; `VK_RT_GetFroxelDirView` + its own null grid; fill binding 4, integrate binding 3 |
+| `vol_froxel_fill.comp` | No `phase` on the contrib line; accumulates `D` and writes it to binding 4 |
+| `vol_froxel_integrate.comp` | Applies the phase per cell from `D` against the column's view ray |
+| `reflect_ray.rgen` | Same, with the reflected `d`; binding 8 + `volIsoMix` in the UBO |
+| `vk_reflections.cpp` | Binding 8 + `volIsoMix`; `r_rtReflVolGain` default 2.0 → 1.0 |
+| `Dhewm3SettingsMenu.cpp` | `r_rtReflVol` + `r_rtReflVolSteps` under Reflection Settings (Stage 4's menu half) |
 
-**Check:** `r_rtVolFlashlightAnisotropy 0` collapses HG to `1/4π`, making phase
-direction-independent — the head-on/high-angle balance should already look right there
-before the work starts.  Afterwards the balance holds at `0.7` with gain 1.0.
-`r_rtVolFlashlightGain 50` was calibrated against the 0.040 backscatter floor and will need
-retuning down.
+**No gain retune.** The phase is applied in the integrate pass from the same
+camera→cell direction the fill used, so the primary view is unchanged and
+`r_rtVolFlashlightGain 50` still means what it meant.  The one primary-view
+difference is cells lit from several directions at once, where one blended phase
+replaces the old per-light evaluation.
+
+**Check:** `r_rtVolFlashlightAnisotropy 0` collapses HG to `1/4π`, making the phase
+direction-independent — the head-on/high-angle balance that looked right only there before
+must now hold at the `0.7` default with gain 1.0.  `r_rtReflVolSteps 1` vs `16` still
+changes banding, not brightness.  `r_rtVolFroxelDebug 1` now shows UNPHASED scatter, ~25x
+brighter for a flashlight cell, so drop `r_rtVolFroxelDebugGain` well below 20 when reading
+that overlay.
 
 ---
 

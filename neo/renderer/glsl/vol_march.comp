@@ -84,7 +84,7 @@ layout(set = 0, binding = 3, std140) uniform VolParams {
     float directedAnisotropy;   // offset 148, size  4
     float _pad;                 // offset 152, size  4
     // Repurposed former pad float (was _pad, always 0) — same offset.
-    float isotropicMix;         // offset 156, size  4  see PhaseFunction below
+    float isotropicMix;         // offset 156, size  4  see rt_phase.glsl
     // --- P8: half-res march (rt_optimization_tuning.md) ---
     int   marchWidth;           // offset 160, size  4  volBuf dimensions (== full/marchScale)
     int   marchHeight;          // offset 164, size  4
@@ -145,32 +145,15 @@ layout(set = 0, binding = 4, std430) readonly buffer GILightBuf {
 #define VOL_CONE_PENUMBRA 0.35
 #define VOL_COOKIE_PENUMBRA 0.08
 
-// ---------------------------------------------------------------------------
-// Henyey-Greenstein phase function.
-// cosTheta: dot(marchDir, toLightDir).
-// g in [0,1): 0=isotropic, 0.5=forward-scatter flashlight, 0.8=shaft dust.
-// ---------------------------------------------------------------------------
-float HenyeyGreenstein(float cosTheta, float g)
-{
-    float g2    = g * g;
-    float denom = 1.0 + g2 - 2.0 * g * cosTheta;
-
-    return (1.0 - g2) / (4.0 * 3.14159265359 * pow(max(denom, 1e-2), 1.5));
-}
-
-// Two-lobe phase: a forward HG lobe plus an isotropic one.  HG is normalised, so
-// a single lobe can only TRADE side-on visibility for forward contrast — at the
-// g=0.6 scene-directed default that is a 25x swing between looking into a shaft
-// and viewing it side-on, which reads as no scattering at all at high angles.
-// Both lobes integrate to 1 over the sphere, so the blend does too: this puts a
-// floor under off-axis scattering without touching total scattered energy, and
-// lets g stay high for the shaft/shadow definition it was raised to get.
-// Must stay identical to vol_froxel_fill.comp's copy.
-float PhaseFunction(float cosTheta, float g, float isoMix)
-{
-    const float INV_4PI = 0.0795774715;
-    return mix(HenyeyGreenstein(cosTheta, g), INV_4PI, clamp(isoMix, 0.0, 1.0));
-}
+// Henyey-Greenstein phase, shared with the froxel passes and reflect_ray.rgen —
+// Stage 5 of 20261013_reflection_volumetrics.md moved the duplicated copies here.
+// cosTheta is dot(marchDir, toLightDir); g in [0,1): 0=isotropic,
+// 0.5=forward-scatter flashlight, 0.8=shaft dust.
+//
+// This shader is the per-pixel march, not the grid, so it still evaluates the
+// phase inline against its own marchDir — it never had the camera-baked-phase
+// problem the froxel grid did.
+#include "rt_phase.glsl"
 
 // Cauchy-with-ramp attenuation — matches the GI bounce shading model.
 float CauchyRamp(float dist, float radius)
@@ -393,7 +376,7 @@ void main()
             float localAniso = isFlashlight ? params.flashlightAnisotropy
                              : isDirected   ? params.directedAnisotropy
                                             : params.anisotropy;
-            float phase        = PhaseFunction(cosTheta, localAniso, params.isotropicMix);
+            float phase        = rt_PhaseFunction(cosTheta, localAniso, params.isotropicMix);
 
             // Fire a ray query to test occlusion between stepPos and the light.
             float tShadow = max(0.01, dist - VOL_SHADOW_BIAS);

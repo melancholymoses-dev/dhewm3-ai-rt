@@ -528,11 +528,16 @@ struct vkRTState_t
     //
     // World-space-cached replacement for the per-pixel march, selected by r_rtVolFroxel.
     //  froxelScatter holds per-cell in-scattering (rgb, per unit length) + extinction (a);
+    //  froxelDir (Stage 5) holds the mean scattering direction, |xyz| = mean cosine g;
     //  froxelIntegrated (F2) holds the accumulated camera->cell integral.
-    // Both are per frame-in-flight slot because each is written and consumed inside
+    // All are per frame-in-flight slot because each is written and consumed inside
     // the same frame.  The froxel-space EMA history(F4) will be a SINGLE shared image.
+    //
+    // froxelScatter is UNPHASED since Stage 5 and is meaningless without froxelDir
+    // beside it — the two are written and read as a pair.
     // --------------------------------------------------------------------------
     vkFroxelGrid_t froxelScatter[VK_MAX_FRAMES_IN_FLIGHT];
+    vkFroxelGrid_t froxelDir[VK_MAX_FRAMES_IN_FLIGHT];
     vkFroxelGrid_t froxelIntegrated[VK_MAX_FRAMES_IN_FLIGHT];
     VkSampler froxelSampler; // trilinear + clamp;
 
@@ -1332,6 +1337,12 @@ bool VK_RT_GetFroxelSampleParams(const viewDef_t *viewDef, vkFroxelSampleParams_
 // The live scatter grid, or a 1x1x1 black stand-in when there is none. Always a
 // valid 3D view in VK_IMAGE_LAYOUT_GENERAL — the grids never leave that layout.
 VkImageView VK_RT_GetFroxelScatterView(void);
+
+// Stage 5's companion mean-direction grid (rgba8_snorm), same contract. Must be
+// bound alongside the scatter view: that grid is unphased, so a consumer reading
+// one without the other is reading an incomplete field. The null stand-in is
+// zeroed, which rt_PhaseFromMeanDir reads as isotropic.
+VkImageView VK_RT_GetFroxelDirView(void);
 
 // Trilinear + clamp, shared with the resolve pass.
 VkSampler VK_RT_GetFroxelSampler(void);

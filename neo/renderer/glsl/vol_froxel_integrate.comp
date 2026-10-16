@@ -30,6 +30,13 @@ Descriptors (set 0):
   binding 0 — froxelScatter rgba16f 3D     (read)
   binding 1 — froxelIntegrated rgba16f 3D  (write)
   binding 2 — VolFroxelParams UBO          (declared by vol_froxel_common.glsl)
+  binding 3 — froxelDir rgba8_snorm 3D     (read, Stage 5)
+
+Stage 5 (20261013_reflection_volumetrics.md) moved the scattering phase out of
+the fill and into this pass, evaluated from froxelDir against the column's own
+view ray.  The primary view is unchanged; what it buys is that froxelScatter
+finally is the ray-agnostic field it always claimed to be, so reflect_ray.rgen
+can march it with its own direction.
 
 20260906_froxel_probe_gi.md Part A, chunk F2.
 
@@ -49,8 +56,12 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(set = 0, binding = 0, rgba16f) uniform readonly  image3D froxelScatter;
 layout(set = 0, binding = 1, rgba16f) uniform writeonly image3D froxelIntegrated;
+// Stage 5: the mean scattering direction the fill recorded, so the phase is
+// applied here against this column's view ray rather than baked per cell.
+layout(set = 0, binding = 3, rgba8_snorm) uniform readonly image3D froxelDir;
 
 #include "vol_froxel_common.glsl"
+#include "rt_phase.glsl"
 
 void main()
 {
@@ -71,8 +82,14 @@ void main()
     for (int z = 0; z < dims.z; z++)
     {
         vec4  cellData = imageLoad(froxelScatter, ivec3(column, z));
-        vec3  inscat   = cellData.rgb; // per unit length, class scales folded in
         float sigma    = max(cellData.a, 0.0);
+
+        // Stage 5: froxelScatter is unphased now. `dir` is the same camera->cell
+        // direction the fill used for this column, so the primary view's result is
+        // unchanged except where a cell is lit from several directions at once and
+        // the mean-direction approximation replaces a per-light phase.
+        vec3  meanDir = imageLoad(froxelDir, ivec3(column, z)).xyz;
+        vec3  inscat  = cellData.rgb * rt_PhaseFromMeanDir(dir, meanDir, fp.strengths.w);
 
         float dA = vf_SliceToDist(float(z));
         float dC = vf_SliceToDist(float(z) + 0.5);

@@ -54,7 +54,7 @@ layout(set = 0, binding = 2, std140) uniform VolFroxelParams {
     vec4  densities;    // 144  x=sigma_t y=albedo(diag) z=projected falloff distance w=whiteNoiseMix
     // xyz = sigma_s * per-class radiance gain, folded CPU-side (the old
     // density*strength pair).  w was F4's temporalAlpha; F4 was dropped, so the
-    // slot now carries the two-lobe phase blend (PhaseFunction below).
+    // slot now carries the two-lobe phase blend (rt_PhaseFunction, rt_phase.glsl).
     vec4  strengths;    // 160  xyz=sigma_s*gain per class  w=isotropicMix
     vec4  anisos;       // 176  x=point y=directed z=flashlight w=unused
     ivec4 misc;         // 192  x=frameIndex y=maxLights z=debugMode w=debugSlice
