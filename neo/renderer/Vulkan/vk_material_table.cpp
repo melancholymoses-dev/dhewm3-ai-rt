@@ -695,6 +695,9 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
     if (shader->GetCullType() == CT_TWO_SIDED)
         entry.flags |= VK_MAT_FLAG_TWO_SIDED;
 
+    if (shader->HasGui())
+        entry.flags |= VK_MAT_FLAG_GUI_SURF;
+
     // --- Walk stages for diffuse and normal images ---
 
     for (int i = 0; i < shader->GetNumStages(); i++)

@@ -17,6 +17,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/tr_local.h"
 #include "renderer/RenderWorld_local.h"
 #include "renderer/VertexCache.h"
+#include "ui/UserInterface.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
@@ -541,6 +542,23 @@ static void AllocASBuffer(VkDeviceSize size, VkBufferUsageFlags extraUsage, VkBu
     VK_CHECK(vkBindBufferMemory(vk.device, *outBuf, *outMem, 0));
 }
 
+// GUI reflections Stage 0 (docs/plans/20261015_gui_reflections.md): log each GUI surface
+// the BLAS filter sees, once per model/surface. Dynamic models rebuild often, so dedupe.
+static void VK_RT_LogGuiBlasSurf(const idRenderModel *model, int surfIdx, const idMaterial *shader, bool skipped)
+{
+    static idStrList logged;
+    const idStr key = va("%s#%d", model->Name(), surfIdx);
+    if (logged.FindIndex(key) >= 0 || logged.Num() >= 4096)
+        return;
+    logged.Append(key);
+
+    const idUserInterface *global = shader->GlobalGui();
+    common->Printf("VK RT GUI SURF: %s model='%s' surf=%d shader='%s' gui=%s stages=%d coverage=%d\n",
+                   skipped ? "SKIPPED" : "admitted", model->Name(), surfIdx, shader->GetName(),
+                   global ? global->Name() : va("entity%d", shader->GetEntityGui()), shader->GetNumStages(),
+                   (int)shader->Coverage());
+}
+
 // ---------------------------------------------------------------------------
 // VK_RT_BuildBLASForModel
 // Build a multi-geometry BLAS covering all non-translucent surfaces of a model.
@@ -611,6 +629,9 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
             // excluded — the RT pipeline would render them as opaque white boxes.
             const bool isWindowGlass =
                 surf->shader->Coverage() == MC_TRANSLUCENT && surf->shader->GetSurfaceType() == SURFTYPE_GLASS;
+            if (surf->shader->HasGui() && r_vkLogRT.GetInteger() >= 1)
+                VK_RT_LogGuiBlasSurf(model, s, surf->shader,
+                                     surf->shader->TestMaterialFlag(MF_NOSHADOWS) && !isWindowGlass);
             if (surf->shader->TestMaterialFlag(MF_NOSHADOWS) && !isWindowGlass)
                 continue;
             const deform_t def = surf->shader->Deform();

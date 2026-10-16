@@ -88,6 +88,7 @@ void main()
     }
 
     // Glass never reaches here: reflect_ray.rahit ignores MAT_FLAG_GLASS hits.
+    reflPayload.hitFlags = materials[matIdx].flags;
 
     // Emissive surfaces return their emitted colour directly (no lighting evaluation).
     vec3 emissive = rt_EvalEmissiveRadiance(matIdx, gl_PrimitiveID, baryCoord);

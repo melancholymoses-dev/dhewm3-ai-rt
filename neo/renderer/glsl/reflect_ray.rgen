@@ -133,6 +133,10 @@ layout(set = 1, binding = 3) uniform sampler2D matTextures[4096];
 #include "reflect_payload.glsl"
 layout(location = 0) rayPayloadEXT ReflPayload reflPayload;
 
+// Copies of rt_material.glsl's flags, for debug mode 10's payload.hitFlags.
+#define MAT_FLAG_GUI_SURF 0x80u
+#define MAT_FLAG_GUI_LIVE 0x100u
+
 #include "rt_indirect.glsl"
 #include "glass_probe_payload.glsl"
 layout(location = 1) rayPayloadEXT GlassProbePayload glassProbe;
@@ -455,12 +459,14 @@ void main()
     // First segment, for the emitter discs below.
     vec3  segOrigin = origin;
     float segHitT   = params.maxDist;
+    uint  segFlags  = 0u;
 
     for (int i = 0; i < 2 && weight > 0.01; i++)
     {
         reflPayload.colour        = vec3(0.0);
         reflPayload.transmittance = 0.0;
         reflPayload.hitT          = params.maxDist;
+        reflPayload.hitFlags      = 0u;
 
         traceRayEXT(
             topLevelAS,
@@ -477,7 +483,10 @@ void main()
         );
 
         if (i == 0)
-            segHitT = reflPayload.hitT;
+        {
+            segHitT  = reflPayload.hitT;
+            segFlags = reflPayload.hitFlags;
+        }
         accum  += weight * reflPayload.colour;
         weight *= reflPayload.transmittance;
         if (reflPayload.transmittance > 0.0)
@@ -485,6 +494,19 @@ void main()
             origin = reflPayload.nextOrigin;
             dir    = reflPayload.nextDir;
         }
+    }
+
+    if (params.debugMode == 10)
+    {
+        // GUI reflections: green = GUI with a live slot, magenta = GUI without one,
+        // everything else dimmed raw radiance for orientation.
+        vec3 c = accum * 0.25;
+        if ((segFlags & MAT_FLAG_GUI_LIVE) != 0u)
+            c = vec3(0.0, 1.0, 0.0);
+        else if ((segFlags & MAT_FLAG_GUI_SURF) != 0u)
+            c = vec3(1.0, 0.0, 1.0);
+        imageStore(reflImage, coord, vec4(c, 1.0));
+        return;
     }
 
     if (params.debugMode == 8)
