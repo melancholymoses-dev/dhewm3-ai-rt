@@ -2497,6 +2497,8 @@ struct RTCVars
     idCVar *rtSpecF0Gamma = nullptr;
     idCVar *rtReflGlow = nullptr;
     idCVar *rtReflGlowGain = nullptr;
+    idCVar *rtReflVol = nullptr;
+    idCVar *rtReflVolSteps = nullptr;
     idCVar *rtReflGlowSmoke = nullptr;
 
     // GI fine-tuning
@@ -2626,6 +2628,8 @@ static void InitRTOptionsMenu()
     rtCVars.rtSpecF0Gamma = cvarSystem->Find("r_rtSpecF0Gamma");
     rtCVars.rtReflGlow = cvarSystem->Find("r_rtReflGlow");
     rtCVars.rtReflGlowGain = cvarSystem->Find("r_rtReflGlowGain");
+    rtCVars.rtReflVol = cvarSystem->Find("r_rtReflVol");
+    rtCVars.rtReflVolSteps = cvarSystem->Find("r_rtReflVolSteps");
     rtCVars.rtReflGlowSmoke = cvarSystem->Find("r_rtReflGlowSmoke");
     rtCVars.rtGITemporal = cvarSystem->Find("r_rtGITemporal");
     rtCVars.rtGITemporalAlpha = cvarSystem->Find("r_rtGITemporalAlpha");
@@ -2841,6 +2845,10 @@ static void DrawRTOptionsMenu()
         ImGui::TableNextColumn();
         RTSliderFloat("Specular F0 Scale (Fresnel intensity)", rtCVars.rtSpecF0Scale, 0.0f, 1.0f);
         RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 5.0f, "%.2f");
+        RTCheckbox("Light Shafts in Reflections", rtCVars.rtReflVol);
+        ImGui::BeginDisabled(!(rtCVars.rtReflVol && rtCVars.rtReflVol->GetBool()));
+        RTSliderInt("Shaft Samples per Ray", rtCVars.rtReflVolSteps, 1, 32);
+        ImGui::EndDisabled();
 
         ImGui::EndTable();
     }

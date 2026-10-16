@@ -88,15 +88,23 @@ layout(set = 0, binding = 3) uniform ReflParams {
     int    froxelNz;
     int    volSteps;      // 0 = no usable grid this frame; take no samples
     float  volGain;
+    float  volIsoMix;     // r_rtVolIsotropicMix — Stage 5, for rt_PhaseFromMeanDir
 } params;
 
 // Grid math only — no bindings of its own, so it can live alongside this set.
 #include "vol_froxel_sample.glsl"
+#include "rt_phase.glsl"
 
-// binding 7: the scatter grid itself. rgb = in-scatter per unit length, a =
-// extinction, with no camera-path integration baked in. Always valid: the live
-// grid, or a 1x1x1 black stand-in with volSteps 0 to match.
+// binding 7: the scatter grid itself. rgb = in-scatter per unit length and, since
+// Stage 5, WITHOUT the phase function; a = extinction. No camera-path integration
+// baked in either. Always valid: the live grid, or a 1x1x1 black stand-in with
+// volSteps 0 to match.
 layout(set = 0, binding = 7) uniform sampler3D froxelScatterSampler;
+
+// binding 8 (Stage 5): the companion mean-direction grid. xyz = cell toward the
+// light, |xyz| = effective g. This is what lets the reflected segment evaluate its
+// OWN phase angle instead of inheriting the camera's — see rt_phase.glsl.
+layout(set = 0, binding = 8) uniform sampler3D froxelDirSampler;
 
 // This frame's grid, in the form vol_froxel_sample.glsl's helpers want.
 VolFroxelSlices refl_FroxelSlices()
@@ -170,7 +178,16 @@ vec3 ReflVolumetrics(vec3 o, vec3 d, float hitT, ivec2 coord)
             continue;
 
         vec4 cell = texture(froxelScatterSampler, tc);
-        scattered += transmitting * cell.rgb * segLen;
+
+        // Stage 5: the phase for THIS ray. A mirror puts the reflected segment at
+        // the opposite end of the flashlight's lobe from the camera — measured 21x
+        // at the g=0.7/isoMix=0.45 defaults — which is why the pre-Stage-5 code
+        // needed r_rtReflVolGain 2.0 as a flat stand-in and still read too bright
+        // at high angles and far too dim head-on.
+        vec3 meanDir = texture(froxelDirSampler, tc).xyz;
+        float phase  = rt_PhaseFromMeanDir(d, meanDir, params.volIsoMix);
+
+        scattered += transmitting * cell.rgb * phase * segLen;
         transmitting *= exp(-cell.a * segLen);
         if (transmitting < 0.01)
             break;

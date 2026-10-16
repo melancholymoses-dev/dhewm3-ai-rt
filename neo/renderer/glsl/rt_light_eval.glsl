@@ -38,6 +38,11 @@
   matTextures[4096] already declared, so the includer contract below gains that
   requirement too.
 
+  Stage 6 (20261013_reflection_volumetrics.md): a projected light's axial
+  attenuation is now its own lightFalloffImage (rt_SampleLightFalloff), matching
+  GL's interaction pass, instead of a linear ramp off the cone axis.  Same set=1
+  requirement.  Point lights are untouched — they keep rt_LightBoxAtten.
+
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
 Code.
@@ -170,10 +175,27 @@ bool rt_LightContribAt(int i, vec3 hitPos, vec3 hitNorm, float contribScale,
         float alongCone = dot(toPoint, cd.xyz);
         if (alongCone <= 0.0 || alongCone > bx.w)
             return false;
-        float cosAngle = alongCone / max(length(toPoint), 0.001);
+        float pointDist = max(length(toPoint), 0.001);
+        float cosAngle  = alongCone / pointDist;
         if (cosAngle < cd.w)
             return false;
-        atten = clamp(1.0 - alongCone / max(bx.w, 0.001), 0.0, 1.0);
+
+        // Stage 6: the axial term is the light's own falloff image, which for the
+        // flashlight and every other default projected light is _noFalloff — flat
+        // white, i.e. no attenuation at all, with the whole radial profile coming
+        // from the projection cookie below. See vk_gi.cpp's HAS_FALLOFF block.
+        //
+        // The fallback ramp divides TRUE distance, never alongCone: the axial
+        // projection shrinks off-axis, so a ramp built from it grows toward the
+        // cone edge at constant distance and brightens exactly where a falloff
+        // should darken.
+        if ((rtLightBuf.lights[i].flags & GI_LIGHT_FLAG_HAS_FALLOFF) != 0u)
+            atten = rt_SampleLightFalloff(rtLightBuf.cookies[i], hitPos);
+        else
+            atten = clamp(1.0 - pointDist / max(bx.w, 0.001), 0.0, 1.0);
+
+        if (atten <= 0.0)
+            return false;
     }
 
     // Direction and shadow-ray distance are properties of where the light actually IS.

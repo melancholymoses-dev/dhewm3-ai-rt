@@ -102,14 +102,106 @@ against black and nothing on surfaces the beam does not cross.
 
 ---
 
-## Known limits
+## Stage 5 — mean-direction grid (landed 2026-10-15, unvalidated)
 
-**Phase angle is the camera's.** `vol_froxel_fill.comp:207` bakes
-`PhaseFunction(dot(camToCell, lightDir), …)` into each cell, so a reflected ray inherits the
-primary view's forward-scatter lobe. Worst for the flashlight, which carries its own
-anisotropy (`fp.anisos.z`). Lever is `isotropicMix` (`fp.strengths.w`); a correct fix needs
-per-cell direction storage and is out of scope. If the beam reads wrong rather than merely
-approximate, the fallback for that one light is an analytic cone in `reflect_ray.rchit`.
+In-game 2026-10-15: the reflected flashlight beam reads too bright at high angles and far
+too dim head-on.  Cause is the baked phase angle below, measured rather than estimated.
+
+`vol_froxel_fill.comp:207` bakes `PhaseFunction(dot(camToCell, cellToLight), …)` per cell.
+The flashlight sits *on* the camera, so `cosθ ≈ −1` across the whole beam — the dimmest
+point of the lobe, and near-constant, so the beam has no angular structure at all.  A
+reflected ray travels back toward the eye, where the light also is, so its correct angle is
+`cosθ ≈ +1`: the brightest single-scatter geometry there is.
+
+| Case | cosθ | phase (`g` 0.7, `isoMix` 0.45) |
+|---|---|---|
+| Baked (camera at the light) | ≈ −1 | 0.040 |
+| Correct, reflected ray toward the eye | ≈ +1 | 0.863 |
+| Correct, reflected ray at 60° | +0.5 | 0.068 |
+| Correct, reflected ray at 90° | 0 | 0.048 |
+
+`r_rtReflVolGain 2.0` is a scalar standing in for a missing lobe: after it, head-on is still
+~11x short and 60-90° is 1.2-1.7x over.  Only `isotropicMix`'s direction-independent half
+transports correctly, which is why the high angles are merely wrong and not absurd.
+
+Fix: store in-scatter **unphased**, plus a mean scattering direction whose length is the
+mean cosine — `D = Σ wᵢ·gᵢ·dirᵢ / Σ wᵢ` — and have every consumer apply
+`PhaseFunction(dot(rayDir, normalize(D)), length(D), isoMix)` at sample time.  Encoding `g`
+as `|D|` is the standard HG convention, costs no channel, and degrades multi-light cells
+toward isotropic.  This makes `froxelScatter`'s advertised ray-agnosticism true.
+
+| File | Change |
+|---|---|
+| `rt_phase.glsl` | **New.** `rt_HenyeyGreenstein` / `rt_PhaseFunction` (the three duplicated copies) + `rt_PhaseFromMeanDir` |
+| `vk_vol_froxel.cpp` | `froxelDir[slot]`, rgba8_snorm, froxel dims (12.4 MiB/slot at 240x135x96); `VK_RT_AllocFroxelImage` takes a format; `VK_RT_GetFroxelDirView` + its own null grid; fill binding 4, integrate binding 3 |
+| `vol_froxel_fill.comp` | No `phase` on the contrib line; accumulates `D` and writes it to binding 4 |
+| `vol_froxel_integrate.comp` | Applies the phase per cell from `D` against the column's view ray |
+| `reflect_ray.rgen` | Same, with the reflected `d`; binding 8 + `volIsoMix` in the UBO |
+| `vk_reflections.cpp` | Binding 8 + `volIsoMix`; `r_rtReflVolGain` default 2.0 → 1.0 |
+| `Dhewm3SettingsMenu.cpp` | `r_rtReflVol` + `r_rtReflVolSteps` under Reflection Settings (Stage 4's menu half) |
+
+**No gain retune.** The phase is applied in the integrate pass from the same
+camera→cell direction the fill used, so the primary view is unchanged and
+`r_rtVolFlashlightGain 50` still means what it meant.  The one primary-view
+difference is cells lit from several directions at once, where one blended phase
+replaces the old per-light evaluation.
+
+**Check:** `r_rtVolFlashlightAnisotropy 0` collapses HG to `1/4π`, making the phase
+direction-independent — the head-on/high-angle balance that looked right only there before
+must now hold at the `0.7` default with gain 1.0.  `r_rtReflVolSteps 1` vs `16` still
+changes banding, not brightness.  `r_rtVolFroxelDebug 1` now shows UNPHASED scatter, ~25x
+brighter for a flashlight cell, so drop `r_rtVolFroxelDebugGain` well below 20 when reading
+that overlay.
+
+---
+
+## Stage 6 — projected-light falloff image
+
+Same in-game report, second cause, independent of the phase grid: RT invents a linear axial
+ramp for projected/flashlight lights where GL uses the light's `lightFalloffImage`.
+`rt_light_eval.glsl:176`:
+
+```glsl
+float alongCone = dot(hitPos - lPos, cd.xyz);
+atten = clamp(1.0 - alongCone / max(bx.w, 0.001), 0.0, 1.0);
+```
+
+| Problem | Consequence |
+|---|---|
+| GL applies no axial falloff here.  `lights/flashlight5` is an implicit material with no falloff image, so `R_DeriveLightData` falls back to `lights/defaultProjectedLight` → `lightFalloffImage _noFalloff`, flat white | ~30% of the head-on pool gone at 400 units (`end` 1280, `bx.w` 1408) |
+| `alongCone` is the **axial** projection, so at constant true distance the cone edge gets `d·cosθ < d` and a *larger* `atten` | The term meant to darken with distance brightens off-axis |
+
+GL's math — `interaction.vert:90` + `interaction.frag:99`:
+
+```glsl
+falloffS = dot(vec4(pos,1.0), lightProject[3]);   // 0 at light_start, 1 at light_end
+falloff  = texture(lightFalloffImage, vec2(falloffS, 0.5)).r;
+```
+
+`lightProject[3]` is already world-space (`tr_lightrun.cpp:449-454`), beside the three
+planes the cookie upload already copies.  `_noFalloff` is `TR_CLAMP_TO_ZERO`: outside [0,1]
+is black, not a passthrough.
+
+| File | Change |
+|---|---|
+| `vk_gi.cpp` | `GILightCookie` += `planeF[4]`, `falloffIndex`; `pad[3]` → `pad[2]`.  64 → 80 bytes, update both `static_assert`s |
+| `vk_gi.cpp` | New flag `GI_LIGHT_FLAG_HAS_FALLOFF 0x8u`, set independently of `HAS_COOKIE` — a projected light with no usable projection stage still needs its falloff |
+| `vk_gi.cpp` | `planeF` from `lightLocal->lightProject[3]` raw (GL applies no stage texture matrix to the falloff); `falloffIndex` from `VK_RT_GetOrAssignTexIndex(lightLocal->falloffImage)` |
+| `rt_light_cookie.glsl` | `RTLightCookie` += `planeF`, `falloffIndex`; `rt_SampleLightFalloff` with an explicit `[0,1]` → 0 clamp so the result cannot depend on `matSampler`'s address mode |
+| `rt_light_eval.glsl` | Projected branch: `atten = rt_SampleLightFalloff(…)` when `HAS_FALLOFF`, keeping the cone containment test.  Fallback uses `dist`, never `alongCone` |
+
+Scope is the shared GI-bounce/reflection loop.  `vol_froxel_fill.comp:199` and
+`vol_march.comp` carry the same ramp plus their own `projMode` cvar and rim `smoothstep`;
+changing those is a separate retune, not part of this stage.
+
+**Check:** `r_rtGILightDump 1` prints `falloff:` with the image name — the flashlight must
+read `_noFalloff`.  Flashlight pool on a flat wall: brightness constant with distance,
+falling off radially from the cookie alone, no edge brightening.
+`r_rtGIFalloffMode`/`Reach` still affect point lights only.
+
+---
+
+## Known limits
 
 **Frustum coverage only.** A reflected ray outside the view frustum samples nothing. The
 target case — your own beam in glass ahead of you — is inside it. Beams reflected from

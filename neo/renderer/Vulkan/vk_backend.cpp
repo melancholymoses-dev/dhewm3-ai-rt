@@ -108,6 +108,41 @@ static int s_rtProfLabelDepth = 0;
 // fail on it.  Returns the number it had to close.
 static int VK_RTProfile_CloseStrayLabels(VkCommandBuffer cmd);
 
+// Scoped label for regions that are not profiler phases (Stage L1: per-light interaction
+// regions).  The interaction loop has `continue` paths, and an unbalanced label makes
+// vkEndCommandBuffer fail, so the pop has to be automatic.  Gated on the same once-per-frame
+// latch the phase spans use, not on the cvar directly.
+struct vkScopedLabel_t
+{
+    VkCommandBuffer cmd;
+
+    vkScopedLabel_t(VkCommandBuffer c, const char *name) : cmd(VK_NULL_HANDLE)
+    {
+        if (!name || !name[0] || c == VK_NULL_HANDLE || !s_rtProfLabelsThisFrame)
+            return;
+        cmd = c;
+        VK_Prof_PushLabel(cmd, name);
+        s_rtProfLabelDepth++;
+    }
+
+    ~vkScopedLabel_t()
+    {
+        if (cmd == VK_NULL_HANDLE)
+            return;
+        VK_Prof_PopLabel(cmd);
+        s_rtProfLabelDepth--;
+    }
+
+    vkScopedLabel_t(const vkScopedLabel_t &) = delete;
+    vkScopedLabel_t &operator=(const vkScopedLabel_t &) = delete;
+};
+
+// True when the per-light interaction labels should be emitted this frame.
+static bool VK_LightLabelsActive(void)
+{
+    return s_rtProfLabelsThisFrame;
+}
+
 static void VK_DumpStageBreadcrumbs(void)
 {
     common->Printf("VK: recent stage breadcrumbs (oldest -> newest):\n");
@@ -4077,6 +4112,28 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         if (!VK_RB_LightDrawsInteractions(vLight))
             continue;
 
+        // Stage L1: one debug-label region per light, so a GPU capture can attribute
+        // draws and screen coverage to a named light rather than to one flat
+        // "Interactions" block.  Surface counts ride along so the label answers
+        // "which light draws the most" without cross-referencing a capture CSV.
+        // Built only when labels are latched on; the list walks are short.
+        char lightLabel[128];
+        lightLabel[0] = '\0';
+        if (VK_LightLabelsActive())
+        {
+            int nLocal = 0, nGlobal = 0, nTrans = 0;
+            for (const drawSurf_t *s = vLight->localInteractions; s; s = s->nextOnLight)
+                nLocal++;
+            for (const drawSurf_t *s = vLight->globalInteractions; s; s = s->nextOnLight)
+                nGlobal++;
+            for (const drawSurf_t *s = vLight->translucentInteractions; s; s = s->nextOnLight)
+                nTrans++;
+            idStr::snPrintf(lightLabel, sizeof(lightLabel), "Light %d [def %d] %s (l=%d g=%d t=%d)", lightIdx,
+                            vLight->lightDef ? vLight->lightDef->index : -1,
+                            vLight->lightShader ? vLight->lightShader->GetName() : "<null>", nLocal, nGlobal, nTrans);
+        }
+        const vkScopedLabel_t lightLabelScope(cmd, lightLabel);
+
         // Set scissor for this light.  Keep a copy of the rect so we can use it in
         // vkCmdClearAttachments below (and so it matches what the shadow batch traced).
         const VkRect2D lightScissor = VK_ComputeLightScissor(vLight);
@@ -6299,11 +6356,21 @@ void VKimp_PostInit(int width, int height)
         VK_RT_InitGI();
         common->Printf("VK: initializing RT volumetrics\n");
         VK_RT_InitVolumetrics();
-        // Also allocates/resizes the G-buffer normal/F0 images (Stage 3.5) and
-        // wires them into the HDR framebuffers — see vk_tonemap.cpp.
-        common->Printf("VK: initializing RT tonemapping\n");
-        VK_RT_InitTonemap();
-        VK_RT_InitUpscale();
+    }
+
+    // Tonemap and upscale are not RT work despite the VK_RT_ prefix: hdrScene is the main
+    // render target for every Vulkan draw and the tonemap blit is the only thing that
+    // reaches the swapchain, so a device without RT extensions needs both or it renders
+    // into a NULL framebuffer. This matches the swapchain-recreate path, which already
+    // resizes these two unguarded and guards only bloom (vk_swapchain.cpp).
+    // Tonemap also allocates/resizes the G-buffer normal/F0 images (Stage 3.5) and wires
+    // them into the HDR framebuffers — see vk_tonemap.cpp.
+    common->Printf("VK: initializing tonemapping\n");
+    VK_RT_InitTonemap();
+    VK_RT_InitUpscale();
+
+    if (vk.rayTracingSupported)
+    {
         // After the upscale: bloom's images are sized off the swapchain extent, but its
         // dispatches read vk.renderExtent, which VK_RT_InitUpscale establishes.
         VK_RT_InitBloom();
@@ -6325,6 +6392,11 @@ void VKimp_PreShutdown(void)
     VK_Prof_DeviceWaitIdle(VKPROF_WAIT_SHUTDOWN);
     VK_RTProfile_Shutdown();
     VK_Prof_Shutdown(); // flushes any buffered CSV rows
+    // Mirror of the init split above, and it must run BEFORE VK_RT_Shutdown: that function
+    // ends with a memset of vkRT, which would null these handles out from under us and leak
+    // the objects. Both are no-ops if the handles were never created.
+    VK_RT_ShutdownUpscale();
+    VK_RT_ShutdownTonemap();
     if (vk.rayTracingSupported && vkRT.isInitialized)
     {
         VK_RT_Shutdown();

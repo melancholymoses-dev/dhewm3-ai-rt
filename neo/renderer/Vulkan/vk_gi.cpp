@@ -227,6 +227,15 @@ static idCVar r_rtGIAtrousSigmaZ("r_rtGIAtrousSigmaZ", "0.01", CVAR_RENDERER | C
 // worth the extra float in GIProbeStateEntry.
 #define GI_LIGHT_FLAG_FAST_BUCKET 0x4u
 
+// Stage 6 (20261013_reflection_volumetrics.md) — this light's cookie entry carries a
+// valid planeF/falloffIndex, so the axial attenuation comes from the light's
+// lightFalloffImage the way GL's interaction pass does it.
+//
+// Independent of HAS_COOKIE on purpose: a projected light whose every stage condition
+// failed has no projection image but still has a falloff image, and that is the term
+// that decides how its pool reads with distance.
+#define GI_LIGHT_FLAG_HAS_FALLOFF 0x8u
+
 struct GILightEntry
 {
     float posRadius[4];      // xyz = world pos, w = sphere pre-cull radius
@@ -261,15 +270,21 @@ struct GILightEntry
 // same index, meaningful only when that entry's flags has HAS_COOKIE set.
 // planeS/planeT already have the stage's texture matrix folded in — sampling
 // is just two dot products plus a divide, no matrix multiply at hit time.
+//
+// Stage 6: planeF/falloffIndex are gated by HAS_FALLOFF instead, and carry no texture
+// matrix — GL does not apply the stage's to the falloff lookup (vk_backend.cpp:4701
+// hands lightProject[3] through untouched while S/T get the fold).
 struct GILightCookie
 {
     float planeS[4];
     float planeT[4];
     float planeQ[4];
-    uint32_t imageIndex; // bindless slot, vk_material_table.cpp
-    uint32_t pad[3];
+    float planeF[4];       // lightProject[3], world space: S = dot(vec4(pos,1), planeF)
+    uint32_t imageIndex;   // bindless slot, vk_material_table.cpp
+    uint32_t falloffIndex; // ditto, for the light's lightFalloffImage
+    uint32_t pad[2];
 };
-static_assert(sizeof(GILightCookie) == 64, "GILightCookie size mismatch");
+static_assert(sizeof(GILightCookie) == 80, "GILightCookie size mismatch");
 
 struct GILightBuffer
 {
@@ -286,7 +301,7 @@ struct GILightBuffer
     // (rt_light_eval.glsl), 1:1 with lights[] by index.
     GILightCookie cookies[VK_GI_MAX_LIGHTS];
 };
-static_assert(sizeof(GILightBuffer) == 32 + VK_GI_MAX_LIGHTS * 96 + VK_GI_MAX_LIGHTS * 64,
+static_assert(sizeof(GILightBuffer) == 32 + VK_GI_MAX_LIGHTS * 96 + VK_GI_MAX_LIGHTS * 80,
               "GILightBuffer size mismatch");
 
 // Stage 2: RTLightBuf's lights[]/cookies[] are now fixed-size arrays in the
@@ -1986,6 +2001,43 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
                 common->Printf("    type: pointLight=%d parallel=%d isProjected=%d lightType=%u\n",
                                p.pointLight ? 1 : 0, p.parallel ? 1 : 0, isProjected ? 1 : 0, c.entry.lightType);
 
+            // Stage 6 (20261013_reflection_volumetrics.md) — axial attenuation for
+            // projected lights comes from the light's falloffImage, texgenned by
+            // lightProject[3], exactly as interaction.vert:90 does it. The linear ramp
+            // this replaces had no counterpart in GL (lights/defaultProjectedLight is
+            // `lightFalloffImage _noFalloff`, flat white) and, being built from the
+            // AXIAL projection, grew toward the cone edge at constant distance.
+            //
+            // Projected only. Point lights keep rt_LightBoxAtten, whose falloffMode and
+            // falloffReach are tuned by eye; swapping them to the image is a separate
+            // retune, not this stage.
+            //
+            // No stage texture matrix: GL folds it into S/T and leaves the falloff plane
+            // alone (vk_backend.cpp:4701). lightProject is world-space already by
+            // tr_lightrun.cpp:449-454.
+            if (isProjected)
+            {
+                const idPlane &fPlane = lightLocal->lightProject[3];
+                for (int comp = 0; comp < 4; comp++)
+                    c.cookie.planeF[comp] = fPlane[comp];
+                c.cookie.falloffIndex = VK_RT_GetOrAssignTexIndex(lightLocal->falloffImage);
+                c.entry.flags |= GI_LIGHT_FLAG_HAS_FALLOFF;
+
+                if (dumpLights)
+                    common->Printf("    falloff: image=%s slot=%u planeF=(%.5f %.5f %.5f %.2f)\n",
+                                   lightLocal->falloffImage ? lightLocal->falloffImage->imgName.c_str() : "<none>",
+                                   c.cookie.falloffIndex, c.cookie.planeF[0], c.cookie.planeF[1], c.cookie.planeF[2],
+                                   c.cookie.planeF[3]);
+            }
+            else
+            {
+                // The Candidate array is static and reused, so stale planes from a
+                // previous light would otherwise survive behind a cleared flag.
+                for (int comp = 0; comp < 4; comp++)
+                    c.cookie.planeF[comp] = 0.0f;
+                c.cookie.falloffIndex = 0u;
+            }
+
             // rt_projected_light_cookies.md Stage 1 — light-cookie stage detection.
             // Deliberately NOT gated on isProjected — see project_light_cookie_stage1
             // memory for why point lights need this too (fanblade3 is one).
@@ -2028,7 +2080,7 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
                     for (int comp = 0; comp < 4; comp++)
                         c.cookie.planeQ[comp] = qPlane[comp];
                     c.cookie.imageIndex = VK_RT_GetOrAssignTexIndex(stage->texture.image);
-                    c.cookie.pad[0] = c.cookie.pad[1] = c.cookie.pad[2] = 0u;
+                    c.cookie.pad[0] = c.cookie.pad[1] = 0u;
                     c.entry.flags |= GI_LIGHT_FLAG_HAS_COOKIE;
                 }
 

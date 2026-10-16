@@ -40,6 +40,12 @@
 // consumer cares about FAST alone.
 #define GI_LIGHT_FLAG_FAST_BUCKET 0x4u
 
+// 20261013_reflection_volumetrics.md Stage 6 — this light's cookie entry carries a
+// valid planeF/falloffIndex, so its axial attenuation is the GL falloff-image lookup
+// rather than an approximated ramp.  Set for projected lights only; point lights keep
+// rt_LightBoxAtten.  Independent of HAS_COOKIE — see rt_light_cookie.glsl.
+#define GI_LIGHT_FLAG_HAS_FALLOFF 0x8u
+
 struct RTLight {
     vec4 posRadius;      // xyz = volume centre (parms.origin), w = falloff/pre-cull radius
     vec4 colorIntensity; // rgb = light colour — L̂ when FAST — a = intensity

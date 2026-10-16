@@ -23,6 +23,12 @@ Anything that fights these gets cut or demoted.
    are allowed.
 6. **Debug visualization before tuning.** Every feature ships with an overlay mode;
    constants get tuned from the overlay, not by eye on the final composite.
+7. **Optimization means the same image for less work.** Turning a feature down is not an
+   optimization — pure black renders very fast. A change that alters the image is a quality
+   setting and must be an explicit opt-in with its own cvar, never a default. Corollary for
+   culling work: the shipping threshold is the one where screenshots are unchanged; anything
+   past it is a quality tier the player picks. `r_skip*` cvars are probes for splitting a
+   measurement, never a configuration.
 
 ---
 
@@ -73,4 +79,5 @@ Symptom → where to look. The general "log and colour-code before theorising" p
 | A knob "does nothing" | Whether it reaches the pass at all. RT stages have no derivatives, so material fetches are mip 0 through `matSampler` — unreachable by any sampler cvar |
 | A debug overlay reads as a gradient when it should be binary | Something downstream is blurring or EMA-ing it |
 | An effect flips on a pure yaw at a fixed position | Per-frame view-dependent scene data, i.e. the TLAS — not the shader |
+| An `r_skip*` A/B shows a big win | `ring.draws`. **If it moved, the probe deleted draws and the delta is void.** `r_skipDiffuse 1` + `r_skipSpecular 1` together make both images black, which fails the submit test at `tr_render.cpp:742` and skips the interaction entirely — 25% off `gpu.Interactions` for −52% draws. `r_skipBump` alone is safe (not in that condition); `r_skipSpecular` alone is safe; `r_skipDiffuse` alone drops every surface with no specular stage |
 | Vulkan validation / device-lost / vendor-specific | `docs/vulkan_debugging.md` before anything else |

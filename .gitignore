@@ -15,7 +15,7 @@
 
 /neo/CMakeSettings.json
 /neo/CMakeUserPresets.json
-tools/*
+tools/output
 mailmap.txt
 .claude
 *.md5mesh

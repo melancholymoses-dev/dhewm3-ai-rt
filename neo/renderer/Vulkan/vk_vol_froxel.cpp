@@ -196,9 +196,19 @@ static bool VK_RT_VolFroxelDimsChanged(void)
 
 static void VK_RT_FreeFroxelImage(vkFroxelGrid_t &g);
 
-// 1x1x1 black stand-in handed out by VK_RT_GetFroxelScatterView when the froxel
-// path is standing down, so consumers always have a valid 3D view to bind.
+// 1x1x1 black stand-ins handed out by VK_RT_GetFroxelScatterView/DirView when the
+// froxel path is standing down, so consumers always have a valid 3D view to bind.
+// Two of them because the pair differ in format.
 static vkFroxelGrid_t s_nullFroxelGrid;
+static vkFroxelGrid_t s_nullFroxelDirGrid;
+
+// Stage 5 (20261013_reflection_volumetrics.md) — the mean-direction grid's format.
+// snorm8 is ample for a phase direction (~0.8 deg per component) and halves the
+// memory against a second rgba16f: 12.4 MiB per slot at the 240x135x96 default
+// rather than 24.9.  Both R8G8B8A8_SNORM storage and its linear filtering are
+// mandatory format support, so no capability check is needed.
+#define VK_FROXEL_SCATTER_FORMAT VK_FORMAT_R16G16B16A16_SFLOAT
+#define VK_FROXEL_DIR_FORMAT VK_FORMAT_R8G8B8A8_SNORM
 
 // Allocation here is deliberately NON-FATAL, unlike most VK_CHECK sites in this
 // renderer.  r_rtVolFroxelResX/Y/Z clamp to 512x512x256, which is 512 MiB per
@@ -208,7 +218,8 @@ static vkFroxelGrid_t s_nullFroxelGrid;
 // VK_RT_VolFroxelActive stand the froxel path down and the ray march carry the
 // frame; that fallback only actually works because Active() now tests the grid
 // images and not just the pipelines.
-static bool VK_RT_AllocFroxelImage(vkFroxelGrid_t &g, uint32_t w, uint32_t h, uint32_t d)
+static bool VK_RT_AllocFroxelImage(vkFroxelGrid_t &g, uint32_t w, uint32_t h, uint32_t d,
+                                   VkFormat format = VK_FROXEL_SCATTER_FORMAT)
 {
     g.width = w;
     g.height = h;
@@ -219,7 +230,7 @@ static bool VK_RT_AllocFroxelImage(vkFroxelGrid_t &g, uint32_t w, uint32_t h, ui
     VkImageCreateInfo imgCI = {};
     imgCI.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imgCI.imageType = VK_IMAGE_TYPE_3D;
-    imgCI.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    imgCI.format = format;
     imgCI.extent = {w, h, d};
     imgCI.mipLevels = 1;
     imgCI.arrayLayers = 1;
@@ -285,7 +296,7 @@ static bool VK_RT_AllocFroxelImage(vkFroxelGrid_t &g, uint32_t w, uint32_t h, ui
     viewCI.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewCI.image = g.image;
     viewCI.viewType = VK_IMAGE_VIEW_TYPE_3D;
-    viewCI.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    viewCI.format = format;
     viewCI.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     VK_CHECK_NONFATAL(vkCreateImageView(vk.device, &viewCI, NULL, &g.view), vkr);
     if (vkr != VK_SUCCESS)
@@ -385,6 +396,7 @@ static void VK_RT_DestroyFroxelImages(void)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         VK_RT_FreeFroxelImage(vkRT.froxelScatter[i]);
+        VK_RT_FreeFroxelImage(vkRT.froxelDir[i]);
         VK_RT_FreeFroxelImage(vkRT.froxelIntegrated[i]);
     }
     s_froxelDim[0] = s_froxelDim[1] = s_froxelDim[2] = 0;
@@ -404,7 +416,9 @@ static void VK_RT_CreateFroxelImages(void)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         if (!VK_RT_AllocFroxelImage(vkRT.froxelScatter[i], (uint32_t)dim[0], (uint32_t)dim[1], (uint32_t)dim[2]) ||
-            !VK_RT_AllocFroxelImage(vkRT.froxelIntegrated[i], (uint32_t)dim[0], (uint32_t)dim[1], (uint32_t)dim[2]))
+            !VK_RT_AllocFroxelImage(vkRT.froxelIntegrated[i], (uint32_t)dim[0], (uint32_t)dim[1], (uint32_t)dim[2]) ||
+            !VK_RT_AllocFroxelImage(vkRT.froxelDir[i], (uint32_t)dim[0], (uint32_t)dim[1], (uint32_t)dim[2],
+                                    VK_FROXEL_DIR_FORMAT))
         {
             VK_RT_DestroyFroxelImages();
             // Latch AFTER the destroy — it clears this on the way out.
@@ -614,6 +628,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
 //   set 0, binding 2: UNIFORM_BUFFER_DYNAMIC     (VolFroxelParamsUBO)
 //   set 0, binding 3: STORAGE_BUFFER             (vkRT.volLightSsbo -- vol's own
 //                                                 selection, NOT giLightSsbo)
+//   set 0, binding 4: STORAGE_IMAGE              (froxelDir, 3D, write — Stage 5)
 //   set 1: vkRT.matDescLayout — shared material table, for light cookies. Only
 //          its bindless matTextures[4096] is used here, exactly as vol_march.comp.
 //
@@ -623,7 +638,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
 
 static void VK_RT_InitFroxelFillPipeline(void)
 {
-    VkDescriptorSetLayoutBinding bindings[4] = {};
+    VkDescriptorSetLayoutBinding bindings[5] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -645,9 +660,14 @@ static void VK_RT_InitFroxelFillPipeline(void)
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
+    bindings[4].binding = 4;
+    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 4;
+    layoutInfo.bindingCount = 5;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.froxelFillDescLayout));
 
@@ -681,7 +701,8 @@ static void VK_RT_InitFroxelFillPipeline(void)
 
     VkDescriptorPoolSize poolSizes[4] = {};
     poolSizes[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
-    poolSizes[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+    // froxelScatter + froxelDir (Stage 5)
+    poolSizes[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 2)};
     poolSizes[2] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
     poolSizes[3] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
 
@@ -713,11 +734,15 @@ static void VK_RT_InitFroxelFillPipeline(void)
 //   set 0, binding 0: STORAGE_IMAGE          (froxelScatter, 3D, read)
 //   set 0, binding 1: STORAGE_IMAGE          (froxelIntegrated, 3D, write)
 //   set 0, binding 2: UNIFORM_BUFFER_DYNAMIC (VolFroxelParamsUBO)
+//   set 0, binding 3: STORAGE_IMAGE          (froxelDir, 3D, read — Stage 5)
+//
+// Binding 3 rather than 2 for the direction grid because binding 2 is the params
+// UBO in every froxel pass (vol_froxel_common.glsl's contract).
 // ---------------------------------------------------------------------------
 
 static void VK_RT_InitFroxelIntegratePipeline(void)
 {
-    VkDescriptorSetLayoutBinding bindings[3] = {};
+    VkDescriptorSetLayoutBinding bindings[4] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -734,9 +759,14 @@ static void VK_RT_InitFroxelIntegratePipeline(void)
     bindings[2].descriptorCount = 1;
     bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
+    bindings[3].binding = 3;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 3;
+    layoutInfo.bindingCount = 4;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.froxelIntegrateDescLayout));
 
@@ -769,7 +799,8 @@ static void VK_RT_InitFroxelIntegratePipeline(void)
     vkDestroyShaderModule(vk.device, compMod, NULL);
 
     VkDescriptorPoolSize poolSizes[2] = {};
-    poolSizes[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 2)};
+    // scatter (read) + integrated (write) + dir (read, Stage 5)
+    poolSizes[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 3)};
     poolSizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
 
     VkDescriptorPoolCreateInfo poolInfo = {};
@@ -938,8 +969,9 @@ void VK_RT_InitVolFroxel(void)
 
 void VK_RT_ShutdownVolFroxel(void)
 {
-    // Lazily built by VK_RT_GetFroxelScatterView when the froxel path is down.
+    // Lazily built by VK_RT_GetFroxelScatterView/DirView when the froxel path is down.
     VK_RT_FreeFroxelImage(s_nullFroxelGrid);
+    VK_RT_FreeFroxelImage(s_nullFroxelDirGrid);
 
     if (vkRT.froxelFillDescPool != VK_NULL_HANDLE)
     {
@@ -1047,6 +1079,7 @@ bool VK_RT_VolFroxelActive(void)
     if (!VK_RT_VolFroxelSelected())
         return false;
     return vkRT.froxelScatter[vk.currentFrame].image != VK_NULL_HANDLE &&
+           vkRT.froxelDir[vk.currentFrame].image != VK_NULL_HANDLE &&
            vkRT.froxelIntegrated[vk.currentFrame].image != VK_NULL_HANDLE;
 }
 
@@ -1080,6 +1113,23 @@ VkImageView VK_RT_GetFroxelScatterView(void)
             return VK_NULL_HANDLE;
     }
     return s_nullFroxelGrid.view;
+}
+
+VkImageView VK_RT_GetFroxelDirView(void)
+{
+    const vkFroxelGrid_t &grid = vkRT.froxelDir[vk.currentFrame];
+    if (VK_RT_VolFroxelActive() && grid.view != VK_NULL_HANDLE)
+        return grid.view;
+
+    // Zeroed stand-in: no dominant direction, which rt_PhaseFromMeanDir reads as
+    // isotropic.  Pairs with the black scatter grid, so a caller that samples both
+    // anyway still accumulates nothing.
+    if (s_nullFroxelDirGrid.view == VK_NULL_HANDLE)
+    {
+        if (!VK_RT_AllocFroxelImage(s_nullFroxelDirGrid, 1, 1, 1, VK_FROXEL_DIR_FORMAT))
+            return VK_NULL_HANDLE;
+    }
+    return s_nullFroxelDirGrid.view;
 }
 
 VkSampler VK_RT_GetFroxelSampler(void)
@@ -1157,7 +1207,8 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
 
     vkFroxelGrid_t &grid = vkRT.froxelScatter[frameIdx];
-    if (grid.image == VK_NULL_HANDLE)
+    vkFroxelGrid_t &dirGrid = vkRT.froxelDir[frameIdx];
+    if (grid.image == VK_NULL_HANDLE || dirGrid.image == VK_NULL_HANDLE)
         return;
     if (vkRT.volLightSsbo[frameIdx] == VK_NULL_HANDLE)
         return;
@@ -1183,9 +1234,11 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // --- Update descriptor set (once per frame slot, or when resources move) ---
     static VkAccelerationStructureKHR s_lastTlas[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastGridView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastDirView[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
-    const bool resourceChanged =
-        (s_lastTlas[frameIdx] != vkRT.tlas[frameIdx].handle) || (s_lastGridView[frameIdx] != grid.view);
+    const bool resourceChanged = (s_lastTlas[frameIdx] != vkRT.tlas[frameIdx].handle) ||
+                                 (s_lastGridView[frameIdx] != grid.view) ||
+                                 (s_lastDirView[frameIdx] != dirGrid.view);
 
     if (vkRT.froxelFillDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount || resourceChanged)
     {
@@ -1200,6 +1253,10 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
         gridInfo.imageView = grid.view;
         gridInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
+        VkDescriptorImageInfo dirInfo = {};
+        dirInfo.imageView = dirGrid.view;
+        dirInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
         VkDescriptorBufferInfo uboInfo = {};
         uboInfo.buffer = uboBuf;
         uboInfo.offset = 0;
@@ -1210,7 +1267,7 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
         lightSsboInfo.offset = 0;
         lightSsboInfo.range = VK_WHOLE_SIZE;
 
-        VkWriteDescriptorSet writes[4] = {};
+        VkWriteDescriptorSet writes[5] = {};
 
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].pNext = &tlasWrite;
@@ -1240,10 +1297,18 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writes[3].pBufferInfo = &lightSsboInfo;
 
-        vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
+        writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet = ds;
+        writes[4].dstBinding = 4;
+        writes[4].descriptorCount = 1;
+        writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[4].pImageInfo = &dirInfo;
+
+        vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
         vkRT.froxelFillDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
         s_lastTlas[frameIdx] = vkRT.tlas[frameIdx].handle;
         s_lastGridView[frameIdx] = grid.view;
+        s_lastDirView[frameIdx] = dirGrid.view;
     }
 
     // --- Dispatch: local_size is 4x4x4, see vol_froxel_fill.comp ---
@@ -1287,8 +1352,9 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
         const double cells = (double)grid.width * (double)grid.height * (double)grid.depth;
         common->Printf("=== [r_rtVolFroxelDump] frame=%d slot=%d ===\n", tr.frameCount, frameIdx);
-        common->Printf("  grid=%ux%ux%u  cells=%.0f  %.2f MiB/slot  slots=%d\n", grid.width, grid.height, grid.depth,
-                       cells, cells * 8.0 / (1024.0 * 1024.0), VK_MAX_FRAMES_IN_FLIGHT);
+        // 8 B/cell for scatter + 8 for integrated + 4 for Stage 5's snorm8 direction.
+        common->Printf("  grid=%ux%ux%u  cells=%.0f  %.2f MiB/slot (scatter+integrated+dir)  slots=%d\n", grid.width,
+                       grid.height, grid.depth, cells, cells * 20.0 / (1024.0 * 1024.0), VK_MAX_FRAMES_IN_FLIGHT);
         common->Printf("  camera=(%.0f %.0f %.0f)  forward=(%.3f %.3f %.3f)\n", camPos.x, camPos.y, camPos.z, camFwd.x,
                        camFwd.y, camFwd.z);
         common->Printf("  grid range: dNear=%.3f dFar=%.1f (r_rtVolMaxDist=%.1f, T floor=%.4f)  logRange=%.4f\n",
@@ -1381,7 +1447,10 @@ void VK_RT_DispatchVolFroxelIntegrate(VkCommandBuffer cmd, const viewDef_t *view
 
     vkFroxelGrid_t &src = vkRT.froxelScatter[frameIdx];
     vkFroxelGrid_t &dst = vkRT.froxelIntegrated[frameIdx];
-    if (src.image == VK_NULL_HANDLE || dst.image == VK_NULL_HANDLE)
+    // Stage 5: src is unphased, so without this the integrate would accumulate a
+    // field with no phase applied at all rather than merely the wrong phase.
+    vkFroxelGrid_t &dirGrid = vkRT.froxelDir[frameIdx];
+    if (src.image == VK_NULL_HANDLE || dst.image == VK_NULL_HANDLE || dirGrid.image == VK_NULL_HANDLE)
         return;
 
     VkBuffer uboBuf;
@@ -1399,8 +1468,10 @@ void VK_RT_DispatchVolFroxelIntegrate(VkCommandBuffer cmd, const viewDef_t *view
 
     static VkImageView s_lastSrcView[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastDstView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastIntegrateDirView[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
-    const bool resourceChanged = (s_lastSrcView[frameIdx] != src.view) || (s_lastDstView[frameIdx] != dst.view);
+    const bool resourceChanged = (s_lastSrcView[frameIdx] != src.view) || (s_lastDstView[frameIdx] != dst.view) ||
+                                 (s_lastIntegrateDirView[frameIdx] != dirGrid.view);
 
     if (vkRT.froxelIntegrateDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount || resourceChanged)
     {
@@ -1414,12 +1485,16 @@ void VK_RT_DispatchVolFroxelIntegrate(VkCommandBuffer cmd, const viewDef_t *view
         dstInfo.imageView = dst.view;
         dstInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
+        VkDescriptorImageInfo dirInfo = {};
+        dirInfo.imageView = dirGrid.view;
+        dirInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
         VkDescriptorBufferInfo uboInfo = {};
         uboInfo.buffer = uboBuf;
         uboInfo.offset = 0;
         uboInfo.range = sizeof(VolFroxelParamsUBO);
 
-        VkWriteDescriptorSet writes[3] = {};
+        VkWriteDescriptorSet writes[4] = {};
 
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = ds;
@@ -1442,10 +1517,18 @@ void VK_RT_DispatchVolFroxelIntegrate(VkCommandBuffer cmd, const viewDef_t *view
         writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         writes[2].pBufferInfo = &uboInfo;
 
-        vkUpdateDescriptorSets(vk.device, 3, writes, 0, NULL);
+        writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[3].dstSet = ds;
+        writes[3].dstBinding = 3;
+        writes[3].descriptorCount = 1;
+        writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[3].pImageInfo = &dirInfo;
+
+        vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
         vkRT.froxelIntegrateDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
         s_lastSrcView[frameIdx] = src.view;
         s_lastDstView[frameIdx] = dst.view;
+        s_lastIntegrateDirView[frameIdx] = dirGrid.view;
     }
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.froxelIntegratePipeline);

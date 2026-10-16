@@ -162,6 +162,10 @@ void main()
         // Masked to where the slice is actually visible. Unmasked, a slice at
         // 200 units seen through a wall at 50 shows the room beyond and reads as
         // a mismatch against the march, which stops at the surface.
+        //
+        // Stage 5: this is the UNPHASED scatter now — still exactly "what is in the
+        // grid", but ~25x brighter than it used to read for a flashlight cell, so
+        // r_rtVolFroxelDebugGain wants dropping well below its 20.0 default here.
         if (zDist <= surfDist)
             outValue.rgb = cellData.rgb * fp.anisos.w;
     }

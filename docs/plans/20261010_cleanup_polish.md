@@ -168,8 +168,8 @@ Both were optimization and now live in `20261010_vk_core_audit.md`:
 
 | Was | Now |
 |---|---|
-| Phase 6a, RT shadow dispatch, steps S0-S7 | Part 3, **Stage S** (S0/S1 since dropped; S2-S7 remain). Code comments in `vk_raytracing.h:971` and `vk_shadows.cpp:1465` still say "Phase 6a" — both names mean Stage S |
-| Phase 6 E1-E5, Vulkan efficiency | Stages A0-A5 / B0-B4 owned the fixes already; the E2/E3/E4 audits moved to that doc's order table as regression guards |
+| Phase 6a, RT shadow dispatch, steps S0-S7 | **Stage S**, closed 2026-10-13 — now in `completed/20261010_vk_core_audit_closed.md`. Code comments in `vk_raytracing.h:971` and `vk_shadows.cpp:1465` still say "Phase 6a"; both names mean Stage S |
+| Phase 6 E1-E5, Vulkan efficiency | The A/B stages owned the fixes already; E2/E3/E4 are regression guards in the audit doc. E3 is now the `vid_restart` leak hunt |
 
 Nothing was dropped. This section is a forwarding note; delete it once no reader is looking
 for the old numbers.

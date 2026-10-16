@@ -256,6 +256,40 @@ One-off: r2r frame 32426 waited 125.8 ms on the upload fence. GPU passes on it r
   20.0 + 12.8 ms and the neighbours ~30 ms, so the stall is outside any timed pass
   (driver or present). n=1, near capture start (RSS 143 MB).
 
+=====================================================================================
+INTERACTION OVERDRAW, 2026-10-14 (Stage L).  RenderDoc quad-overdraw, 1440p, 5 viewpoints.
+RenderDoc forces RT=no; the stencil-volume skip keys on the cvars, so raster geometry is
+identical to an RT frame and these numbers describe the shipping configuration.
+=====================================================================================
+Recipe: r_vkDebugLabels 1 -> capture -> Save Texture as EXR (8-bit formats cannot carry
+the counts; the alpha handling composites the viewer checkerboard into the image) ->
+python tools/rdoc_overdraw.py <exr>.  Draw counts: tools/rdoc_draw_census.py in
+RenderDoc's Python Shell.  Exports kept in tools/output/.
+
+                 mean  inter  Mfrag  >=12 px%  >=12 frag%  max   depth/inter/shader draws
+  r2r1           4.50   3.50   16.6     6.1%      23.8%     46      77 /  279 /  34
+  r2r2           5.44   4.44   20.0     7.2%      22.6%     64     197 /  745 /  76
+  mchq           6.13   5.13   22.6    10.0%      20.8%     24     159 /  423 / 103
+  commfire1      6.32   5.32   23.3     9.7%      23.9%     36     133 /  425 / 486
+  commfire2      9.31   8.31   34.3    26.0%      38.2%     33     128 /  512 / 116
+  Depth is whole-render-pass (prepass -> shader passes); subtract ~1 for the prepass.
+
+X7 CLOSED, negative.  Amplification (interaction draws / depth draws) is 2.7-4.0x against
+  15-42 lights in view, i.e. per-(light,surface) culling is working and there is no
+  redundant resubmission to reclaim.  Proof that submission count is not the variable:
+  commfire1's 486 shader-pass draws cost gpu.ShaderPasses p50 0.128 / max 0.363 ms, while
+  745 interaction draws cost gpu.Interactions p50 4.82 / p95 20.99 ms.  gpu.DepthPrepass
+  p50 0.105 ms for 133-197 draws with 5 MRT attachments.
+
+GRATES RULED OUT.  Hypothesis was that perforated materials defeat early-Z.  The prepass
+  alpha-clips MC_PERFORATED via depthClipPipeline (vk_backend.cpp:2768, :2792), and the
+  tail masks show the deep regions are large flat floors and ceiling beams, not mesh
+  patterns.  The lacy areas in r2r2 are railings and are a small pixel share.
+
+commfire2 is the 21 ms p95 and is a different shape from the others: 84% of the screen at
+  >=6 layers rather than a shallow frame with a tail.  commfire1 vs commfire2 is the same
+  map, so viewpoint variance exceeds map variance — always quote the viewpoint.
+
 Next capture
 ------------
 The only capture recipe. r_vkRTProfileGroups is a console filter and is always left at 63;

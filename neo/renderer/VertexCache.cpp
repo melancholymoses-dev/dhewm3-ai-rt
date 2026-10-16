@@ -244,9 +244,54 @@ idVertexCache::Shutdown
 */
 void idVertexCache::Shutdown()
 {
-    //	PurgeAll();	// !@#: also purge the temp buffers
+    // Init unlinks the temp buffers from staticHeaders so the purge paths can never
+    // reclaim them, which also means PurgeAll cannot reach them — that is what id's
+    // "!@#: also purge the temp buffers" note on the disabled call here meant.  Release
+    // their payloads directly; ActuallyFree is not usable on them, because the unlink in
+    // Init left their next/prev pointing into the static list.
+    for (int i = 0; i < NUM_VERTEX_FRAMES; i++)
+    {
+        vertCache_t *block = tempBuffers[i];
+        if (!block)
+            continue;
+        if (block->user)
+        {
+            *block->user = NULL;
+            block->user = NULL;
+        }
+        if (activeBackend)
+            activeBackend->VertexCache_Free(block);
+        tempBuffers[i] = NULL; // the header belongs to headerAllocator, freed below
+    }
+
+    // ActuallyFree needs a backend to release payloads, so skip both drains if we are
+    // already past backend teardown.
+    if (activeBackend)
+    {
+        // Free() only defers — it unlinks from staticHeaders and parks the block on
+        // deferredFreeList, which normally drains in EndFrame.  A teardown that happens
+        // before the next EndFrame leaves those blocks reachable from neither list, so
+        // PurgeAll cannot see them and their payloads leak.  This is what the callers'
+        // R_FreeDerivedData / FreeModelVertexCaches fill right before shutting down.
+        while (deferredFreeList.next != &deferredFreeList)
+        {
+            ActuallyFree(deferredFreeList.next);
+        }
+
+        // Static blocks are normally gone already (both callers purge first), but
+        // anything left would be orphaned by the list-head reset at the top of Init.
+        PurgeAll();
+    }
 
     headerAllocator.Shutdown();
+
+    // The gate for this teardown: every virtual-memory payload accounted for.  Non-zero
+    // means something still holds one that the next Init would orphan.
+    if (vertexCacheVirtMemBytes != 0)
+    {
+        common->Warning("idVertexCache::Shutdown: %zu bytes of vertex-cache virtual memory still held",
+                        vertexCacheVirtMemBytes);
+    }
 }
 
 /*
