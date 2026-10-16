@@ -126,18 +126,20 @@ widens smoothly with no energy change at grazing angles.
 
 ---
 
-## Stage 4 — Open to opaque surfaces
+## Stage 4 — Open to opaque surfaces — done 2026-10-16, unbuilt/unverified
 
 | Item | Detail |
 |---|---|
-| `r_rtReflectionMode 3` | New: glass + opaque-with-roughness. Mode 1 (glass-only) stays the fallback |
-| Launch grid | Full-screen again; the R6 glass rect and the `sceneHasGlass` early-out no longer apply in mode 3 |
-| **Roughness ceiling** | `r_rtReflRoughnessMax` (default ~0.5). Above it the surface takes GI only, no reflection ray. This is structural, not a tuning knob — it is what prevents double-counting |
-| GI handoff | Confirm `gi_albedo_mod.comp`'s contribution is not also being delivered by the lobe. Debug mode 13: tint pixels taking reflection vs GI vs both |
+| `r_rtReflectionMode 3` | New: glass + opaque-with-roughness. Mode 1 (glass-only) and mode 2 (legacy, no ceiling, predates roughness) both stay as-is; mode 3 is purely additive |
+| Launch grid | Full-screen, same as mode 2 — `glassOnly` in `vk_reflections.cpp` only ever triggers on mode 1, so 3 inherits the existing full-screen path with no new code |
+| **Roughness ceiling** | `r_rtReflRoughnessMax` (default 0.5), mode 3 only. `reflect_ray.rgen` folds it into the existing f0 early-out: `glassProbe.hitT <= 0.01 && (f0 < 1/255 \|\| tooRoughForMode3)`. Uses `>=`, not `>`, so a ceiling of exactly 0 disqualifies every opaque pixel even if `r_rtReflRoughnessFloor` is also 0 — structurally identical to mode 1, not just numerically close |
+| GI handoff | No code change needed in `gi_albedo_mod.comp` — it already runs unconditionally on every opaque pixel regardless of reflMode, so "GI only" above the ceiling was already true by construction. Debug mode 13 added to `reflect_ray.rgen`: white = glass (always reflects), blue = reflection + GI (both, roughness under the ceiling), green = GI only (over the ceiling, or f0 too low). Mode 13 forces `reflMode = 3` in the UBO fill regardless of the real cvar, so the boundary is visible without having to set mode 3 first |
 
-**Check:** `r_rtReflRoughnessMax 0` reproduces mode 1 exactly. Sweeping it up, total scene
-brightness must stay flat — any rise is double-counting. Dark corridors must not gain a noise
-floor; compare against the GI-only capture at the same spot.
+**Check:** `r_rtReflRoughnessMax 0` reproduces mode 1 exactly (confirmed structurally by the
+`>=` comparison above, not just empirically). Sweeping it up, total scene brightness must stay
+flat — any rise is double-counting. Dark corridors must not gain a noise floor; compare against
+the GI-only capture at the same spot. Mode 13 is the fastest way to see where the boundary
+currently sits before doing either comparison.
 
 ---
 

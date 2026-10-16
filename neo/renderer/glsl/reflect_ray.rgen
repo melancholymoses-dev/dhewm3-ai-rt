@@ -11,8 +11,11 @@ For every non-sky pixel:
      docs/plans/20260918_reflection_brightness.md) short-circuit later: 5 once the
      path is chosen, 6/7 after the bounce loop but before any Fresnel weighting.
   1. Reconstruct world-space position and the mirror-reflected view direction.
-     Early-out on pixels with no glass in front and F0 ~ 0 (skips the reflect
-     ray + shadow rays — the perf win this buffer exists for).
+     Early-out on pixels with no glass in front and F0 ~ 0, OR (r_rtReflectionMode 3,
+     Stage 4) roughness at/above r_rtReflRoughnessMax — skips the reflect ray + shadow
+     rays either way, the perf win this buffer exists for, and in mode 3's case also
+     what keeps the lobe from double-counting GI at high roughness (rt_engine_rules.md
+     pillar 2). Mode 13 visualizes the boundary instead of tracing.
   2. Compute the Schlick Fresnel term ONCE per pixel (not per-light — the bug this
      effort exists to fix, Step 8) from the bump-mapped shading normal, evaluated
      against the macro normal (not the GGX half-vector below) so R1's pre-trace cull
@@ -82,7 +85,7 @@ layout(set = 0, binding = 3) uniform ReflParams {
     float  minWeight;     // r_rtReflectionMinWeight — pre-trace Fresnel cull (R1)
     int    rectOriginX;   // R6 — launch-grid origin, added to gl_LaunchIDEXT below
     int    rectOriginY;
-    int    reflMode;      // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen
+    int    reflMode;      // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen, 3 glass+opaque (Stage 4)
     int    emitterCount;  // projectile glow discs in emitterBuf (0 = r_rtReflGlow off)
     float  glowGain;      // r_rtReflGlowGain (0 when r_rtReflGlow is off)
     int    glowTriCount;  // additive translucent triangles in emitterBuf.tris
@@ -102,6 +105,8 @@ layout(set = 0, binding = 3) uniform ReflParams {
     int    glassNormalMode; // r_rtGlassNormalMode — 0 interpolated, 1 face, 2 crease-aware
     float  glassCreaseRatio; // r_rtGlassCreaseRatio — mode 2 flattens when devRatio < this
     float  guiReflGain;   // r_rtGuiReflGain — scales live GUI screen hits
+    float  roughnessMax;  // r_rtReflRoughnessMax (Stage 4) — reflMode 3 only; above this an
+                           // opaque pixel skips the reflection ray and takes GI alone
 } params;
 
 // Grid math only — no bindings of its own, so it can live alongside this set.
@@ -294,6 +299,12 @@ void main()
     vec4  gbuf = texelFetch(gbufNormalSampler, min(coord, gbufSize - 1), 0);
     float f0   = gbuf.a;
 
+    // Stage 2 packed roughness. Fetched this early (not just for mode 12 below) so
+    // Stage 4's roughness ceiling can gate the opaque early-out before any ray tracing,
+    // same reasoning as f0 being fetched up here instead of inside the opaque branch.
+    ivec2 albedoSize = textureSize(gbufAlbedoSampler, 0);
+    float roughness  = GBuf_UnpackRoughness(texelFetch(gbufAlbedoSampler, min(coord, albedoSize - 1), 0).a);
+
     if (params.debugMode == 2)
     {
         // Raw world normal as RGB — a grate floor must look bumpy/detailed, not
@@ -322,8 +333,6 @@ void main()
     {
         // Stage 2 roughness as greyscale — rough concrete bright, polished trim and
         // glass dark, gradient should track visible surface detail.
-        ivec2 albedoSize = textureSize(gbufAlbedoSampler, 0);
-        float roughness = GBuf_UnpackRoughness(texelFetch(gbufAlbedoSampler, min(coord, albedoSize - 1), 0).a);
         imageStore(reflImage, coord, vec4(vec3(roughness), 1.0));
         return;
     }
@@ -380,11 +389,36 @@ void main()
         return;
     }
 
-    // EARLY-OUT: opaque, non-reflective pixel with no glass in front of it — skip
-    // the reflect ray + shadow rays entirely. This is the perf win the G-buffer
-    // exists for. Placed after the glass probe: glass reflections don't depend on
-    // surface F0, so a glass hit must still fall through to the trace loop below.
-    if (glassProbe.hitT <= 0.01 && f0 < 1.0 / 255.0)
+    // Stage 4 roughness ceiling (r_rtReflRoughnessMax, mode 3 only): above it, the GGX
+    // lobe is wide enough that it's approximating the same hemisphere probe GI already
+    // integrates, so tracing both would sum two independent noisy estimates of the same
+    // quantity instead of two distinct ones. >= so a ceiling of exactly 0 disqualifies
+    // every opaque pixel regardless of r_rtReflRoughnessFloor, making mode 3 reproduce
+    // mode 1 exactly rather than merely approximating it.
+    bool tooRoughForMode3 = (params.reflMode == 3) && (roughness >= params.roughnessMax);
+
+    if (params.debugMode == 13)
+    {
+        // Stage 4 GI/reflection handoff audit: forces reflMode 3 above (see the UBO
+        // fill in vk_reflections.cpp) regardless of the real cvar, so sweeping
+        // r_rtReflRoughnessMax moves the blue/green boundary live.
+        vec3 tint;
+        if (glassProbe.hitT > 0.01)
+            tint = vec3(1.0, 1.0, 1.0);                  // white: glass, always reflects
+        else if (f0 < 1.0 / 255.0 || tooRoughForMode3)
+            tint = vec3(0.0, 1.0, 0.0);                  // green: GI only
+        else
+            tint = vec3(0.0, 0.3, 1.0);                  // blue: reflection + GI (both)
+        imageStore(reflImage, coord, vec4(tint, 1.0));
+        return;
+    }
+
+    // EARLY-OUT: opaque, non-reflective (or, in mode 3, too-rough) pixel with no glass
+    // in front of it — skip the reflect ray + shadow rays entirely. This is the perf
+    // win the G-buffer exists for. Placed after the glass probe: glass reflections
+    // don't depend on surface F0 or roughness, so a glass hit must still fall through
+    // to the trace loop below regardless of either.
+    if (glassProbe.hitT <= 0.01 && (f0 < 1.0 / 255.0 || tooRoughForMode3))
     {
         imageStore(reflImage, coord, vec4(0.0));
         return;
@@ -450,8 +484,7 @@ void main()
         // strategy as gi_ray.rgen so the noise is stable under a static camera and
         // decorrelates frame to frame — Stage 1's temporal denoiser resolves the
         // resulting variance over frames rather than this file sampling more of them.
-        ivec2 albedoSize = textureSize(gbufAlbedoSampler, 0);
-        float roughness  = GBuf_UnpackRoughness(texelFetch(gbufAlbedoSampler, min(coord, albedoSize - 1), 0).a);
+        // `roughness` was fetched up top, alongside f0, for Stage 4's ceiling check.
         // r_rtReflRoughnessScale retunes Stage 2's packed roughness before the standard
         // perceptual-roughness-squared remap to GGX alpha.
         float perceptualRoughness = clamp(roughness * params.roughnessScale, 0.0, 1.0);

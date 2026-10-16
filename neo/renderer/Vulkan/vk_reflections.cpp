@@ -69,6 +69,18 @@ idCVar r_rtReflRoughnessScale("r_rtReflRoughnessScale", "1.0", CVAR_RENDERER | C
                               "just the r_rtReflectionDebugMode 12 preview) is visible through the lobe.",
                               0.0f, 4.0f);
 
+// Stage 4 (20261013_reflection_roughness.md), r_rtReflectionMode 3 only. Structural,
+// not a tuning knob: above this, a GGX lobe is wide enough that it's approximating the
+// same hemisphere probe GI already integrates, so tracing both sums two independent
+// noisy estimates of the same quantity — too bright, and a raised noise floor in dark
+// corridors (docs/rt_engine_rules.md pillar 2). At 0, mode 3 reproduces mode 1 exactly
+// (every opaque pixel's roughness is >= 0, see r_rtReflRoughnessFloor).
+idCVar r_rtReflRoughnessMax("r_rtReflRoughnessMax", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                            "Roughness ceiling for r_rtReflectionMode 3: opaque surfaces rougher than this skip\n"
+                            "the reflection ray and take GI alone. r_rtReflectionDebugMode 13 visualizes the\n"
+                            "boundary (blue = reflection + GI, green = GI only, white = glass).",
+                            0.0f, 1.0f);
+
 idCVar r_rtReflectionMinWeight(
     "r_rtReflectionMinWeight", "0.04", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
     "Skip the reflection ray and its shadow rays when the pixel's final Fresnel weight is below\n"
@@ -99,8 +111,14 @@ idCVar r_rtReflectionMode("r_rtReflectionMode", "1", CVAR_RENDERER | CVAR_INTEGE
                           "    view's SURFTYPE_GLASS surfaces and skipped entirely when the view holds no glass;\n"
                           "    opaque geometry never reflects, so no per-pixel F0/Fresnel work is done at all.\n"
                           "2 = legacy full-screen. Every non-sky pixel is traced and gated by the specular-map F0\n"
-                          "    remap (r_rtSpecF0Scale/Gamma) plus r_rtReflectionMinWeight.\n"
-                          "Use r_rtReflections 0 to turn the feature off entirely.");
+                          "    remap (r_rtSpecF0Scale/Gamma) plus r_rtReflectionMinWeight. Predates Stages 2-3\n"
+                          "    (roughness/GGX) and ignores r_rtReflRoughnessMax — kept as an A/B baseline.\n"
+                          "3 = glass + opaque-with-roughness (Stage 4, 20261013_reflection_roughness.md).\n"
+                          "    Full-screen like mode 2, but opaque surfaces rougher than r_rtReflRoughnessMax\n"
+                          "    skip the reflection ray entirely and take GI alone, so the GGX lobe never\n"
+                          "    double-counts GI's own near-diffuse contribution at high roughness.\n"
+                          "Use r_rtReflections 0 to turn the feature off entirely.",
+                          1, 3);
 
 // Temporal denoiser (Stage 1, docs/plans/20261013_reflection_roughness.md). Mirrors
 // vk_temporal.cpp's AO EMA pattern, but with a per-pixel variance-driven alpha and a
@@ -172,9 +190,15 @@ idCVar r_rtReflectionDebugMode(
     "12 = Stage 2 per-pixel roughness (gbufAlbedo alpha, Toksvig estimate) as greyscale —\n"
     "    rough concrete should read bright, polished trim and glass dark, and the gradient\n"
     "    should track visible bump detail rather than the diffuse texture.\n"
-    "Modes 2-10 and 12 require r_rtReflections 1 — they ride on the reflection ray dispatch,\n"
-    "force the full-screen launch grid, and are displayed via refl_composite.frag with blending\n"
-    "disabled (replace, not add). The per-surface glass overlay is suppressed while they are active.");
+    "13 = Stage 4 GI/reflection handoff (r_rtReflRoughnessMax): white = glass (always\n"
+    "    reflects), blue = opaque taking a reflection ray (and GI — both), green = opaque\n"
+    "    over the ceiling or below the F0 floor (GI alone). Forces r_rtReflectionMode 3\n"
+    "    regardless of the cvar, so sweeping r_rtReflRoughnessMax moves the blue/green\n"
+    "    boundary live.\n"
+    "Modes 2-10, 12 and 13 require r_rtReflections 1 — they ride on the reflection ray\n"
+    "dispatch, force the full-screen launch grid, and are displayed via refl_composite.frag\n"
+    "with blending disabled (replace, not add). The per-surface glass overlay is suppressed\n"
+    "while they are active.");
 
 // ---------------------------------------------------------------------------
 // UBO layout matching reflect_ray.rgen ReflParams block
@@ -191,7 +215,7 @@ idCVar r_rtReflectionDebugMode(
 //   int    rectOriginX    offset 100 size  4  (R6 launch-grid origin — was 104; grazingGain's
 //                                               old slot is gone, not reused — see _padBeforeViewProj)
 //   int    rectOriginY    offset 104 size  4
-//   int    reflMode       offset 108 size  4  (r_rtReflectionMode)
+//   int    reflMode       offset 108 size  4  (r_rtReflectionMode — 1/2/3, Stage 4 adds 3)
 //   int    emitterCount   offset 112 size  4  (vk_rt_emitters.cpp, 0 = none)
 //   float  glowGain       offset 116 size  4  (r_rtReflGlowGain, 0 when r_rtReflGlow is off)
 //   int    glowTriCount   offset 120 size  4  (vk_rt_emitters.cpp glow triangles)
@@ -211,6 +235,8 @@ idCVar r_rtReflectionDebugMode(
 //   int    glassNormalMode offset 252 size 4  (r_rtGlassNormalMode)
 //   float  glassCreaseRatio offset 256 size 4  (r_rtGlassCreaseRatio)
 //   float  guiReflGain    offset 260 size  4  (r_rtGuiReflGain)
+//   float  roughnessMax   offset 264 size  4  (r_rtReflRoughnessMax, Stage 4 — took one of
+//                                               the two trailing pad floats; _pad0 is now [1])
 //   total: 272 bytes — std140 rounds the block up to a multiple of
 //   16, and uboInfo.range is sizeof(ReflParamsUBO), which must not be smaller.
 // ---------------------------------------------------------------------------
@@ -229,7 +255,7 @@ struct ReflParamsUBO
     float minWeight;       // r_rtReflectionMinWeight — pre-trace Fresnel cull (R1)
     int32_t rectOriginX;   // R6 — launch-grid origin; rgen adds this to gl_LaunchIDEXT
     int32_t rectOriginY;
-    int32_t reflMode;     // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen
+    int32_t reflMode;     // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen, 3 glass+opaque (Stage 4)
     int32_t emitterCount; // projectile glow discs in the emitter SSBO (binding 6)
     float glowGain;       // r_rtReflGlowGain
     int32_t glowTriCount; // additive translucent triangles after the discs in binding 6
@@ -255,9 +281,9 @@ struct ReflParamsUBO
     int32_t glassNormalMode; // r_rtGlassNormalMode — 0 interpolated, 1 face, 2 crease-aware
     float glassCreaseRatio;  // r_rtGlassCreaseRatio — mode 2 flattens when devRatio < this
     float guiReflGain;       // r_rtGuiReflGain — scales live GUI screen hits (MAT_FLAG_GUI_LIVE)
-    float _pad0[2];          // std140 rounds the block to 272 — unchanged by Stage 3: everything
-                             // from viewProj on is still byte-for-byte where it was, since
-                             // _padBeforeViewProj already restored the original 128-byte prefix
+    float roughnessMax;      // r_rtReflRoughnessMax (Stage 4) — took one of the two trailing
+                             // pad floats Stage 3 left here; _pad0 shrinks to match
+    float _pad0[1];          // std140 rounds the block to 272
 };
 static_assert(sizeof(ReflParamsUBO) == 272, "ReflParamsUBO size mismatch");
 
@@ -1694,7 +1720,15 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     ubo.rectOriginX = rectX;
     ubo.rectOriginY = rectY;
-    ubo.reflMode = glassOnly ? 1 : 2;
+    // Debug modes other than 13 want the full, uncensored per-pixel data (never gated
+    // by mode 1's glass-only rect or mode 3's roughness ceiling) — mode 13 is the one
+    // exception, since it exists specifically to visualize that ceiling, so it forces
+    // mode 3 regardless of what r_rtReflectionMode is actually set to.
+    if (reflDebugActive)
+        ubo.reflMode = (reflDebugMode == 13) ? 3 : 2;
+    else
+        ubo.reflMode = idMath::ClampInt(1, 3, r_rtReflectionMode.GetInteger());
+    ubo.roughnessMax = idMath::ClampFloat(0.0f, 1.0f, r_rtReflRoughnessMax.GetFloat());
     ubo.emitterCount = (int32_t)VK_RT_GetReflEmitterCount(frameIdx);
     ubo.glowTriCount = (int32_t)VK_RT_GetReflGlowTriCount(frameIdx);
     // 0 when off, so the glow triangles are also dropped in the rgen.
@@ -2243,10 +2277,10 @@ void VK_RT_DispatchReflTemporal(VkCommandBuffer cmd, const viewDef_t *viewDef)
 VkImageView VK_RT_GetReflReadView(int frameIdx)
 {
     const int debugMode = r_rtReflectionDebugMode.GetInteger();
-    // Modes 2-10 are instantaneous per-frame visualizations baked into reflBuffer by
-    // reflect_ray.rgen itself — routing them through the EMA'd history would smear
-    // them across frames and defeat the point. Mode 11 is the one exception: it IS
-    // the denoiser's own history/rejection state.
+    // Modes 2-10, 12 and 13 are instantaneous per-frame visualizations baked into
+    // reflBuffer by reflect_ray.rgen itself — routing them through the EMA'd history
+    // would smear them across frames and defeat the point. Mode 11 is the one
+    // exception: it IS the denoiser's own history/rejection state.
     if (debugMode >= 2 && debugMode <= REFL_DEBUG_MAX_MODE && debugMode != 11)
         return vkRT.reflBuffer[frameIdx].view;
     if (r_rtReflDenoise.GetInteger() > 0 && vkRT.reflHistoryValid &&
@@ -2473,7 +2507,7 @@ void VK_RT_CompositeReflections(VkCommandBuffer cmd)
     // Update the descriptor set for this frame slot. The reflection image may
     // have been recreated (resize), so always write it before drawing.
     // VK_RT_GetReflReadView: reflHistory when the denoiser is on and valid (except
-    // debug modes 2-10, which are rgen's own unfiltered per-frame visualizations).
+    // debug modes 2-10, 12 and 13, which are rgen's own unfiltered per-frame visualizations).
     VkDescriptorImageInfo imgInfo = {};
     imgInfo.sampler = vkRT.reflSampler;
     imgInfo.imageView = VK_RT_GetReflReadView(frameIdx);
