@@ -59,7 +59,6 @@ static const float SMOKE_NEAR_SKIP = 32.0f;
 static const int MAX_SMOKE_CLUSTERS = 256;
 
 extern idCVar r_vkLogRT;
-extern idCVar r_rtReflectionDebugMode;
 extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memProps,
                             VkBuffer *outBuffer, VkDeviceMemory *outMemory);
 
@@ -793,7 +792,7 @@ void VK_RT_BuildReflEmitters(const viewDef_t *viewDef)
     s_emitterCount[slot] = 0;
     s_glowTriCount[slot] = 0;
 
-    if (!r_rtReflGlow.GetBool() && r_rtReflectionDebugMode.GetInteger() != 8)
+    if (!r_rtReflGlow.GetBool())
         return;
 
     // Once a second at r_vkLogRT 1: the E0 inventory.

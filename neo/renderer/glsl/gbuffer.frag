@@ -128,9 +128,8 @@ void main() {
     vec3  nTSFixed    = textureLod(u_BumpMap, vary_TexCoord_Bump, GBUF_ROUGHNESS_FIXED_MIP).rgb * 2.0 - 1.0;
     float nTSFixedLen = length(nTSFixed);
 
-    // Same specular-luminance → F0 remap as interaction.frag's Fresnel block, so
-    // r_rtReflectionDebugMode 1 (interaction.frag) and mode 3 (this G-buffer's F0,
-    // see the plan's Step 9) agree on the same surfaces.
+    // Specular-luminance → F0 remap (r_rtSpecF0Scale/Gamma); r_rtReflectionDebugMode 3
+    // shows the result.
     vec3  specMap = texture(u_SpecularMap, vary_TexCoord_Specular).rgb;
     float specLum = dot(specMap, vec3(0.299, 0.587, 0.114));
     float f0      = clamp(pow(max(specLum, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0, 1.0);

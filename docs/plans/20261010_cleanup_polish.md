@@ -69,7 +69,7 @@ shipped.
 
 | Remove | Because |
 |---|---|
-| `r_rtReflectionDebugMode` modes 2-8 | The instrument for the glass fix and the roughness work, which *add* modes 9-13. Delete-then-add is churn |
+| `r_rtReflectionDebugMode` | Modes 1/5/7/8/9/10 retired 2026-10-17. The rest exit with their 8g stage (refactor plan) |
 | F0 remap cvars | Kept — live for opaque reflections. See Phase 2 |
 
 Check (each group): build, load Mars City, `cvarlist r_rt` and `r_vk` shrink; baseline
@@ -91,7 +91,7 @@ Run after 8g Stage 5 (knob consolidation), which owns `r_rtReflectionBlend` and
 | Step | Detail |
 |---|---|
 | 2a. Remove mode 2 | `r_rtReflectionMode` range 1–3 → {1, 3}. Debug modes force `reflMode = 2` (`vk_reflections.cpp`, `ubo.reflMode`); force 3 instead — rough pixels going black in a debug view is acceptable. Drop mode 2 branches in `reflect_ray.rgen` and the cvar help text |
-| 2b. Keep | F0 in the G-buffer, `GLASS_F0`, glass Fresnel, glow/emitter cvars, `interaction.frag` debug mode 1 |
+| 2b. Keep | F0 in the G-buffer, `GLASS_F0`, glass Fresnel, glow/emitter cvars. (Reflection debug modes 1/5/7/8/9/10 already retired 2026-10-17) |
 
 Check: modes 1 and 3 screenshots identical; `grep -rn "reflMode == 2\|ReflectionMode 2" neo` empty.
 

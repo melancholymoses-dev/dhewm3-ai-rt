@@ -1538,28 +1538,10 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     const float directScale = idMath::ClampFloat(0.0f, 2.0f, r_rtGIDirectScale.GetFloat());
     *lightScalePtr = backEnd.overBright * (giActive ? directScale : 1.0f);
 
-    // useReflections: 1 when RT reflection buffer is valid this frame.
-    // Disabled for portal/mirror subviews: the buffer was populated from the primary
-    // camera and sampling it in a different view produces a screen-space artifact
-    // (wrong geometry, rectangular footprint un-transformed by the portal projection).
-    int *useReflPtr = (int *)(lightScalePtr + 1);
-    const bool isPrimaryView = (backEnd.viewDef == NULL || backEnd.viewDef->superView == NULL);
-    const bool hasReflBuffer = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtReflections.GetBool() &&
-                               vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && isPrimaryView;
-    *useReflPtr = (hasReflBuffer && !isWeaponDepthHack) ? 1 : 0;
-
-    // specF0Scale / specF0Gamma — Fresnel/F0 remap curve parameters (Stage 2).
-    // reflDebugMode — 1 = output Fresnel as greyscale for tuning; 0 = off.
-    extern idCVar r_rtSpecF0Scale;
-    extern idCVar r_rtSpecF0Gamma;
-    extern idCVar r_rtReflectionDebugMode;
-    float *specF0ScalePtr = (float *)(useReflPtr + 1);
-    specF0ScalePtr[0] = idMath::ClampFloat(0.0f, 1.0f, r_rtSpecF0Scale.GetFloat());
-    specF0ScalePtr[1] = idMath::ClampFloat(0.1f, 8.0f, r_rtSpecF0Gamma.GetFloat());
-    int *reflDbgPtr = (int *)(specF0ScalePtr + 2);
-    *reflDbgPtr = r_rtReflectionDebugMode.GetInteger();
+    // Four retired ints follow lightScale (VkInteractionUBO::_retired), then shadowMaskLayer.
     // shadowMaskLayer (P1b) — ring memory is never cleared, so always write it.
-    reflDbgPtr[1] = (s_shadowMaskLayer >= 0) ? s_shadowMaskLayer : 0;
+    int *shadowLayerPtr = (int *)(lightScalePtr + 1) + 4;
+    *shadowLayerPtr = (s_shadowMaskLayer >= 0) ? s_shadowMaskLayer : 0;
 
     // Write UBO descriptor
     VkDescriptorBufferInfo bufInfo = {};

@@ -52,12 +52,12 @@ static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "6.0", CVAR_RENDERER | 
 idCVar r_rtSpecF0Scale("r_rtSpecF0Scale", "0.25", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                        "Scale factor applied after the power-curve remap of specular-map luminance to F0.\n"
                        "Reduces how much even bright specular texels contribute to reflections.\n"
-                       "Tune with r_rtReflectionDebugMode 1 or 3 to see the resulting F0/Fresnel mask.");
+                       "Tune with r_rtReflectionDebugMode 3 to see the resulting F0.");
 
 idCVar r_rtSpecF0Gamma("r_rtSpecF0Gamma", "2.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                        "Power exponent for remapping raw specular-map luminance to physically plausible F0.\n"
                        "Higher values restrict reflections to only the brightest specular texels (true metal/wet).\n"
-                       "Tune with r_rtReflectionDebugMode 1 or 3.");
+                       "Tune with r_rtReflectionDebugMode 3.");
 
 // Stage 3 (20261013_reflection_roughness.md) retires r_rtSpecGrazingMax/Gain: that
 // ad-hoc grazing-angle clamp existed only to tame full-screen opaque reflections
@@ -212,7 +212,7 @@ idCVar r_rtGlassNormalMode("r_rtGlassNormalMode", "2", CVAR_RENDERER | CVAR_INTE
                            "1 = geometric face normal (flat facets).\n"
                            "2 = crease-aware: face normal on triangles whose vertex normals tilt lopsidedly\n"
                            "    (flat facet beside a smoothed crease), interpolated on symmetric ones (real\n"
-                           "    arcs). See r_rtGlassCreaseRatio and r_rtReflectionDebugMode 9.",
+                           "    arcs). See r_rtGlassCreaseRatio.",
                            0, 2);
 idCVar r_rtGlassCreaseRatio("r_rtGlassCreaseRatio", "0.25", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                             "r_rtGlassNormalMode 2: a glass triangle uses the face normal when its smallest\n"
@@ -221,28 +221,16 @@ idCVar r_rtGlassCreaseRatio("r_rtGlassCreaseRatio", "0.25", CVAR_RENDERER | CVAR
 
 idCVar r_rtReflectionDebugMode(
     "r_rtReflectionDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
-    "0 = off.\n"
-    "1 = output Fresnel term as greyscale (interaction.frag; tune r_rtSpecF0Scale/Gamma).\n"
+    "0 = off. Retired, now no-ops: 1, 5, 7, 8, 9, 10 (numbers kept stable).\n"
     "2 = output G-buffer world normal as RGB (reflect_ray.rgen) — a grate floor should look\n"
     "    bumpy/detailed, not flat single-colour; silhouette edges must match geometry.\n"
     "3 = output G-buffer F0 (alpha) greyscale (reflect_ray.rgen) — most of the scene near-black,\n"
     "    metal/wet trim grey, nothing solid white.\n"
     "4 = tint pixels using the rt_ReconstructNormal fallback (G-buffer alpha == 0) magenta\n"
     "    (reflect_ray.rgen) — should be only sky/translucents once the prepass covers the scene.\n"
-    "5 = path classification (B0): green = glass, blue = opaque reflective, yellow =\n"
-    "    rt_ReconstructNormal fallback, black = sky or culled before the trace. Shows what the\n"
-    "    glass rect actually covers.\n"
     "6 = raw traced radiance, before reflBlend and before the Schlick/glass weight. The\n"
     "    decisive 'dark subject vs weak interface' measurement — a dim player here means the\n"
     "    lighting chain is short (B2/B4), a bright one means the glass weight is (B3).\n"
-    "7 = mode 6 scaled x8, so the subject reads through the tonemap toe while judging it.\n"
-    "8 = mode 6 plus projectile emitter discs (r_rtReflGlow): green = visible, red = behind\n"
-    "    the reflected surface. Emitters are collected even with r_rtReflGlow 0.\n"
-    "9 = glass only: r_rtGlassNormalMode 2's split. Red = face normal (crease-adjacent flat facet),\n"
-    "    green = interpolated (arc or flat). Brighter = more lopsided vertex normals.\n"
-    "10 = GUI screens in reflections (docs/plans/20261015_gui_reflections.md): green = hit bound\n"
-    "    to a live GUI texture, else mode 6 dimmed x0.25. Unbound screens are ignored by the ray,\n"
-    "    so magenta should not appear.\n"
     "11 = reflection denoiser history age / rejection mask (needs r_rtReflDenoise >= 1, else this\n"
     "    just shows the normal unfiltered reflection — reflect_ray.rgen has no mode-11 case of\n"
     "    its own): green = accepted, brightness = history age; red = rejected this frame\n"
@@ -262,7 +250,7 @@ idCVar r_rtReflectionDebugMode(
     "    over traced neighbours, white = blends freely, black = stopped. Floors should be\n"
     "    white, rails and creases outlined dark. Yellow = no traced neighbour; untraced/glass\n"
     "    as mode 14. Tune r_rtReflAtrousSigmaPlane/NormalPower here.\n"
-    "Modes 2-10, 12 and 13 require r_rtReflections 1 — they ride on the reflection ray\n"
+    "Modes 2-4, 6, 12 and 13 require r_rtReflections 1 — they ride on the reflection ray\n"
     "dispatch, force the full-screen launch grid, and are displayed via refl_composite.frag\n"
     "with blending disabled (replace, not add). The per-surface glass overlay is suppressed\n"
     "while they are active.");
@@ -2747,7 +2735,7 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
 VkImageView VK_RT_GetReflReadView(int frameIdx)
 {
     const int debugMode = r_rtReflectionDebugMode.GetInteger();
-    // Modes 2-10, 12 and 13 are instantaneous per-frame visualizations baked into
+    // Modes 2-4, 6, 12 and 13 are instantaneous per-frame visualizations baked into
     // reflBuffer by reflect_ray.rgen itself — routing them through the EMA'd history
     // would smear them across frames and defeat the point. Mode 11 is the one
     // exception: it IS the denoiser's own history/rejection state.
@@ -2780,7 +2768,7 @@ VkImageView VK_RT_GetReflReadView(int frameIdx)
 //
 // Two pipeline objects share this layout/shader: reflCompositePipeline (additive,
 // normal operation) and reflCompositeDebugPipeline (blend disabled) selected by
-// VK_RT_CompositeReflections when r_rtReflectionDebugMode is 2-8, so the debug
+// VK_RT_CompositeReflections when r_rtReflectionDebugMode is active, so the debug
 // visualization baked into reflBuffer by the rgen replaces the lit scene instead
 // of adding onto it.
 // ---------------------------------------------------------------------------
@@ -2909,7 +2897,7 @@ static void VK_RT_InitReflCompositePipeline(void)
 
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.reflCompositePipeline));
 
-    // --- Debug variant: blend disabled (replace), so r_rtReflectionDebugMode 2-8's
+    // --- Debug variant: blend disabled (replace), so r_rtReflectionDebugMode's
     // visualization (baked into reflBuffer by the rgen) isn't muddied by additive
     // blending onto the already-lit scene. ---
     VkPipelineColorBlendAttachmentState replaceBlend = {};
@@ -2986,7 +2974,7 @@ void VK_RT_CompositeReflections(VkCommandBuffer cmd)
     // Update the descriptor set for this frame slot. The reflection image may
     // have been recreated (resize), so always write it before drawing.
     // VK_RT_GetReflReadView: reflHistory when the denoiser is on and valid (except
-    // debug modes 2-10, 12 and 13, which are rgen's own unfiltered per-frame visualizations).
+    // debug modes 2-4, 6, 12 and 13, which are rgen's own unfiltered per-frame visualizations).
     VkDescriptorImageInfo imgInfo = {};
     imgInfo.sampler = vkRT.reflSampler;
     imgInfo.imageView = VK_RT_GetReflReadView(frameIdx);

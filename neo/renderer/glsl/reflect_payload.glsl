@@ -13,7 +13,7 @@
     hitT          — Distance to the hit (gl_RayTmaxEXT on a miss). Occludes the
                     projectile glow discs in reflect_ray.rgen (rt_emitter.glsl).
     hitFlags      — MAT_FLAG_* of the hit material (reflect_ray.rchit); 0 on a miss.
-                    Read by r_rtReflectionDebugMode 10.
+                    The rgen reads MAT_FLAG_GUI_LIVE for the live-screen gain.
     lightSeed     — Set by the rgen: per-pixel, per-frame seed for stochastic light picks.
     lightPicks    — Set by the rgen: shadow rays per hit (1-2, stochastic) or 0 for the
                     deterministic loop. Glass rays always 0 — no à-trous absorbs their noise.
