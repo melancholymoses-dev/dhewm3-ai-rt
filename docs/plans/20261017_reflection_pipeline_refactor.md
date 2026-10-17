@@ -102,9 +102,36 @@ wall and a multi-light room. `REFLECTIONS` ms drops. No new light leaking throug
 
 ## Stage 2 — Demodulation; trace mask off per-pixel F0
 
+### 2a — Octahedral normal frees a channel (no image change)
+
+`gbufNormal` (RGBA8) stores a 2-DoF unit normal in 3 channels. Octahedral encoding fits it
+in RG (~1° worst case, comparable to today). No spare bit exists elsewhere: `gbufAlbedo`
+alpha is full (class + roughness), `motionVectors` is RG16F.
+
+| Channel | Before | After |
+|---|---|---|
+| RG | normal xy | octahedral normal |
+| B | normal z | coarse F0, written ≤ 254/255 |
+| A | fine F0 | fine F0 |
+
+"Never written" sentinel moves from rgb = 0.5 (a valid oct code) to **B = 1.0**: clear
+value and null image become (0.5, 0.5, 1.0, 0.0). Self-contained, no new bindings.
+
 | File | Change |
 |---|---|
-| `gbuffer.frag`, `gbuffer_clip.frag` | Also write a coarse-mip F0 (`textureLod` at a fixed mip, like the roughness estimate) — where it fits in the G-buffer is decided here |
+| `rt_gbuf_normal.glsl` | Owns the format: `GBuf_EncodeNormal`, `GBuf_DecodeNormal`, `GBuf_NormalValid`. Oct math moves here from `gi_probe_common.glsl` (`gip_Oct*` call it) |
+| `gbuffer.frag`, `gbuffer_clip.frag` | Write via the helper; B = 0 until 2b |
+| `reflect_ray.rgen` (decode + debug 4), `refl_temporal_resolve.comp`, `refl_atrous.comp` | Inline decodes → helper |
+| `vk_backend.cpp` clear value, `vk_reflections.cpp` null image | New sentinel |
+
+**Check:** debug 2 (normals) and 4 (coverage) look as before; AO/GI/reflection screenshots
+unchanged; `grep -rn "rgb \* 2.0 - 1.0" neo/renderer/glsl` finds no G-buffer decode.
+
+### 2b — Coarse F0 and demodulation
+
+| File | Change |
+|---|---|
+| `gbuffer.frag`, `gbuffer_clip.frag` | B = F0 from the specular map at a fixed `textureLod` mip (as the roughness estimate) |
 | `reflect_ray.rgen` | Opaque cull uses coarse F0. Store `light × blend` (no Fresnel); alpha = per-pixel Fresnel weight from fine F0. Ceiling applied to the demodulated value (retune) |
 | `refl_temporal_resolve.comp`, `refl_atrous.comp` | Validity = alpha > 0 as today; they now filter incident light only |
 | `refl_composite.frag` | `rgb × alpha`, then add |
@@ -120,7 +147,7 @@ still visible in the final composite (comes back from fine F0). Debug 3 unchange
 Worth doing: the raw-depth stop does nothing past ~20 units, and Stage 4's upsample needs
 the same stops to stay on one surface.
 
-Implemented 2026-10-17, awaiting build. Plane distance replaces `|Δz|/z`: a relative depth
+Done 2026-10-17, verified by eye (debug 15 + final image). Plane distance replaces `|Δz|/z`: a relative depth
 stop also blocks grazing floors, where depth changes fast per pixel along one plane.
 
 | File | Change |

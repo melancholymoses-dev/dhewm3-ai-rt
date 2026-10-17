@@ -25,7 +25,8 @@ Anything that fights these gets cut or demoted.
 5. **No map editing.** Engine-side rules, budgets and debug overlays. Small def-file mods
    are allowed.
 6. **Debug visualization before tuning.** Every feature ships with an overlay mode;
-   constants get tuned from the overlay, not by eye on the final composite.
+   constants get tuned from the overlay, not by eye on the final composite. Overlays are
+   scaffolding: delete one once its feature is settled, and never let one constrain a design.
 7. **Optimization means the same image for less work.** Turning a feature down is not an
    optimization — pure black renders very fast. A change that alters the image is a quality
    setting and must be an explicit opt-in with its own cvar, never a default. Corollary for
@@ -72,6 +73,7 @@ Re-litigate only with new measurements.
 | **Patch vertex normals can invent curvature on flat glass; tell creases from arcs by symmetry, not angle** | `GenerateNormals` averages across a patch crease, and a one-row flat facet then ramps its normal across its whole height — an inverting lens. Deviation size overlaps real arcs (both ~5°); lopsided per-triangle vertex tilt doesn't (`r_rtGlassNormalMode 2`) |
 | **F0 and roughness are independent, and GGX needs both** | F0 is reflectance at normal incidence, roughness is lobe width. Doom 3 has no per-material gloss (one global NdotH table), and the specular map is already spent on F0 — so roughness comes from bump-map normal variance, which is real data the assets carry |
 | **The opaque-reflection firefly clamp runs every à-trous pass (1/2/4) with no absolute floor** | A floor or a pass-0-only clamp "to preserve real highlights" left white specks on black and outlined railings. Single-sample GGX reflections aren't physical enough for isolated highlights to be trusted |
+| **Screen-space filter edge stops use plane distance, not depth** | `|dot(pT − pC, nGeo)| / viewDist` with `nGeo` from depth. Raw NDC depth is dead past ~20 units; relative depth blocks grazing floors. The bump-mapped G-buffer normal only for the normal stop, at low power (~4) |
 | **Opaque reflections clamp fireflies before temporal accumulation, and get no variance-boosted alpha** | An unclamped spike enters history and lingers ~1/alpha frames. The variance boost (built for moving glass) gave the noisiest GGX pixels alpha ≈ 1, so they flickered through unaveraged |
 
 ---
