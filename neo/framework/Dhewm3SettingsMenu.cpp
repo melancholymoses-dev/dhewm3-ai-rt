@@ -1859,7 +1859,8 @@ static CVarOption controlOptions[] = {
     CVarOption("pad_weapGroups", "D-pad weapon groups (bind D-pad to _impulse30-33)", OT_BOOL),
     CVarOption("pad_weapCommitMs", "Switch delay after last press (ms)", OT_INT, 0, 1000),
     CVarOption("pad_weapOverlay", "Show weapon selector", OT_BOOL),
-    CVarOption("pad_weapGroupShoulderStep", "Shoulder buttons step within selector instead of cycling all weapons", OT_BOOL),
+    CVarOption("pad_weapGroupShoulderStep", "Shoulder buttons step within selector instead of cycling all weapons",
+               OT_BOOL),
 
     CVarOption("Gamepad Rumble"),
     CVarOption("joy_rumbleEnable", "Enable rumble", OT_BOOL),
@@ -2510,7 +2511,6 @@ struct RTCVars
     idCVar *rtReflAtrousIterations = nullptr;
     idCVar *rtReflAtrousRoughnessGain = nullptr;
     idCVar *rtReflAtrousFireflyClamp = nullptr;
-    idCVar *rtReflAtrousFireflyFloor = nullptr;
     idCVar *rtReflRoughnessFloor = nullptr;
     idCVar *rtReflRoughnessScale = nullptr;
     idCVar *rtReflMaxLuminance = nullptr;
@@ -2655,7 +2655,6 @@ static void InitRTOptionsMenu()
     rtCVars.rtReflAtrousIterations = cvarSystem->Find("r_rtReflAtrousIterations");
     rtCVars.rtReflAtrousRoughnessGain = cvarSystem->Find("r_rtReflAtrousRoughnessGain");
     rtCVars.rtReflAtrousFireflyClamp = cvarSystem->Find("r_rtReflAtrousFireflyClamp");
-    rtCVars.rtReflAtrousFireflyFloor = cvarSystem->Find("r_rtReflAtrousFireflyFloor");
     rtCVars.rtReflRoughnessFloor = cvarSystem->Find("r_rtReflRoughnessFloor");
     rtCVars.rtReflRoughnessScale = cvarSystem->Find("r_rtReflRoughnessScale");
     rtCVars.rtReflMaxLuminance = cvarSystem->Find("r_rtReflMaxLuminance");
@@ -2880,15 +2879,13 @@ static void DrawRTOptionsMenu()
         RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 5.0f, "%.2f");
         RTSliderFloat("Reflection Roughness Floor", rtCVars.rtReflRoughnessFloor, 0.0f, 1.0f, "%.2f");
         RTSliderFloat("Reflection Roughness Scale", rtCVars.rtReflRoughnessScale, 0.0f, 4.0f, "%.2f");
-        RTSliderFloat("Reflection Max Luminance", rtCVars.rtReflMaxLuminance, 0.0f, 16.0f, "%.1f");
+        RTSliderFloat("Reflection Max Luminance", rtCVars.rtReflMaxLuminance, 0.0f, 2.0f, "%.1f");
         RTCheckbox("Light Shafts in Reflections", rtCVars.rtReflVol);
         ImGui::BeginDisabled(!(rtCVars.rtReflVol && rtCVars.rtReflVol->GetBool()));
         RTSliderInt("Shaft Samples per Ray", rtCVars.rtReflVolSteps, 1, 32);
         ImGui::EndDisabled();
-        static const char *const glassNormalModes[] = {"Smooth (interpolated)", "Flat (face normal)",
-                                                       "Crease-aware"};
-        RTCombo("Glass Reflection Normal", rtCVars.rtGlassNormalMode, glassNormalModes,
-                IM_ARRAYSIZE(glassNormalModes));
+        static const char *const glassNormalModes[] = {"Smooth (interpolated)", "Flat (face normal)", "Crease-aware"};
+        RTCombo("Glass Reflection Normal", rtCVars.rtGlassNormalMode, glassNormalModes, IM_ARRAYSIZE(glassNormalModes));
         ImGui::BeginDisabled(!(rtCVars.rtGlassNormalMode && rtCVars.rtGlassNormalMode->GetInteger() == 2));
         RTSliderFloat("Glass Crease Ratio", rtCVars.rtGlassCreaseRatio, 0.0f, 1.0f, "%.2f");
         ImGui::EndDisabled();
@@ -2901,7 +2898,6 @@ static void DrawRTOptionsMenu()
         RTSliderInt("Spatial Filter Passes", rtCVars.rtReflAtrousIterations, 0, 8);
         RTSliderFloat("Spatial Filter Wash", rtCVars.rtReflAtrousRoughnessGain, 0.5f, 8.0f, "%.1f");
         RTSliderFloat("Firefly Clamp", rtCVars.rtReflAtrousFireflyClamp, 0.0f, 8.0f, "%.1f");
-        RTSliderFloat("Firefly Clamp Floor", rtCVars.rtReflAtrousFireflyFloor, 0.0f, 4.0f, "%.2f");
         ImGui::EndDisabled();
 
         ImGui::EndTable();

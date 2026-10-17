@@ -164,18 +164,12 @@ idCVar r_rtReflAtrousRoughnessGain("r_rtReflAtrousRoughnessGain", "3.0", CVAR_RE
                             "r_rtReflDenoise 2 only. Multiplies roughness before the spatial filter's mix()\n"
                             "gate, so moderately rough surfaces reach a full wash sooner than roughness\n"
                             "alone would. Roughness 0 (glass, screens) is unaffected and always stays sharp.");
-idCVar r_rtReflAtrousFireflyClamp("r_rtReflAtrousFireflyClamp", "3.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                            "r_rtReflDenoise 2 only. A pixel brighter than its own 3x3 neighbours' mean\n"
-                            "luminance by more than this factor is scaled down to that cap before the\n"
-                            "blend — tames single-sample GGX fireflies (a wide lobe with no light\n"
-                            "importance sampling occasionally lands on something far brighter than its\n"
-                            "surroundings) that the luminance edge-stop alone can't remove. 0 disables.\n"
-                            "Only applied on the filter's first pass — see r_rtReflAtrousFireflyFloor.");
-idCVar r_rtReflAtrousFireflyFloor("r_rtReflAtrousFireflyFloor", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                            "r_rtReflAtrousFireflyClamp's cap never goes below this. Without a floor, a\n"
-                            "real small highlight with no bright neighbours (a light glinting off dark\n"
-                            "metal) sits in a near-black 3x3 mean and gets crushed toward 0 instead of\n"
-                            "merely capped — the opposite of what the clamp is for.");
+idCVar r_rtReflAtrousFireflyClamp("r_rtReflAtrousFireflyClamp", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                            "r_rtReflDenoise 2 only. Each 3x3 tap is capped at this factor times the\n"
+                            "second-brightest tap's luminance before the blend, so a lone bright texel\n"
+                            "(a single-sample GGX firefly) drops to its brightest neighbour's level.\n"
+                            "1 = remove lone texels outright; higher lets them stand out. 0 disables.\n"
+                            "Applied on every pass, with no absolute floor.");
 
 // Stage 2 (20261013_reflection_roughness.md). The Toksvig estimate (gbuffer.frag) is a
 // specular-AA signal — it only measures bump-map normal variance, so a flat/clean bump
@@ -1500,12 +1494,12 @@ static void VK_RT_InitReflAtrousPipeline(void)
     layoutCI.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.reflAtrousDescLayout));
 
-    // Push constants: 48 bytes — gi_atrous.comp's 40-byte PC block plus trailing
-    // fireflyClamp/fireflyFloor floats (see refl_atrous.comp).
+    // Push constants: 44 bytes — gi_atrous.comp's 40-byte PC block plus a trailing
+    // fireflyClamp float (see refl_atrous.comp).
     VkPushConstantRange pushRange = {};
     pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushRange.offset = 0;
-    pushRange.size = 48;
+    pushRange.size = 44;
 
     VkPipelineLayoutCreateInfo plCI = {};
     plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -2621,7 +2615,6 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
     const float sigmaZ = r_rtReflAtrousSigmaZ.GetFloat();
     const float roughnessGain = r_rtReflAtrousRoughnessGain.GetFloat();
     const float fireflyClamp = r_rtReflAtrousFireflyClamp.GetFloat();
-    const float fireflyFloor = r_rtReflAtrousFireflyFloor.GetFloat();
 
     const uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
     const uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
@@ -2646,9 +2639,8 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
             int32_t scissorExtentX;
             int32_t scissorExtentY;
             float fireflyClamp;
-            float fireflyFloor;
         } pc;
-        static_assert(sizeof(pc) == 48, "AtrousReflPC size mismatch");
+        static_assert(sizeof(pc) == 44, "AtrousReflPC size mismatch");
 
         pc.stepSize = 1 << pass;
         pc.sigmaL = sigmaL;
@@ -2661,11 +2653,10 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
         pc.scissorExtentX = (int32_t)dispatchRect.extent.width;
         pc.scissorExtentY = (int32_t)dispatchRect.extent.height;
         pc.fireflyClamp = fireflyClamp;
-        pc.fireflyFloor = fireflyFloor;
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.reflAtrousPipelineLayout, 0, 1,
                                 &vkRT.reflAtrousDescSets[frameIdx][descIdx], 0, NULL);
-        vkCmdPushConstants(cmd, vkRT.reflAtrousPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 48, &pc);
+        vkCmdPushConstants(cmd, vkRT.reflAtrousPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 44, &pc);
         vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
         const bool isLastPass = (pass == iters - 1);

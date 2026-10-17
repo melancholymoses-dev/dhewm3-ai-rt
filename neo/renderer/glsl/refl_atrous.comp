@@ -26,9 +26,9 @@ that was deliberately culled for having no F0).
 
 A local firefly clamp (r_rtReflAtrousFireflyClamp) runs before the blend: a single
 GGX sample with no light importance sampling occasionally points straight at
-something much brighter than its surroundings, and the edge-stopped blend alone
-can't remove that (an outlier gets near-zero weight against its neighbours, so it
-survives unblurred as its own centre value). See the comment at its use site.
+something much brighter than its surroundings. Every tap is capped at the 3x3's
+second-brightest luminance, which removes lone texels outright. The luminance
+edge-stop fades out with roughness so rough surfaces get a plain depth-stopped wash.
 
 Inputs (set 0):
   binding 0 (combined image sampler)          — reflection buffer for this pass (ping-pong)
@@ -36,8 +36,7 @@ Inputs (set 0):
   binding 2 (combined image sampler)           — scene depth buffer
   binding 3 (combined image sampler)           — gbufAlbedo (alpha = packed class + roughness)
 
-Push constants: 48 bytes — gi_atrous.comp's PC block plus trailing fireflyClamp/fireflyFloor
-floats.
+Push constants: 44 bytes — gi_atrous.comp's PC block plus a trailing fireflyClamp float.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -72,8 +71,6 @@ layout(push_constant) uniform PC {
     int   scissorExtentX;
     int   scissorExtentY;
     float fireflyClamp;   // r_rtReflAtrousFireflyClamp — see the clamp below; 0 disables
-    float fireflyFloor;   // r_rtReflAtrousFireflyFloor — absolute floor under the clamp's
-                           // neighbourhood-mean cap, see the clamp below
 } pc;
 
 const float K[3][3] = float[3][3](
@@ -156,41 +153,35 @@ void main()
         }
     }
 
-    // Firefly clamp: a single-sample GGX lobe with no light importance sampling
-    // occasionally points straight at something far brighter than everything around
-    // it (a nearby light, a hot emissive) — a real bright surface lights up its whole
-    // neighbourhood together, not one texel, so anything that outshines its own
-    // neighbours' mean by more than fireflyClamp is the sampling artifact, not the
-    // surface. The luminance edge-stop below can't catch this on its own: an outlier
-    // has near-zero weight against normal neighbours, so it just survives as its own
-    // unblurred centre value — this runs first so the blend never sees the spike.
-    // Reference mean excludes the centre tap itself so a firefly can't inflate its
-    // own ceiling. 0 disables.
+    // Firefly clamp: every tap is capped at the second-brightest valid tap's luminance
+    // (times fireflyClamp). A lone bright texel, centre or neighbour, drops to the next
+    // brightest, so it neither survives nor bleeds into the blur. Features two or more
+    // taps wide keep their level. 0 disables.
     //
-    // Only runs on pass 0 (stepSize 1): the step width (and so the cap) grows every
-    // pass, and re-applying it would wear down a thin bright feature (a reflected
-    // light strip, a glint) a bit more each iteration for no benefit — one clamp
-    // before the first blend is enough, later passes just blend the already-clamped
-    // result.
-    //
-    // fireflyFloor keeps the cap from collapsing toward 0 when the whole neighbourhood
-    // is near-black (a single light glinting off dark metal, say): without it, a
-    // legitimate small highlight with no bright neighbours gets crushed to near
-    // nothing, which is the opposite of what this is for.
-    if (pc.fireflyClamp > 0.0 && pc.stepSize == 1)
+    // Runs every pass with no absolute floor on purpose: limiting it to pass 0 or
+    // flooring the cap left isolated white specks and outlined railings.
+    if (pc.fireflyClamp > 0.0)
     {
-        float meanLum = 0.0;
-        float validCount = 0.0;
+        float max1 = -1.0;
+        float max2 = -1.0;
         for (int i = 0; i < 9; i++)
         {
-            if (i == 4 || !tapValid[i])
+            if (!tapValid[i])
                 continue;
-            meanLum += luminance(tapColour[i]);
-            validCount += 1.0;
+            float l = luminance(tapColour[i]);
+            if (l > max1)
+            {
+                max2 = max1;
+                max1 = l;
+            }
+            else if (l > max2)
+            {
+                max2 = l;
+            }
         }
-        if (validCount > 0.0)
+        if (max2 >= 0.0)
         {
-            float cap = max((meanLum / validCount) * pc.fireflyClamp, pc.fireflyFloor);
+            float cap = max2 * pc.fireflyClamp;
             for (int i = 0; i < 9; i++)
             {
                 float l = luminance(tapColour[i]);
@@ -204,6 +195,11 @@ void main()
     }
 
     float lCenter = luminance(cCenter);
+
+    // roughnessGain lets a moderately-rough surface reach full blend before
+    // roughness itself hits 1.0 — roughness 0 is still excluded above, so glass
+    // and screens stay untouched regardless of the gain setting.
+    float gated = clamp(roughness * pc.roughnessGain, 0.0, 1.0);
 
     vec3  accumColour = vec3(0.0);
     float accumWeight = 0.0;
@@ -220,7 +216,9 @@ void main()
             float sDepth  = tapDepth[idx];
 
             float dl = lCenter - luminance(sColour);
-            float wL = exp(-(dl * dl) / sigmaL2);
+            // Fades out with roughness: a rough reflection has no edges worth keeping,
+            // and the stop would otherwise shield any bright outlier from the blur.
+            float wL = mix(exp(-(dl * dl) / sigmaL2), 1.0, gated);
 
             float dd = dCenter - sDepth;
             float wD = exp(-(dd * dd) / sigmaZ2);
@@ -233,10 +231,6 @@ void main()
     }
 
     vec3 filtered = (accumWeight > 0.0001) ? (accumColour / accumWeight) : cCenter;
-    // roughnessGain lets a moderately-rough surface reach full blend before
-    // roughness itself hits 1.0 — roughness 0 is still excluded above, so glass
-    // and screens stay untouched regardless of the gain setting.
-    float gated   = clamp(roughness * pc.roughnessGain, 0.0, 1.0);
     vec3 result   = mix(cCenter, filtered, gated);
     imageStore(reflDst, coord, vec4(result, cFull.a));
 }

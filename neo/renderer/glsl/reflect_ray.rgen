@@ -484,10 +484,16 @@ void main()
     if (!isGlass)
     {
         float NdotV = clamp(dot(reflNormal, -viewDir), 0.0, 1.0);
-        // Schlick (Stage 3) — replaces the old grazingGain/grazingMax/smoothstep stack,
-        // which existed only to tame full-screen opaque reflections before real
-        // roughness existed to do that job physically (r_rtSpecGrazingMax/Gain retired).
-        fresnel = f0 + (1.0 - f0) * pow(1.0 - NdotV, 5.0);
+        // `roughness` was fetched up top, alongside f0, for Stage 4's ceiling check.
+        // r_rtReflRoughnessScale retunes Stage 2's packed roughness before the standard
+        // perceptual-roughness-squared remap to GGX alpha.
+        float perceptualRoughness = clamp(roughness * params.roughnessScale, 0.0, 1.0);
+
+        // Roughness-aware Schlick (split-sum IBL form): the grazing limit is
+        // max(1 - roughness, f0) instead of 1, so rough painted metal and grates
+        // don't turn into bright mirrors at grazing angles.
+        float fGrazing = max(1.0 - perceptualRoughness, f0);
+        fresnel = f0 + (fGrazing - f0) * pow(1.0 - NdotV, 5.0);
 
         if (fresnel * params.reflBlend < params.minWeight)
         {
@@ -499,10 +505,6 @@ void main()
         // strategy as gi_ray.rgen so the noise is stable under a static camera and
         // decorrelates frame to frame — Stage 1's temporal denoiser resolves the
         // resulting variance over frames rather than this file sampling more of them.
-        // `roughness` was fetched up top, alongside f0, for Stage 4's ceiling check.
-        // r_rtReflRoughnessScale retunes Stage 2's packed roughness before the standard
-        // perceptual-roughness-squared remap to GGX alpha.
-        float perceptualRoughness = clamp(roughness * params.roughnessScale, 0.0, 1.0);
         float alpha = perceptualRoughness * perceptualRoughness;
 
         uint  seed      = rt_WorldAnchoredSeed(worldPos, params.frameIndex);

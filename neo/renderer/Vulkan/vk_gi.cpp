@@ -85,9 +85,9 @@ static idCVar r_rtGIFalloffReach("r_rtGIFalloffReach", "1.0", CVAR_RENDERER | CV
                                  "1.0 = stop at the box face (vanilla containment), 1.5 = initial RT throw");
 
 static idCVar r_rtReflAmbientScale(
-    "r_rtReflAmbientScale", "0.15", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+    "r_rtReflAmbientScale", "0.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
     "Fraction of a shadowed light's contribution reflect_ray/player_reflect still add (0 = hard "
-    "shadow, 1 = unshadowed)");
+    "shadow, 1 = unshadowed). Nonzero leaks light through walls and floors into reflections.");
 
 static idCVar r_rtGIMaxBounceLights(
     "r_rtGIMaxBounceLights", "16", CVAR_RENDERER | CVAR_INTEGER,

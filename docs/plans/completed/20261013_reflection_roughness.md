@@ -296,8 +296,8 @@ alone:
 | Fix | File |
 |---|---|
 | GGX VNDF sampling can return a direction below the macro surface (reflect() around a half-vector that's only guaranteed visible, not the reflection itself) — ray heads back into the surface, reads as a dark speckle or a leak into the next room. Falls back to the mirror direction when `dot(reflDir, reflNormal) <= 0` | `reflect_ray.rgen` |
-| Firefly clamp's cap (`meanLum * fireflyClamp`) could collapse toward 0 in a near-black neighbourhood, crushing a legitimate small highlight instead of merely capping it. Added `r_rtReflAtrousFireflyFloor` (default 0.5) as a hard floor under the cap | `refl_atrous.comp`, `vk_reflections.cpp` |
-| Firefly clamp ran every pass; step width (and the cap) grows each pass, wearing down a thin bright feature (a reflected light strip) further each time for no benefit. Now `pc.stepSize == 1` only | `refl_atrous.comp` |
+| ~~Firefly clamp floor `r_rtReflAtrousFireflyFloor`~~ — **reverted**: white specks on black, outlined railings. Cap is `meanLum * fireflyClamp` with no floor | `refl_atrous.comp`, `vk_reflections.cpp` |
+| ~~Firefly clamp on pass 0 only~~ — **reverted**: same artifacts. Clamp runs every pass (steps 1/2/4) | `refl_atrous.comp` |
 | `VK_RT_DispatchReflAtrous` had no same-frame dedup guard (`VK_RT_DispatchReflTemporal` has one) — a weapon subview would re-run all N passes a second time this frame and silently double the GPU cost (same output, since the ping-pong buffers end up in the same state) | `vk_reflections.cpp` |
 | `albedoInfo.imageView` bound `vkRT.gbufAlbedo[frameIdx].view` with no null check, unlike the temporal pass's own gbuf views — a validation error (possibly worse) if that allocation ever failed | `vk_reflections.cpp` |
 

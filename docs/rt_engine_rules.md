@@ -66,6 +66,7 @@ Re-litigate only with new measurements.
 | **A reflection threshold cannot open opaque surfaces** | The worst artifacts are the *highest*-F0 pixels while any threshold culls from the bottom. Only changing the reflection's character (roughness) can |
 | **Patch vertex normals can invent curvature on flat glass; tell creases from arcs by symmetry, not angle** | `GenerateNormals` averages across a patch crease, and a one-row flat facet then ramps its normal across its whole height — an inverting lens. Deviation size overlaps real arcs (both ~5°); lopsided per-triangle vertex tilt doesn't (`r_rtGlassNormalMode 2`) |
 | **F0 and roughness are independent, and GGX needs both** | F0 is reflectance at normal incidence, roughness is lobe width. Doom 3 has no per-material gloss (one global NdotH table), and the specular map is already spent on F0 — so roughness comes from bump-map normal variance, which is real data the assets carry |
+| **The opaque-reflection firefly clamp runs every à-trous pass (1/2/4) with no absolute floor** | A floor or a pass-0-only clamp "to preserve real highlights" left white specks on black and outlined railings. Single-sample GGX reflections aren't physical enough for isolated highlights to be trusted |
 
 ---
 
