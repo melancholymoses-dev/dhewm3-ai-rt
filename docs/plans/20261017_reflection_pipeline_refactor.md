@@ -72,7 +72,16 @@ If not, re-order the stages to match.
 
 ## Stage 1 — Stochastic lights at reflection hits
 
-Implemented 2026-10-17, awaiting build + A/B. Default `r_rtReflShadowPicks 0` (taste #7).
+Implemented 2026-10-17. Default `r_rtReflShadowPicks 0` (taste #7) until the converged A/B
+below is done. Slow, mchq, vs `mchq.csv` (picks 0):
+
+| ms | picks 0 | picks 1 (`mchq1.csv`) | picks 2 (`mchq2.csv`) |
+|---|---|---|---|
+| `gpu.Refl` p50 / p95 | 10.09 / 13.39 | **7.47 / 9.35** | 9.07 / 11.81 |
+| `frame.backend` p50 | 18.0 | 15.2 | 16.9 |
+
+Picks 2 ran a lighter path (`ring.draws` −16%), so its gain is if anything overstated.
+~7.5 ms remains with one shadow ray per hit: the reflection ray itself now dominates (Stage 4).
 
 | File | Change |
 |---|---|
@@ -111,15 +120,21 @@ still visible in the final composite (comes back from fine F0). Debug 3 unchange
 Worth doing: the raw-depth stop does nothing past ~20 units, and Stage 4's upsample needs
 the same stops to stay on one surface.
 
+Implemented 2026-10-17, awaiting build. Plane distance replaces `|Δz|/z`: a relative depth
+stop also blocks grazing floors, where depth changes fast per pixel along one plane.
+
 | File | Change |
 |---|---|
-| `refl_atrous.comp` | Linearize depth (near plane from a push constant); stop on `|Δz| / z`. Add normal stop `pow(max(dot(nC, nT), 0), k)` |
-| `vk_reflections.cpp` | Bind `gbufNormal`; `r_rtReflAtrousSigmaZ` becomes relative (default ~0.02); `k` fixed (~32) |
+| `refl_atrous.comp` | World positions from depth (`invViewProj` push constant). Plane stop: `|dot(pT − pC, nGeo)| / viewDist`, `nGeo` from depth (shading normal would put bump detail into it). Normal stop `dot(nC, nT)^k` on the G-buffer normal. Debug 15: step-1 edge weight |
+| `vk_reflections.cpp` | Bind `gbufNormal` (binding 4). PC 48 → 112 bytes. `r_rtReflAtrousSigmaZ` → `r_rtReflAtrousSigmaPlane` (0.02); `r_rtReflAtrousNormalPower` (4 — low because bumps vary the shading normal; 90° creases cut at any k). Shared `VK_RT_ReflInvViewProj` |
+| `vk_raytracing.h` | `REFL_DEBUG_MAX_MODE` 15 |
 
 Follow-up, separate change: `gi_atrous.comp` uses the same raw-depth convention.
 
-**Check:** a rail crossing a reflective floor at 100+ units: no halo of floor reflection on the
-rail, no rail colour bleeding into the floor. Floor/wall crease stays split.
+**Check:** debug 15: floors white out to 100+ units, rails and creases outlined dark, no
+bump pattern on rough panels (lower NormalPower if there is). Then the final image: a rail
+crossing a reflective floor at 100+ units: no halo of floor reflection on the rail, no rail
+colour bleeding into the floor. Floor/wall crease stays split.
 
 ---
 

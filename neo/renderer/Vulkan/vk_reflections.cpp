@@ -158,7 +158,7 @@ idCVar r_rtReflDenoise("r_rtReflDenoise", "2", CVAR_RENDERER | CVAR_INTEGER | CV
                        "2 = temporal + roughness-gated à-trous spatial filter (VK_RT_DispatchReflAtrous):\n"
                        "    a roughness-0 pixel is untouched, a rough pixel is blended with its neighbours\n"
                        "    in proportion to roughness * r_rtReflAtrousRoughnessGain. Tune with\n"
-                       "    r_rtReflAtrousIterations/SigmaZ/RoughnessGain/FireflyClamp.",
+                       "    r_rtReflAtrousIterations/SigmaPlane/NormalPower/RoughnessGain/FireflyClamp.",
                        0, 2);
 idCVar r_rtReflDenoiseAlpha("r_rtReflDenoiseAlpha", "0.3", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                             "Opaque-surface EMA alpha: 0=use only history, 1=use only current frame. Fixed —\n"
@@ -172,9 +172,17 @@ idCVar r_rtReflAtrousIterations("r_rtReflAtrousIterations", "3", CVAR_RENDERER |
                                 "r_rtReflDenoise 2 only. À-trous passes (0-8); effective radius is 2^N - 1 pixels.\n"
                                 "Same default as r_rtGIAtrousIterations.",
                                 0, 8);
-idCVar r_rtReflAtrousSigmaZ("r_rtReflAtrousSigmaZ", "0.01", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                            "r_rtReflDenoise 2 only. Depth edge-stop bandwidth (NDC) — keeps the blur from\n"
-                            "crossing a silhouette edge onto an unrelated surface.");
+// Refl-refactor Stage 3 replaces r_rtReflAtrousSigmaZ (raw NDC depth, dead past ~20 units).
+idCVar r_rtReflAtrousSigmaPlane("r_rtReflAtrousSigmaPlane", "0.02", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                                "r_rtReflDenoise 2 only. Edge stop on a tap's distance from the centre pixel's\n"
+                                "plane, as a fraction of view distance. Lower = stops sooner at rails and steps.\n"
+                                "Tune with r_rtReflectionDebugMode 15.",
+                                0.001f, 1.0f);
+idCVar r_rtReflAtrousNormalPower("r_rtReflAtrousNormalPower", "4", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                                 "r_rtReflDenoise 2 only. Normal edge stop = dot(nCentre, nTap)^this, on the\n"
+                                 "bump-mapped normal. Splits creases; too high breaks the wash up along bump\n"
+                                 "detail. Tune with r_rtReflectionDebugMode 15.",
+                                 0.0f, 64.0f);
 idCVar r_rtReflAtrousRoughnessGain("r_rtReflAtrousRoughnessGain", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                                    "r_rtReflDenoise 2 only. Multiplies roughness before the spatial filter's mix()\n"
                                    "gate, so moderately rough surfaces reach a full wash sooner than roughness\n"
@@ -250,6 +258,10 @@ idCVar r_rtReflectionDebugMode(
     "14 = à-trous branch view (needs r_rtReflDenoise 2): grey = glass, dark blue = untraced,\n"
     "    red = roughness 0 (filter skipped), yellow = traced but no traced neighbour (blur is a\n"
     "    no-op), green = filtered, brighter = more of the blurred result used.\n"
+    "15 = à-trous edge-stop weight (needs r_rtReflDenoise 2): grey level = mean step-1 weight\n"
+    "    over traced neighbours, white = blends freely, black = stopped. Floors should be\n"
+    "    white, rails and creases outlined dark. Yellow = no traced neighbour; untraced/glass\n"
+    "    as mode 14. Tune r_rtReflAtrousSigmaPlane/NormalPower here.\n"
     "Modes 2-10, 12 and 13 require r_rtReflections 1 — they ride on the reflection ray\n"
     "dispatch, force the full-screen launch grid, and are displayed via refl_composite.frag\n"
     "with blending disabled (replace, not add). The per-surface glass overlay is suppressed\n"
@@ -1482,6 +1494,28 @@ static void VK_RT_InitReflTemporalPipeline(void)
 // VK_RT_InitReflAtrousPipeline (r_rtReflDenoise 2, Stage 1 addendum)
 // ---------------------------------------------------------------------------
 
+static const uint32_t REFL_ATROUS_PC_SIZE = 112;
+
+// Inverse of this view's GL-convention view-projection, column-major, as the
+// reflection shaders' rt_ReconstructWorldPos expects.
+static void VK_RT_ReflInvViewProj(const viewDef_t *viewDef, float out[16])
+{
+    const float *proj = viewDef->projectionMatrix;
+    const float *mv = viewDef->worldSpace.modelViewMatrix;
+    float vp[16];
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++)
+        {
+            vp[c * 4 + r] = 0.0f;
+            for (int k = 0; k < 4; k++)
+                vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
+        }
+    idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
+                 idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
+    idMat4 invVP = vpMat.Inverse();
+    memcpy(out, invVP.ToFloatPtr(), 16 * sizeof(float));
+}
+
 static void VK_RT_InitReflAtrousPipeline(void)
 {
     // refl_atrous.comp bindings:
@@ -1489,7 +1523,8 @@ static void VK_RT_InitReflAtrousPipeline(void)
     //   binding 1: STORAGE_IMAGE          — output reflection buffer (rgba16f, ping-pong)
     //   binding 2: COMBINED_IMAGE_SAMPLER — depth sampler
     //   binding 3: COMBINED_IMAGE_SAMPLER — gbufAlbedo (roughness gate)
-    VkDescriptorSetLayoutBinding bindings[4] = {};
+    //   binding 4: COMBINED_IMAGE_SAMPLER — gbufNormal (normal edge stop, Stage 3)
+    VkDescriptorSetLayoutBinding bindings[5] = {};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[0].descriptorCount = 1;
@@ -1510,18 +1545,22 @@ static void VK_RT_InitReflAtrousPipeline(void)
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
+    bindings[4].binding = 4;
+    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
     VkDescriptorSetLayoutCreateInfo layoutCI = {};
     layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutCI.bindingCount = 4;
+    layoutCI.bindingCount = 5;
     layoutCI.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.reflAtrousDescLayout));
 
-    // Push constants: 48 bytes — gi_atrous.comp's 40-byte PC block plus trailing
-    // fireflyClamp and debugMode (see refl_atrous.comp).
+    // Push constants: AtrousReflPC in VK_RT_DispatchReflAtrous (matches refl_atrous.comp).
     VkPushConstantRange pushRange = {};
     pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushRange.offset = 0;
-    pushRange.size = 48;
+    pushRange.size = REFL_ATROUS_PC_SIZE;
 
     VkPipelineLayoutCreateInfo plCI = {};
     plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1556,7 +1595,7 @@ static void VK_RT_InitReflAtrousPipeline(void)
     const int totalSets = VK_MAX_FRAMES_IN_FLIGHT * 3;
     VkDescriptorPoolSize poolSizes[2] = {};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[0].descriptorCount = 3 * totalSets; // src + depth + gbufAlbedo per set
+    poolSizes[0].descriptorCount = 4 * totalSets; // src + depth + gbufAlbedo + gbufNormal per set
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[1].descriptorCount = 1 * totalSets;
 
@@ -1908,23 +1947,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     VK_AllocUBOForShadow(&uboBuf, &uboOff, &uboMapped);
 
     ReflParamsUBO ubo = {};
-
-    {
-        const float *proj = viewDef->projectionMatrix;
-        const float *mv = viewDef->worldSpace.modelViewMatrix;
-        float vp[16];
-        for (int r = 0; r < 4; r++)
-            for (int c = 0; c < 4; c++)
-            {
-                vp[c * 4 + r] = 0.0f;
-                for (int k = 0; k < 4; k++)
-                    vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
-            }
-        idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
-                     idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
-        idMat4 invVP = vpMat.Inverse();
-        memcpy(ubo.invViewProj, invVP.ToFloatPtr(), 16 * sizeof(float));
-    }
+    VK_RT_ReflInvViewProj(viewDef, ubo.invViewProj);
 
     ubo.maxDist = Max(1.0f, r_rtReflectionDistance.GetFloat());
     ubo.frameIndex = (uint32_t)(tr.frameCount);
@@ -1946,8 +1969,8 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // by mode 1's glass-only rect or mode 3's roughness ceiling) — mode 13 is the one
     // exception, since it exists specifically to visualize that ceiling, so it forces
     // mode 3 regardless of what r_rtReflectionMode is actually set to.
-    // Mode 14 keeps the real mode so it classifies the pixels normal play traces.
-    if (reflDebugActive && reflDebugMode != 14)
+    // Modes 14/15 keep the real mode so they classify the pixels normal play traces.
+    if (reflDebugActive && reflDebugMode != 14 && reflDebugMode != 15)
         ubo.reflMode = (reflDebugMode == 13) ? 3 : 2;
     else
         ubo.reflMode = idMath::ClampInt(1, 3, r_rtReflectionMode.GetInteger());
@@ -2345,22 +2368,7 @@ void VK_RT_DispatchReflTemporal(VkCommandBuffer cmd, const viewDef_t *viewDef)
     VK_AllocUBOForShadow(&uboBuf, &uboOff, &uboMapped);
 
     ReflTemporalUBO ubo = {};
-    {
-        const float *proj = viewDef->projectionMatrix;
-        const float *mv = viewDef->worldSpace.modelViewMatrix;
-        float vp[16];
-        for (int r = 0; r < 4; r++)
-            for (int c = 0; c < 4; c++)
-            {
-                vp[c * 4 + r] = 0.0f;
-                for (int k = 0; k < 4; k++)
-                    vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
-            }
-        idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
-                     idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
-        idMat4 invVP = vpMat.Inverse();
-        memcpy(ubo.invViewProj, invVP.ToFloatPtr(), 16 * sizeof(float));
-    }
+    VK_RT_ReflInvViewProj(viewDef, ubo.invViewProj);
     memcpy(ubo.prevViewProj, viewDef->prevViewProjMatrix, 16 * sizeof(float));
     ubo.screenWidth = (int32_t)vk.renderExtent.width;
     ubo.screenHeight = (int32_t)vk.renderExtent.height;
@@ -2561,7 +2569,7 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkRTImage_t &bufB = vkRT.reflAtrousB[frameIdx];
     if (bufA.image == VK_NULL_HANDLE || bufB.image == VK_NULL_HANDLE)
         return;
-    if (vkRT.gbufAlbedo[frameIdx].view == VK_NULL_HANDLE)
+    if (vkRT.gbufAlbedo[frameIdx].view == VK_NULL_HANDLE || vkRT.gbufNormal[frameIdx].view == VK_NULL_HANDLE)
         return; // bound below with no other check — VK_RT_DispatchReflTemporal checks its
                 // own gbuf views the same way before dispatching
 
@@ -2603,6 +2611,11 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
         albedoInfo.imageView = vkRT.gbufAlbedo[frameIdx].view;
         albedoInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
+        VkDescriptorImageInfo normalInfo = {};
+        normalInfo.sampler = vkRT.depthSampler; // texelFetch ignores filter/wrap state
+        normalInfo.imageView = vkRT.gbufNormal[frameIdx].view;
+        normalInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
         VkDescriptorImageInfo srcInfos[3] = {};
         srcInfos[0] = {vkRT.reflSampler, VK_RT_GetReflReadView(frameIdx), VK_IMAGE_LAYOUT_GENERAL}; // temporal -> A
         srcInfos[1] = {vkRT.reflSampler, bufA.view, VK_IMAGE_LAYOUT_GENERAL};                       // A -> B
@@ -2613,46 +2626,37 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
         dstInfos[1] = {VK_NULL_HANDLE, bufB.view, VK_IMAGE_LAYOUT_GENERAL};
         dstInfos[2] = {VK_NULL_HANDLE, bufA.view, VK_IMAGE_LAYOUT_GENERAL};
 
-        VkWriteDescriptorSet writes[12] = {};
+        // Per set: binding 0 src, 1 dst, 2 depth, 3 gbufAlbedo, 4 gbufNormal.
+        VkWriteDescriptorSet writes[15] = {};
         for (int s = 0; s < 3; s++)
         {
-            VkDescriptorSet ds = vkRT.reflAtrousDescSets[frameIdx][s];
-
-            writes[s * 4 + 0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[s * 4 + 0].dstSet = ds;
-            writes[s * 4 + 0].dstBinding = 0;
-            writes[s * 4 + 0].descriptorCount = 1;
-            writes[s * 4 + 0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[s * 4 + 0].pImageInfo = &srcInfos[s];
-
-            writes[s * 4 + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[s * 4 + 1].dstSet = ds;
-            writes[s * 4 + 1].dstBinding = 1;
-            writes[s * 4 + 1].descriptorCount = 1;
-            writes[s * 4 + 1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            writes[s * 4 + 1].pImageInfo = &dstInfos[s];
-
-            writes[s * 4 + 2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[s * 4 + 2].dstSet = ds;
-            writes[s * 4 + 2].dstBinding = 2;
-            writes[s * 4 + 2].descriptorCount = 1;
-            writes[s * 4 + 2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[s * 4 + 2].pImageInfo = &depthInfo;
-
-            writes[s * 4 + 3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[s * 4 + 3].dstSet = ds;
-            writes[s * 4 + 3].dstBinding = 3;
-            writes[s * 4 + 3].descriptorCount = 1;
-            writes[s * 4 + 3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[s * 4 + 3].pImageInfo = &albedoInfo;
+            const VkDescriptorImageInfo *infos[5] = {&srcInfos[s], &dstInfos[s], &depthInfo, &albedoInfo,
+                                                     &normalInfo};
+            for (int b = 0; b < 5; b++)
+            {
+                VkWriteDescriptorSet &w = writes[s * 5 + b];
+                w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                w.dstSet = vkRT.reflAtrousDescSets[frameIdx][s];
+                w.dstBinding = (uint32_t)b;
+                w.descriptorCount = 1;
+                w.descriptorType =
+                    (b == 1) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                w.pImageInfo = infos[b];
+            }
         }
-        vkUpdateDescriptorSets(vk.device, 12, writes, 0, NULL);
+        vkUpdateDescriptorSets(vk.device, 15, writes, 0, NULL);
         vkRT.reflAtrousDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
     }
 
-    const float sigmaZ = r_rtReflAtrousSigmaZ.GetFloat();
+    const float sigmaPlane = idMath::ClampFloat(0.001f, 1.0f, r_rtReflAtrousSigmaPlane.GetFloat());
+    const float normalPower = idMath::ClampFloat(0.0f, 64.0f, r_rtReflAtrousNormalPower.GetFloat());
     const float roughnessGain = r_rtReflAtrousRoughnessGain.GetFloat();
     const float fireflyClamp = r_rtReflAtrousFireflyClamp.GetFloat();
+    float invViewProj[16];
+    VK_RT_ReflInvViewProj(viewDef, invViewProj);
+    // Depth is rasterised at render extent; the refl buffers may be larger.
+    const int32_t renderW = Min((int32_t)bufA.width, (int32_t)vk.renderExtent.width);
+    const int32_t renderH = Min((int32_t)bufA.height, (int32_t)vk.renderExtent.height);
 
     const uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
     const uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
@@ -2667,36 +2671,39 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
         struct AtrousReflPC
         {
             int32_t stepSize;
-            float sigmaL;
-            float sigmaZ;
+            float sigmaPlane;
             float roughnessGain;
+            float fireflyClamp;
             int32_t screenWidth;
             int32_t screenHeight;
             int32_t scissorOffsetX;
             int32_t scissorOffsetY;
             int32_t scissorExtentX;
             int32_t scissorExtentY;
-            float fireflyClamp;
             int32_t debugMode;
+            float normalPower;
+            float invViewProj[16]; // offset 48, 16-aligned as the GLSL mat4 needs
         } pc;
-        static_assert(sizeof(pc) == 48, "AtrousReflPC size mismatch");
+        static_assert(sizeof(pc) == REFL_ATROUS_PC_SIZE, "AtrousReflPC size mismatch");
 
         pc.stepSize = 1 << pass;
-        pc.sigmaL = 0.0f; // unused — opaque reflections have no luminance edge-stop
-        pc.sigmaZ = sigmaZ;
+        pc.sigmaPlane = sigmaPlane;
         pc.roughnessGain = roughnessGain;
-        pc.screenWidth = (int32_t)bufA.width;
-        pc.screenHeight = (int32_t)bufA.height;
+        pc.fireflyClamp = fireflyClamp;
+        pc.screenWidth = renderW;
+        pc.screenHeight = renderH;
         pc.scissorOffsetX = dispatchRect.offset.x;
         pc.scissorOffsetY = dispatchRect.offset.y;
         pc.scissorExtentX = (int32_t)dispatchRect.extent.width;
         pc.scissorExtentY = (int32_t)dispatchRect.extent.height;
-        pc.fireflyClamp = fireflyClamp;
         pc.debugMode = r_rtReflectionDebugMode.GetInteger();
+        pc.normalPower = normalPower;
+        memcpy(pc.invViewProj, invViewProj, sizeof(pc.invViewProj));
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.reflAtrousPipelineLayout, 0, 1,
                                 &vkRT.reflAtrousDescSets[frameIdx][descIdx], 0, NULL);
-        vkCmdPushConstants(cmd, vkRT.reflAtrousPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 48, &pc);
+        vkCmdPushConstants(cmd, vkRT.reflAtrousPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, REFL_ATROUS_PC_SIZE,
+                           &pc);
         vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
         const bool isLastPass = (pass == iters - 1);
@@ -2744,8 +2751,9 @@ VkImageView VK_RT_GetReflReadView(int frameIdx)
     // reflBuffer by reflect_ray.rgen itself — routing them through the EMA'd history
     // would smear them across frames and defeat the point. Mode 11 is the one
     // exception: it IS the denoiser's own history/rejection state.
-    // Mode 14 is the à-trous pass's own branch view, so it reads the filter output.
-    if (debugMode >= 2 && debugMode <= REFL_DEBUG_MAX_MODE && debugMode != 11 && debugMode != 14)
+    // Modes 14/15 are the à-trous pass's own views, so they read the filter output.
+    if (debugMode >= 2 && debugMode <= REFL_DEBUG_MAX_MODE && debugMode != 11 && debugMode != 14 &&
+        debugMode != 15)
         return vkRT.reflBuffer[frameIdx].view;
     // Mode 11 IS the denoiser's own history/rejection state (written directly into
     // reflHistory by refl_temporal_resolve.comp, alpha forced to 1.0 — see its own

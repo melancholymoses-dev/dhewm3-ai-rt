@@ -27,16 +27,24 @@ that was deliberately culled for having no F0).
 A local firefly clamp (r_rtReflAtrousFireflyClamp) runs before the blend: a single
 GGX sample with no light importance sampling occasionally points straight at
 something much brighter than its surroundings. Every tap is capped at the 3x3's
-second-brightest luminance, which removes lone texels outright. The blend is
-depth-stopped only (no luminance stop), so rough surfaces get a plain wash.
+second-brightest luminance, which removes lone texels outright. No luminance
+stop, so rough surfaces get a plain wash.
+
+Edge stops (refl-refactor Stage 3): plane distance and normal. A tap's world
+position is tested against the centre's geometric plane (normal from depth), as
+a fraction of view distance — zero along any flat surface however grazing, so
+floors still wash while a rail above them is cut. The G-buffer shading normal
+stop splits creases; its power stays low because bump detail varies it too.
+Debug mode 15 shows the combined step-1 weight.
 
 Inputs (set 0):
   binding 0 (combined image sampler)          — reflection buffer for this pass (ping-pong)
   binding 1 (rgba16f, storage, GENERAL)        — output reflection buffer for this pass
   binding 2 (combined image sampler)           — scene depth buffer
   binding 3 (combined image sampler)           — gbufAlbedo (alpha = packed class + roughness)
+  binding 4 (combined image sampler)           — gbufNormal (rgb = shading normal)
 
-Push constants: 48 bytes — gi_atrous.comp's PC block plus trailing fireflyClamp and debugMode.
+Push constants: 112 bytes, see PC below.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -56,22 +64,26 @@ layout(set = 0, binding = 0) uniform sampler2D reflSrc;
 layout(set = 0, binding = 1, rgba16f) uniform image2D reflDst;
 layout(set = 0, binding = 2) uniform sampler2D depthSampler;
 layout(set = 0, binding = 3) uniform sampler2D gbufAlbedoSampler;
+layout(set = 0, binding = 4) uniform sampler2D gbufNormalSampler;
 
 #include "gbuf_albedo_class.glsl"
+// rt_ReconstructWorldPos / wang_hash; contract is satisfied by depthSampler above.
+#include "rt_indirect.glsl"
 
 layout(push_constant) uniform PC {
     int   stepSize;       // 1, 2, 4, 8, … (2^iteration)
-    float sigmaL;         // unused — kept for gi_atrous.comp's PC layout; no luminance stop
-    float sigmaZ;         // depth edge-stop bandwidth
+    float sigmaPlane;     // r_rtReflAtrousSigmaPlane — plane distance / view distance
     float roughnessGain;  // multiplies roughness before the mix() gate below
-    int   screenWidth;
+    float fireflyClamp;   // r_rtReflAtrousFireflyClamp — see the clamp below; 0 disables
+    int   screenWidth;    // render extent — depth reconstruction and tap clamp
     int   screenHeight;
     int   scissorOffsetX;
     int   scissorOffsetY;
     int   scissorExtentX;
     int   scissorExtentY;
-    float fireflyClamp;   // r_rtReflAtrousFireflyClamp — see the clamp below; 0 disables
-    int   debugMode;      // r_rtReflectionDebugMode — 14 = branch view, see below
+    int   debugMode;      // r_rtReflectionDebugMode — 14 branch view, 15 edge-stop weight
+    float normalPower;    // r_rtReflAtrousNormalPower
+    mat4  invViewProj;    // GL convention, as reflect_ray.rgen
 } pc;
 
 const float K[3][3] = float[3][3](
@@ -89,6 +101,38 @@ float luminance(vec3 c)
 // this never traced a reflection ray (glass's own negative sentinel also fails
 // this test, same comparison direction).
 const float VALID_ALPHA_THRESHOLD = 1.0 / 255.0;
+
+// G-buffer shading normal, or vec3(0) at the unwritten-pixel sentinel.
+vec3 DecodeNormal(ivec2 coord)
+{
+    ivec2 sz = textureSize(gbufNormalSampler, 0);
+    vec4  g  = texelFetch(gbufNormalSampler, clamp(coord, ivec2(0), sz - 1), 0);
+    if (all(lessThanEqual(abs(g.rgb - vec3(0.5)), vec3(1.0 / 255.0))))
+        return vec3(0.0);
+    vec3  n   = g.rgb * 2.0 - 1.0;
+    float len = length(n);
+    return (len < 0.5) ? vec3(0.0) : (n / len);
+}
+
+// Geometric normal from depth, one-sided at silhouettes. The shading normal would put
+// bump detail into the plane test and break up the wash on exactly the rough surfaces.
+vec3 GeometricNormal(ivec2 coord, ivec2 size, vec3 pC, vec3 toCam)
+{
+    ivec2 hi = size - 1;
+    vec3  pR = rt_ReconstructWorldPos(clamp(coord + ivec2(1, 0), ivec2(0), hi), size, pc.invViewProj);
+    vec3  pL = rt_ReconstructWorldPos(clamp(coord - ivec2(1, 0), ivec2(0), hi), size, pc.invViewProj);
+    vec3  pD = rt_ReconstructWorldPos(clamp(coord + ivec2(0, 1), ivec2(0), hi), size, pc.invViewProj);
+    vec3  pU = rt_ReconstructWorldPos(clamp(coord - ivec2(0, 1), ivec2(0), hi), size, pc.invViewProj);
+    // Take the shorter side on each axis so a silhouette neighbour doesn't tilt the plane.
+    vec3  dX = (dot(pR - pC, pR - pC) < dot(pC - pL, pC - pL)) ? (pR - pC) : (pC - pL);
+    vec3  dY = (dot(pD - pC, pD - pC) < dot(pC - pU, pC - pU)) ? (pD - pC) : (pC - pU);
+    vec3  n  = cross(dX, dY);
+    float len = length(n);
+    if (len < 1e-8)
+        return toCam;
+    n /= len;
+    return (dot(n, toCam) < 0.0) ? -n : n;
+}
 
 void main()
 {
@@ -110,13 +154,17 @@ void main()
     // it through untouched. Grey = glass, dark blue = untraced, red = roughness 0
     // (skipped), yellow = traced but no traced 3x3 neighbour (blur is a no-op),
     // green = filtered, brightness = roughness gate (share of the blurred result used).
+    // Debug 15: the step-1 edge-stop weight, mean over traced neighbours. White = blends
+    // freely, black = fully stopped, yellow = no traced neighbour. Untraced/glass as 14.
+    bool debugEdge = (pc.debugMode == 15);
+    if ((pc.debugMode == 14 || debugEdge) && pc.stepSize != 1)
+    {
+        imageStore(reflDst, coord, cFull);
+        return;
+    }
+
     if (pc.debugMode == 14)
     {
-        if (pc.stepSize != 1)
-        {
-            imageStore(reflDst, coord, cFull);
-            return;
-        }
         vec3 vis;
         if (cFull.a < 0.0)
             vis = vec3(0.25);
@@ -151,6 +199,8 @@ void main()
     // and (for glass) nothing this filter is allowed to touch. Pass through exactly.
     if (cFull.a <= VALID_ALPHA_THRESHOLD)
     {
+        if (debugEdge)
+            cFull = (cFull.a < 0.0) ? vec4(vec3(0.25), 1.0) : vec4(0.0, 0.0, 0.3, 1.0);
         imageStore(reflDst, coord, cFull);
         return;
     }
@@ -160,21 +210,29 @@ void main()
 
     // roughness 0 -> output is cFull, byte for byte. Only a genuinely rough pixel
     // pays for the 3x3 tap below, and only in proportion to how rough it is.
-    if (roughness <= 0.0)
+    if (roughness <= 0.0 && !debugEdge)
     {
         imageStore(reflDst, coord, cFull);
         return;
     }
 
-    vec3  cCenter = cFull.rgb;
-    float dCenter = texelFetch(depthSampler, coord, 0).r;
+    vec3 cCenter = cFull.rgb;
 
-    float sigmaZ2 = pc.sigmaZ * pc.sigmaZ + 0.0001;
+    // Centre plane, in world space. Plane distance is divided by view distance so the
+    // stop means the same thing at 20 units and at 500.
+    vec4  camH     = pc.invViewProj * vec4(0.0, 0.0, -1.0, 1.0);
+    vec3  camPos   = camH.xyz / camH.w;
+    vec3  pC       = rt_ReconstructWorldPos(coord, size, pc.invViewProj);
+    float viewDist = max(length(pC - camPos), 1.0);
+    vec3  nGeo     = GeometricNormal(coord, size, pC, (camPos - pC) / viewDist);
+    vec3  nC       = DecodeNormal(coord);
+
+    float invSigmaP2 = 1.0 / (pc.sigmaPlane * pc.sigmaPlane + 1e-8);
 
     // Gather the 3x3 once: used both for the firefly clamp below and the edge-stopped
     // blend after it, so each neighbour is only texelFetch'd once per pass.
     vec3  tapColour[9];
-    float tapDepth[9];
+    float tapEdgeW[9];
     bool  tapValid[9];
 
     for (int dy = -1; dy <= 1; dy++)
@@ -190,8 +248,34 @@ void main()
             // that belongs to a different surface or isn't a reflection at all.
             tapValid[idx]  = sFull.a > VALID_ALPHA_THRESHOLD;
             tapColour[idx] = sFull.rgb;
-            tapDepth[idx]  = texelFetch(depthSampler, sCoord, 0).r;
+
+            vec3  pT    = rt_ReconstructWorldPos(sCoord, size, pc.invViewProj);
+            float plane = dot(pT - pC, nGeo) / viewDist;
+            float wP    = exp(-plane * plane * invSigmaP2);
+
+            // Unwritten normals (vec3(0)) don't veto; the plane stop still applies.
+            vec3  nT = DecodeNormal(sCoord);
+            float wN = (dot(nC, nC) > 0.0 && dot(nT, nT) > 0.0)
+                           ? pow(max(dot(nC, nT), 0.0), pc.normalPower) : 1.0;
+
+            tapEdgeW[idx] = wP * wN;
         }
+    }
+
+    if (debugEdge)
+    {
+        float sumW = 0.0;
+        int   n    = 0;
+        for (int i = 0; i < 9; i++)
+        {
+            if (i == 4 || !tapValid[i])
+                continue;
+            sumW += tapEdgeW[i];
+            n++;
+        }
+        vec3 vis = (n == 0) ? vec3(1.0, 1.0, 0.0) : vec3(sumW / float(n));
+        imageStore(reflDst, coord, vec4(vis, 1.0));
+        return;
     }
 
     // Firefly clamp: every tap is capped at the second-brightest valid tap's luminance
@@ -251,17 +335,11 @@ void main()
             if (!tapValid[idx])
                 continue;
 
-            vec3  sColour = tapColour[idx];
-            float sDepth  = tapDepth[idx];
+            // Geometry stops only. A luminance stop shields bright outliers from the blur,
+            // and a rough opaque reflection has no luminance edges worth keeping.
+            float w = K[dy + 1][dx + 1] * tapEdgeW[idx];
 
-            // Depth stop only. A luminance stop shields bright outliers from the blur, and
-            // a rough opaque reflection has no luminance edges worth keeping.
-            float dd = dCenter - sDepth;
-            float wD = exp(-(dd * dd) / sigmaZ2);
-
-            float w = K[dy + 1][dx + 1] * wD;
-
-            accumColour += sColour * w;
+            accumColour += tapColour[idx] * w;
             accumWeight += w;
         }
     }
