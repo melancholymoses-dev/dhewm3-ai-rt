@@ -89,6 +89,7 @@ layout(set = 0, binding = 3) uniform ReflParams {
     int    emitterCount;  // projectile glow discs in emitterBuf (0 = r_rtReflGlow off)
     float  glowGain;      // r_rtReflGlowGain (0 when r_rtReflGlow is off)
     int    glowTriCount;  // additive translucent triangles in emitterBuf.tris
+    float  roughLumExp;   // r_rtReflRoughLumExp — ceiling scales by (1 - roughness)^this
 
     // Froxel scatter grid (20261013_reflection_volumetrics.md). viewProj is the
     // grid's own, GL convention — the matrix its invViewProj inverts, jitter and all.
@@ -481,6 +482,7 @@ void main()
     // R1: the weight depends only on f0/normal/viewDir — all known pre-trace — so cull
     // on it here. Glass is exempt; its weight comes from the interface, not surface F0.
     float fresnel = 0.0;
+    float lumCeiling = params.maxLuminance;
     if (!isGlass)
     {
         float NdotV = clamp(dot(reflNormal, -viewDir), 0.0, 1.0);
@@ -488,6 +490,13 @@ void main()
         // r_rtReflRoughnessScale retunes Stage 2's packed roughness before the standard
         // perceptual-roughness-squared remap to GGX alpha.
         float perceptualRoughness = clamp(roughness * params.roughnessScale, 0.0, 1.0);
+
+        // Rough lobes catch a small bright emitter (LED, lamp) on one ray in many, at full
+        // brightness: speckle. Lowering the ceiling with roughness turns that into a dim
+        // glow while dim reflected walls stay under it untouched.
+        // Floored above 0: ReflClampLuminance reads a 0 ceiling as "unbounded".
+        if (params.roughLumExp > 0.0 && params.maxLuminance > 0.0)
+            lumCeiling = max(lumCeiling * pow(max(1.0 - perceptualRoughness, 0.0), params.roughLumExp), 1e-4);
 
         // Roughness-aware Schlick (split-sum IBL form): the grazing limit is
         // max(1 - roughness, f0) instead of 1, so rough painted metal and grates
@@ -662,6 +671,6 @@ void main()
     // Opaque: reusing R1's pre-trace `fresnel` is what makes that cull exact.
     // refl_composite.frag adds this straight through (no further Fresnel math there);
     // alpha carries F0 for potential future consumers (non-negative — "not glass").
-    vec3 reflRadiance = ReflClampLuminance(accum * params.reflBlend * fresnel, params.maxLuminance);
+    vec3 reflRadiance = ReflClampLuminance(accum * params.reflBlend * fresnel, lumCeiling);
     imageStore(reflImage, coord, vec4(reflRadiance, f0));
 }

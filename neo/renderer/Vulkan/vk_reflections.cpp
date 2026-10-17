@@ -97,8 +97,13 @@ idCVar r_rtReflectionMinWeight(
 idCVar r_rtReflMaxLuminance("r_rtReflMaxLuminance", "1", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                             "Hard luminance ceiling on opaque reflection radiance (after reflBlend and\n"
                             "Fresnel), independent of r_rtReflAtrousFireflyClamp's per-pixel outlier test.\n"
-                            "0 = unbounded. Glass is unaffected.",
+                            "Scaled down by roughness via r_rtReflRoughLumExp. 0 = unbounded. Glass is unaffected.",
                             0.0f, 16.0f);
+static idCVar r_rtReflRoughLumExp("r_rtReflRoughLumExp", "3", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                                  "Opaque reflection ceiling = r_rtReflMaxLuminance * (1 - roughness)^this. Stops a\n"
+                                  "rough surface returning a full-brightness LED/lamp from one lucky GGX ray (speckle);\n"
+                                  "dim reflected walls sit under the ceiling and pass unchanged. 0 = no roughness scaling.",
+                                  0.0f, 8.0f);
 
 // Volumetrics in reflections (docs/plans/20261013_reflection_volumetrics.md). The
 // reflection ray marches the same froxel scatter grid the primary view resolves, so
@@ -144,7 +149,7 @@ idCVar r_rtReflDenoise("r_rtReflDenoise", "2", CVAR_RENDERER | CVAR_INTEGER | CV
                        "2 = temporal + roughness-gated à-trous spatial filter (VK_RT_DispatchReflAtrous):\n"
                        "    a roughness-0 pixel is untouched, a rough pixel is blended with its neighbours\n"
                        "    in proportion to roughness * r_rtReflAtrousRoughnessGain. Tune with\n"
-                       "    r_rtReflAtrousIterations/SigmaL/SigmaZ/RoughnessGain/FireflyClamp.",
+                       "    r_rtReflAtrousIterations/SigmaZ/RoughnessGain/FireflyClamp.",
                        0, 2);
 idCVar r_rtReflDenoiseAlpha("r_rtReflDenoiseAlpha", "0.03", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                             "Opaque-surface EMA alpha: 0=use only history, 1=use only current frame. Fixed —\n"
@@ -158,9 +163,6 @@ idCVar r_rtReflAtrousIterations("r_rtReflAtrousIterations", "3", CVAR_RENDERER |
                                 "r_rtReflDenoise 2 only. À-trous passes (0-8); effective radius is 2^N - 1 pixels.\n"
                                 "Same default as r_rtGIAtrousIterations.",
                                 0, 8);
-idCVar r_rtReflAtrousSigmaL("r_rtReflAtrousSigmaL", "0.2", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                            "r_rtReflDenoise 2 only. Luminance edge-stop bandwidth — lower preserves more\n"
-                            "contrast (bright highlight next to a dark reflection) at the cost of more grain.");
 idCVar r_rtReflAtrousSigmaZ("r_rtReflAtrousSigmaZ", "0.01", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                             "r_rtReflDenoise 2 only. Depth edge-stop bandwidth (NDC) — keeps the blur from\n"
                             "crossing a silhouette edge onto an unrelated surface.");
@@ -257,15 +259,14 @@ idCVar r_rtReflectionDebugMode(
 //   int    sceneHasGlass  offset 92  size  4  (P6 — skip glass probe when 0)
 //   float  minWeight      offset 96  size  4  (r_rtReflectionMinWeight, R1)
 //   int    rectOriginX    offset 100 size  4  (R6 launch-grid origin — was 104; grazingGain's
-//                                               old slot is gone, not reused — see _padBeforeViewProj)
+//                                               old slot is gone — roughLumExp now fills offset 124)
 //   int    rectOriginY    offset 104 size  4
 //   int    reflMode       offset 108 size  4  (r_rtReflectionMode — 1/2/3, Stage 4 adds 3)
 //   int    emitterCount   offset 112 size  4  (vk_rt_emitters.cpp, 0 = none)
 //   float  glowGain       offset 116 size  4  (r_rtReflGlowGain, 0 when r_rtReflGlow is off)
 //   int    glowTriCount   offset 120 size  4  (vk_rt_emitters.cpp glow triangles)
-//   float  _padBeforeViewProj offset 124 size 4  (std140 mat4 alignment — GLSL inserts this
-//                                                  implicitly once grazingGain is gone; this
-//                                                  struct must do so explicitly to match)
+//   float  roughLumExp    offset 124 size  4  (r_rtReflRoughLumExp — fills the slot std140
+//                                               left before the mat4 when grazingGain went)
 //   mat4   viewProj       offset 128 size 64  (froxel grid's own, GL convention)
 //   vec4   froxelCamPos   offset 192 size 16  (xyz)
 //   vec4   froxelCamFwd   offset 208 size 16  (xyz)
@@ -306,10 +307,7 @@ struct ReflParamsUBO
     int32_t emitterCount; // projectile glow discs in the emitter SSBO (binding 6)
     float glowGain;       // r_rtReflGlowGain
     int32_t glowTriCount; // additive translucent triangles after the discs in binding 6
-    // Stage 3 retired r_rtSpecGrazingGain, whose slot sat right before this mat4.
-    // GLSL's std140 layout inserts the resulting 4 bytes of alignment padding here
-    // implicitly; this struct has no such mechanism, so it's explicit.
-    float _padBeforeViewProj;
+    float roughLumExp; // r_rtReflRoughLumExp — reuses the pre-mat4 slot retired with grazingGain
 
     // Froxel scatter grid (20261013_reflection_volumetrics.md). Mirrors
     // VolFroxelSlices in vol_froxel_sample.glsl plus the forward projection the
@@ -1928,7 +1926,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.debugMode = r_rtReflectionDebugMode.GetInteger();
     ubo.sceneHasGlass = vkRT.sceneHasGlass ? 1 : 0;
     ubo.minWeight = idMath::ClampFloat(0.0f, 1.0f, r_rtReflectionMinWeight.GetFloat());
-    ubo._padBeforeViewProj = 0.0f;
+    ubo.roughLumExp = idMath::ClampFloat(0.0f, 8.0f, r_rtReflRoughLumExp.GetFloat());
 
     ubo.rectOriginX = rectX;
     ubo.rectOriginY = rectY;
@@ -2628,7 +2626,6 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
         vkRT.reflAtrousDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
     }
 
-    const float sigmaL = r_rtReflAtrousSigmaL.GetFloat();
     const float sigmaZ = r_rtReflAtrousSigmaZ.GetFloat();
     const float roughnessGain = r_rtReflAtrousRoughnessGain.GetFloat();
     const float fireflyClamp = r_rtReflAtrousFireflyClamp.GetFloat();
@@ -2661,7 +2658,7 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
         static_assert(sizeof(pc) == 48, "AtrousReflPC size mismatch");
 
         pc.stepSize = 1 << pass;
-        pc.sigmaL = sigmaL;
+        pc.sigmaL = 0.0f; // unused — opaque reflections have no luminance edge-stop
         pc.sigmaZ = sigmaZ;
         pc.roughnessGain = roughnessGain;
         pc.screenWidth = (int32_t)bufA.width;

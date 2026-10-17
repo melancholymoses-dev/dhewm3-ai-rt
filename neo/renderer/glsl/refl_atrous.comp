@@ -6,7 +6,7 @@ for RT reflections (Stage 1 addendum, docs/plans/20261013_reflection_roughness.m
 r_rtReflDenoise 2).
 
 Same B3-spline À-trous pattern as gi_atrous.comp (N compute passes, step width
-doubling each iteration, depth + luminance edge-stopping) run on top of the
+doubling each iteration, depth edge-stopping) run on top of the
 temporal resolve's output, but gated per pixel by Stage 2's packed roughness:
 the filtered and unfiltered colours are mixed by `roughness * roughnessGain`
 (r_rtReflAtrousRoughnessGain), so a roughness-0 pixel (glass-sharp trim, GUI
@@ -27,8 +27,8 @@ that was deliberately culled for having no F0).
 A local firefly clamp (r_rtReflAtrousFireflyClamp) runs before the blend: a single
 GGX sample with no light importance sampling occasionally points straight at
 something much brighter than its surroundings. Every tap is capped at the 3x3's
-second-brightest luminance, which removes lone texels outright. The luminance
-edge-stop fades out with roughness so rough surfaces get a plain depth-stopped wash.
+second-brightest luminance, which removes lone texels outright. The blend is
+depth-stopped only (no luminance stop), so rough surfaces get a plain wash.
 
 Inputs (set 0):
   binding 0 (combined image sampler)          — reflection buffer for this pass (ping-pong)
@@ -61,7 +61,7 @@ layout(set = 0, binding = 3) uniform sampler2D gbufAlbedoSampler;
 
 layout(push_constant) uniform PC {
     int   stepSize;       // 1, 2, 4, 8, … (2^iteration)
-    float sigmaL;         // luminance edge-stop bandwidth
+    float sigmaL;         // unused — kept for gi_atrous.comp's PC layout; no luminance stop
     float sigmaZ;         // depth edge-stop bandwidth
     float roughnessGain;  // multiplies roughness before the mix() gate below
     int   screenWidth;
@@ -169,7 +169,6 @@ void main()
     vec3  cCenter = cFull.rgb;
     float dCenter = texelFetch(depthSampler, coord, 0).r;
 
-    float sigmaL2 = pc.sigmaL * pc.sigmaL + 0.0001;
     float sigmaZ2 = pc.sigmaZ * pc.sigmaZ + 0.0001;
 
     // Gather the 3x3 once: used both for the firefly clamp below and the edge-stopped
@@ -236,8 +235,6 @@ void main()
         }
     }
 
-    float lCenter = luminance(cCenter);
-
     // roughnessGain lets a moderately-rough surface reach full blend before
     // roughness itself hits 1.0 — roughness 0 is still excluded above, so glass
     // and screens stay untouched regardless of the gain setting.
@@ -257,15 +254,12 @@ void main()
             vec3  sColour = tapColour[idx];
             float sDepth  = tapDepth[idx];
 
-            float dl = lCenter - luminance(sColour);
-            // Fades out with roughness: a rough reflection has no edges worth keeping,
-            // and the stop would otherwise shield any bright outlier from the blur.
-            float wL = mix(exp(-(dl * dl) / sigmaL2), 1.0, gated);
-
+            // Depth stop only. A luminance stop shields bright outliers from the blur, and
+            // a rough opaque reflection has no luminance edges worth keeping.
             float dd = dCenter - sDepth;
             float wD = exp(-(dd * dd) / sigmaZ2);
 
-            float w = K[dy + 1][dx + 1] * wL * wD;
+            float w = K[dy + 1][dx + 1] * wD;
 
             accumColour += sColour * w;
             accumWeight += w;
