@@ -2510,6 +2510,7 @@ struct RTCVars
     idCVar *rtReflAtrousIterations = nullptr;
     idCVar *rtReflAtrousRoughnessGain = nullptr;
     idCVar *rtReflAtrousFireflyClamp = nullptr;
+    idCVar *rtReflAtrousFireflyFloor = nullptr;
     idCVar *rtReflRoughnessFloor = nullptr;
     idCVar *rtReflRoughnessScale = nullptr;
     idCVar *rtReflMaxLuminance = nullptr;
@@ -2654,6 +2655,7 @@ static void InitRTOptionsMenu()
     rtCVars.rtReflAtrousIterations = cvarSystem->Find("r_rtReflAtrousIterations");
     rtCVars.rtReflAtrousRoughnessGain = cvarSystem->Find("r_rtReflAtrousRoughnessGain");
     rtCVars.rtReflAtrousFireflyClamp = cvarSystem->Find("r_rtReflAtrousFireflyClamp");
+    rtCVars.rtReflAtrousFireflyFloor = cvarSystem->Find("r_rtReflAtrousFireflyFloor");
     rtCVars.rtReflRoughnessFloor = cvarSystem->Find("r_rtReflRoughnessFloor");
     rtCVars.rtReflRoughnessScale = cvarSystem->Find("r_rtReflRoughnessScale");
     rtCVars.rtReflMaxLuminance = cvarSystem->Find("r_rtReflMaxLuminance");
@@ -2899,6 +2901,7 @@ static void DrawRTOptionsMenu()
         RTSliderInt("Spatial Filter Passes", rtCVars.rtReflAtrousIterations, 0, 8);
         RTSliderFloat("Spatial Filter Wash", rtCVars.rtReflAtrousRoughnessGain, 0.5f, 8.0f, "%.1f");
         RTSliderFloat("Firefly Clamp", rtCVars.rtReflAtrousFireflyClamp, 0.0f, 8.0f, "%.1f");
+        RTSliderFloat("Firefly Clamp Floor", rtCVars.rtReflAtrousFireflyFloor, 0.0f, 4.0f, "%.2f");
         ImGui::EndDisabled();
 
         ImGui::EndTable();

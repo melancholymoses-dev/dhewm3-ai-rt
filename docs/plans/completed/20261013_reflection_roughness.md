@@ -1,4 +1,13 @@
-# Surface roughness in reflections
+# Surface roughness in reflections — Arc 8d, done 2026-10-16
+
+Closed after live testing: opaque surfaces show a roughness-appropriate sheen instead of a
+mirror, screens/emitters still read through clearly, and the two post-Stage-4 brightness
+complaints (single-sample GGX fireflies at creases, overall reflection brightness) both
+have working knobs now. Not perfect — the user's words were "not quite perfect, but
+definitely going the right way" — but the arc's goal (opaque reflections that don't look
+broken) is met. Stage 5's formal numeric sweeps (listed in each Stage's own Check section
+below) were never run; what shipped was judged by eye against the actual complaints instead.
+Stage 5's menu/preset/doc polish is not done — see "What's left" at the bottom.
 
 Extend reflections past glass to opaque surfaces by giving them a roughness lobe instead of
 a mirror. Settled conclusion (`../rt_engine_rules.md`): sharp mirror reflection is *why* opaque geometry
@@ -21,12 +30,13 @@ it. Tuning lobe constants through un-denoised noise fits the constants to the va
 
 F0 is reflectance at normal incidence; roughness is lobe width. GGX needs both. Per-material
 F0 (T3) was dropped because sharp mirrors made classification pointless — the condition
-roughness removes. **Do not run cleanup Phase 2b/2c before this lands**: 2c reclaims the
-G-buffer alpha that holds F0, and that is the one irreversible step.
+roughness removes. This arc has landed, so cleanup Phase 2b/2c (ROADMAP step 8) is now
+unblocked — 2c reclaims the G-buffer alpha that held F0, and that was the one irreversible
+step this arc was gating.
 
 ---
 
-## Stage 1 — Reflection denoiser (still glass-only)
+## Stage 1 — Reflection denoiser (still glass-only) — done, live-tested 2026-10-16
 
 Required regardless of how roughness is sourced, and independently useful: it lets glass
 trade rays for filtering, or affords a second bounce.
@@ -139,7 +149,7 @@ between the two settings.
 
 ---
 
-## Stage 2 — Roughness source
+## Stage 2 — Roughness source — done, live-tested 2026-10-16
 
 Doom 3 has **zero** per-material gloss: specular is a global NdotH lookup table
 (`interaction.frag:35`), the same curve for concrete, steel and glass. The specular map's
@@ -191,7 +201,7 @@ Toksvig signal underneath when judging the gradient.
 
 ---
 
-## Stage 3 — GGX lobe, glass still sharp — done 2026-10-16, unbuilt/unverified
+## Stage 3 — GGX lobe, glass still sharp — done, live-tested 2026-10-16
 
 | File | Change |
 |---|---|
@@ -215,7 +225,7 @@ widens smoothly with no energy change at grazing angles.
 
 ---
 
-## Stage 4 — Open to opaque surfaces — done 2026-10-16, unbuilt/unverified
+## Stage 4 — Open to opaque surfaces — done, live-tested 2026-10-16
 
 | Item | Detail |
 |---|---|
@@ -265,6 +275,50 @@ Against a total GPU p50 of 9.17-14.94 ms, all three scenarios GPU-bound by 4-7x,
 | 3 | Glass identical to Stage 1; grazing energy flat |
 | 4 | `r_rtReflRoughnessMax 0` ≡ mode 1; scene brightness flat under the sweep; no noise floor in dark corridors |
 | 5 | Presets include mode 3 only at High/Ultra |
+
+None of these formal numeric gates were run end to end — the arc closed on live visual
+confirmation that the original complaint (opaque reflections looking broken, then too
+grainy/blinding) is fixed, not on these measurements. Re-run them before trusting the
+20-40% frame-cost budget below in a shipping preset.
+
+## What's left (not blocking, not done)
+
+- Menu: mode combo (`r_rtReflectionMode`) and roughness ceiling (`r_rtReflRoughnessMax`)
+  slider — still cvar-only, deliberately deferred through this whole arc
+- `r_rtQuality` preset rows for mode 3
+- `Dhewm3-AI-RT-Settings.md` entries for every cvar this arc added
+- Cleanup Phase 1c (now unblocked — see `20261010_cleanup_polish.md` / ROADMAP step 8)
+
+**Post-close review pass, 2026-10-16.** A code review of the committed state (`e4193875`)
+found four real bugs, fixed here without touching the tuned look the user asked to leave
+alone:
+
+| Fix | File |
+|---|---|
+| GGX VNDF sampling can return a direction below the macro surface (reflect() around a half-vector that's only guaranteed visible, not the reflection itself) — ray heads back into the surface, reads as a dark speckle or a leak into the next room. Falls back to the mirror direction when `dot(reflDir, reflNormal) <= 0` | `reflect_ray.rgen` |
+| Firefly clamp's cap (`meanLum * fireflyClamp`) could collapse toward 0 in a near-black neighbourhood, crushing a legitimate small highlight instead of merely capping it. Added `r_rtReflAtrousFireflyFloor` (default 0.5) as a hard floor under the cap | `refl_atrous.comp`, `vk_reflections.cpp` |
+| Firefly clamp ran every pass; step width (and the cap) grows each pass, wearing down a thin bright feature (a reflected light strip) further each time for no benefit. Now `pc.stepSize == 1` only | `refl_atrous.comp` |
+| `VK_RT_DispatchReflAtrous` had no same-frame dedup guard (`VK_RT_DispatchReflTemporal` has one) — a weapon subview would re-run all N passes a second time this frame and silently double the GPU cost (same output, since the ping-pong buffers end up in the same state) | `vk_reflections.cpp` |
+| `albedoInfo.imageView` bound `vkRT.gbufAlbedo[frameIdx].view` with no null check, unlike the temporal pass's own gbuf views — a validation error (possibly worse) if that allocation ever failed | `vk_reflections.cpp` |
+
+Also fixed: stale cvar help text (`r_rtReflectionDistance` said "default 2500.0", actual
+default is 1000.0; `r_rtReflectionMode` said "1 = glass only (default)", actual default is 3).
+
+**Flagged, not changed** (each would shift the already-tuned brightness/roughness behaviour,
+so left for a deliberate decision rather than folded into a bugfix pass):
+
+- The GGX lobe uses `roughness * r_rtReflRoughnessScale`, but the mode-3 ceiling and the
+  à-trous roughness gate both read the *unscaled* G-buffer value — retuning
+  `r_rtReflRoughnessScale` silently moves the GI double-count ceiling without moving the
+  cvar that's supposed to define it
+- `textureLod`'s "fixed mip 4" roughness sample (gbuffer.frag) still picks up the bump
+  sampler's `mipLodBias` (`r_vkBumpMipBias` plus FSR's own bias), so it isn't actually
+  independent of distance/FSR mode the way the comment claims
+- `r_rtReflectionMode` defaults to 3 (full-screen opaque reflections) and `r_rtReflDenoise`
+  defaults to 1 (temporal only, no spatial filter) — any new install gets the performance
+  cost of mode 3 without the à-trous/firefly tuning that made it look acceptable here
+- VRAM: `reflAtrousA/B` (4 full RGBA16F images) allocate unconditionally even when
+  `r_rtReflDenoise < 2`
 
 ## Not doing
 
