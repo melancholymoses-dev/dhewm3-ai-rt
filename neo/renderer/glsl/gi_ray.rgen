@@ -40,9 +40,9 @@ layout(set = 0, binding = 2) uniform sampler2D depthSampler;
 // image when vk.gbufferSupported, otherwise a 1x1 null image with a = 0
 // (VK_RT_GetNullGbufNormalView), hence the clamped texelFetch below.
 layout(set = 0, binding = 5) uniform sampler2D gbufNormalSampler;
-// gbufAlbedo from the same prepass; only alpha is read here, as the three-level surface
-// class (gbuffer.frag, GBuf_AlphaClass).  Null 1x1 image when there is no G-buffer, with
-// playerClassValid 0 to match.
+// gbufAlbedo from the same prepass; only alpha is read here, as the packed surface
+// class (gbuffer.frag, GBuf_SurfaceClass; gbuf_albedo_class.glsl).  Null 1x1 image
+// when there is no G-buffer, with playerClassValid 0 to match.
 layout(set = 0, binding = 6) uniform sampler2D gbufClassSampler;
 
 layout(set = 0, binding = 3) uniform GIParams {

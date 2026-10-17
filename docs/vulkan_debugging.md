@@ -146,6 +146,33 @@ worth checking for:
 - **`r_vkRTReflDataDiag 2`** — validates material-table addresses/texture
   slots/base indices CPU-side and logs bad slots. Cheap, no layers needed.
 
+## Linux: screen tearing despite `r_swapInterval 1`
+
+Confirmed 2026-10-16. Symptom: visible tearing (horizontal screen splitting) on NVIDIA +
+Linux/X11 with vsync on in both the console (`r_swapInterval 1`) and the settings menu.
+
+First, confirm the engine is actually asking for a tear-free present mode — `VK_ChoosePresentMode`
+(`vk_swapchain.cpp`) logs its choice on every swapchain create/recreate:
+
+```
+VK Swapchain: r_swapInterval=1 -> present mode FIFO (tear-free, spec-guaranteed)
+```
+
+- If it says **IMMEDIATE** or **MAILBOX** with `r_swapInterval 1`, that's a real bug —
+  `r_swapInterval.GetInteger()` isn't reading what you expect, or the swapchain wasn't
+  rebuilt after the cvar changed (`RenderSystem.cpp` forces a rebuild via
+  `VK_NotifyWindowModeChanged()` on the Vulkan backend when `r_swapInterval.IsModified()`).
+- If it says **FIFO**, the bug is not in this codebase. `VK_PRESENT_MODE_FIFO_KHR` is
+  spec-mandated tear-free — every Vulkan driver must honor it. Tearing past that point is
+  the X11 compositor or the NVIDIA driver presenting the (correctly tear-free) swapchain
+  image incorrectly.
+
+**Fix:** `nvidia-settings` → X Server Display Configuration → Advanced → enable **Force
+Composition Pipeline**. Confirmed fix on this project. This is a known NVIDIA/X11 interaction
+(see the comment in `VK_ChoosePresentMode` — it's also *why* the engine prefers FIFO over
+Mailbox when vsync is on, even though both are spec-tear-free: Mailbox is the mode most often
+broken by this exact class of driver/compositor bug).
+
 ## Profiling
 
 Owned by `neo/renderer/Vulkan/vk_profile.cpp`; `vk_backend.cpp` keeps the

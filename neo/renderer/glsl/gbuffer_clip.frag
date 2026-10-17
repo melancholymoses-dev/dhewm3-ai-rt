@@ -12,6 +12,9 @@ same diffuse sample used for the alpha test — on MC_PERFORATED materials the
 alpha-test stage IS the diffuse stage in practice, so no second stage lookup
 is needed here (contrast gbuffer.frag, which resolves SL_DIFFUSE separately).
 
+gbufAlbedo's alpha also packs a per-pixel Toksvig roughness — see gbuffer.frag's
+header and gbuf_albedo_class.glsl; keep the two prepasses in step.
+
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
 
@@ -49,12 +52,15 @@ layout(set=0, binding=0) uniform GBufferParams {
     float u_SpecF0Gamma;
     float u_TcClass;   // U4 T&C class — see gbuffer.frag
     float u_ViewLocal; // 1 = first-person body / view weapon — see gbuffer.frag
+    float u_RoughnessFloor; // r_rtReflRoughnessFloor (Stage 2) — see gbuffer.frag
 };
 
-// Same three-level alpha encoding as gbuffer.frag — keep the two in step.
-float GBuf_AlphaClass() {
-    if ( u_ViewLocal > 0.5 ) return 0.5;
-    return ( u_TcClass > 0.5 ) ? 0.0 : 1.0;
+#include "gbuf_albedo_class.glsl"
+
+// Same alpha packing as gbuffer.frag — keep the two in step.
+int GBuf_SurfaceClass() {
+    if ( u_ViewLocal > 0.5 ) return GBUF_CLASS_VIEWLOCAL;
+    return ( u_TcClass > 0.5 ) ? GBUF_CLASS_MVWRONG : GBUF_CLASS_ORDINARY;
 }
 
 layout(set=0, binding=1) uniform sampler2D u_BumpMap;
@@ -86,15 +92,27 @@ void main() {
     vec3 B = normalize(vary_BiTangentWS);
     vec3 N = normalize(vary_NormalWS);
 
-    vec3 nTS = normalize(texture(u_BumpMap, vary_TexCoord_Bump).rgb * 2.0 - 1.0);
-    vec3 nWS = normalize(mat3(T, B, N) * nTS);
+    vec3  nTSRaw = texture(u_BumpMap, vary_TexCoord_Bump).rgb * 2.0 - 1.0;
+    float nTSLen = length(nTSRaw);
+    vec3  nTS    = nTSRaw / max(nTSLen, 1e-5);
+    vec3  nWS    = normalize(mat3(T, B, N) * nTS);
+
+    // Fixed-mip Toksvig sample (distance-independent) — see gbuffer.frag for why.
+    const float GBUF_ROUGHNESS_FIXED_MIP = 4.0; // keep in step with gbuffer.frag
+    vec3  nTSFixed    = textureLod(u_BumpMap, vary_TexCoord_Bump, GBUF_ROUGHNESS_FIXED_MIP).rgb * 2.0 - 1.0;
+    float nTSFixedLen = length(nTSFixed);
 
     vec3  specMap = texture(u_SpecularMap, vary_TexCoord_Specular).rgb;
     float specLum = dot(specMap, vec3(0.299, 0.587, 0.114));
     float f0      = clamp(pow(max(specLum, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0, 1.0);
 
+    // Toksvig roughness, floored at u_RoughnessFloor — see gbuffer.frag for the derivation.
+    float toksvigLen      = min(nTSLen, nTSFixedLen);
+    float toksvigVariance = (1.0 - toksvigLen) / max(toksvigLen, 1e-3);
+    float roughness       = max(clamp(sqrt(toksvigVariance), 0.0, 1.0), u_RoughnessFloor);
+
     outGbuf   = vec4(nWS * 0.5 + 0.5, f0);
-    outAlbedo = vec4(diffuseSample.rgb, GBuf_AlphaClass());
+    outAlbedo = vec4(diffuseSample.rgb, GBuf_PackAlbedoAlpha(GBuf_SurfaceClass(), roughness));
     outMotion = GBuf_MotionVector(vary_CurClip, vary_PrevClip);
     fragColor = vec4(0.0);
 }
