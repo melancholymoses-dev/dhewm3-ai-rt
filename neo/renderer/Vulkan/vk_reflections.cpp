@@ -86,6 +86,20 @@ idCVar r_rtReflectionMinWeight(
     "Skip the reflection ray and its shadow rays when the pixel's final Fresnel weight is below\n"
     "this. Only affects legacy mode 2; glass always traces. 0.004 = pre-R1 behaviour.");
 
+// 2026-10-16 addendum (20261013_reflection_roughness.md). A flat ceiling on every opaque
+// pixel's final radiance, applied in reflect_ray.rgen after reflBlend/Fresnel. Distinct
+// from r_rtReflAtrousFireflyClamp (vk_reflections.cpp's à-trous pass), which is LOCAL —
+// it only pulls down a texel that disagrees with its own neighbours, so a uniformly
+// bright reflection (a real screen, a sunlit wall) sails through untouched. This cvar is
+// a direct, absolute "how bright can any reflection pixel get" knob, for tuning overall
+// reflection brightness down regardless of whether a pixel is a sampling outlier.
+// 0 disables (unbounded, pre-existing behaviour). Glass is untouched — see reflect_ray.rgen.
+idCVar r_rtReflMaxLuminance("r_rtReflMaxLuminance", "1", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                            "Hard luminance ceiling on opaque reflection radiance (after reflBlend and\n"
+                            "Fresnel), independent of r_rtReflAtrousFireflyClamp's per-pixel outlier test.\n"
+                            "0 = unbounded. Glass is unaffected.",
+                            0.0f, 16.0f);
+
 // Volumetrics in reflections (docs/plans/20261013_reflection_volumetrics.md). The
 // reflection ray marches the same froxel scatter grid the primary view resolves, so
 // light shafts — the flashlight beam above all — show up in glass. Needs
@@ -130,7 +144,7 @@ idCVar r_rtReflDenoise("r_rtReflDenoise", "1", CVAR_RENDERER | CVAR_INTEGER | CV
                       "2 = temporal + roughness-gated à-trous spatial filter (VK_RT_DispatchReflAtrous):\n"
                       "    a roughness-0 pixel is untouched, a rough pixel is blended with its neighbours\n"
                       "    in proportion to roughness * r_rtReflAtrousRoughnessGain. Tune with\n"
-                      "    r_rtReflAtrousIterations/SigmaL/SigmaZ/RoughnessGain.",
+                      "    r_rtReflAtrousIterations/SigmaL/SigmaZ/RoughnessGain/FireflyClamp.",
                       0, 2);
 idCVar r_rtReflDenoiseAlpha("r_rtReflDenoiseAlpha", "0.35", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                             "EMA floor: 0=use only history, 1=use only current frame. The effective alpha is\n"
@@ -150,6 +164,12 @@ idCVar r_rtReflAtrousRoughnessGain("r_rtReflAtrousRoughnessGain", "3.0", CVAR_RE
                             "r_rtReflDenoise 2 only. Multiplies roughness before the spatial filter's mix()\n"
                             "gate, so moderately rough surfaces reach a full wash sooner than roughness\n"
                             "alone would. Roughness 0 (glass, screens) is unaffected and always stays sharp.");
+idCVar r_rtReflAtrousFireflyClamp("r_rtReflAtrousFireflyClamp", "3.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                            "r_rtReflDenoise 2 only. A pixel brighter than its own 3x3 neighbours' mean\n"
+                            "luminance by more than this factor is scaled down to that cap before the\n"
+                            "blend — tames single-sample GGX fireflies (a wide lobe with no light\n"
+                            "importance sampling occasionally lands on something far brighter than its\n"
+                            "surroundings) that the luminance edge-stop alone can't remove. 0 disables.");
 
 // Stage 2 (20261013_reflection_roughness.md). The Toksvig estimate (gbuffer.frag) is a
 // specular-AA signal — it only measures bump-map normal variance, so a flat/clean bump
@@ -253,6 +273,9 @@ idCVar r_rtReflectionDebugMode(
 //   float  guiReflGain    offset 260 size  4  (r_rtGuiReflGain)
 //   float  roughnessMax   offset 264 size  4  (r_rtReflRoughnessMax, Stage 4 — took one of
 //                                               the two trailing pad floats; _pad0 is now [1])
+//   float  maxLuminance   offset 268 size  4  (r_rtReflMaxLuminance, 2026-10-16 addendum —
+//                                               took the last pad float; block still ends at
+//                                               272, already a multiple of 16, no new padding)
 //   total: 272 bytes — std140 rounds the block up to a multiple of
 //   16, and uboInfo.range is sizeof(ReflParamsUBO), which must not be smaller.
 // ---------------------------------------------------------------------------
@@ -299,7 +322,8 @@ struct ReflParamsUBO
     float guiReflGain;       // r_rtGuiReflGain — scales live GUI screen hits (MAT_FLAG_GUI_LIVE)
     float roughnessMax;      // r_rtReflRoughnessMax (Stage 4) — took one of the two trailing
                              // pad floats Stage 3 left here; _pad0 shrinks to match
-    float _pad0[1];          // std140 rounds the block to 272
+    float maxLuminance;      // r_rtReflMaxLuminance (2026-10-16 addendum) — took the last pad
+                             // float; block still lands on exactly 272, no new padding needed
 };
 static_assert(sizeof(ReflParamsUBO) == 272, "ReflParamsUBO size mismatch");
 
@@ -1470,11 +1494,12 @@ static void VK_RT_InitReflAtrousPipeline(void)
     layoutCI.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.reflAtrousDescLayout));
 
-    // Push constants: 40 bytes, same layout as gi_atrous.comp's PC block.
+    // Push constants: 44 bytes — gi_atrous.comp's 40-byte PC block plus a trailing
+    // fireflyClamp float (see refl_atrous.comp).
     VkPushConstantRange pushRange = {};
     pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushRange.offset = 0;
-    pushRange.size = 40;
+    pushRange.size = 44;
 
     VkPipelineLayoutCreateInfo plCI = {};
     plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1904,6 +1929,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     else
         ubo.reflMode = idMath::ClampInt(1, 3, r_rtReflectionMode.GetInteger());
     ubo.roughnessMax = idMath::ClampFloat(0.0f, 1.0f, r_rtReflRoughnessMax.GetFloat());
+    ubo.maxLuminance = Max(0.0f, r_rtReflMaxLuminance.GetFloat());
     ubo.emitterCount = (int32_t)VK_RT_GetReflEmitterCount(frameIdx);
     ubo.glowTriCount = (int32_t)VK_RT_GetReflGlowTriCount(frameIdx);
     // 0 when off, so the glow triangles are also dropped in the rgen.
@@ -2574,6 +2600,7 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
     const float sigmaL = r_rtReflAtrousSigmaL.GetFloat();
     const float sigmaZ = r_rtReflAtrousSigmaZ.GetFloat();
     const float roughnessGain = r_rtReflAtrousRoughnessGain.GetFloat();
+    const float fireflyClamp = r_rtReflAtrousFireflyClamp.GetFloat();
 
     const uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
     const uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
@@ -2597,8 +2624,9 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
             int32_t scissorOffsetY;
             int32_t scissorExtentX;
             int32_t scissorExtentY;
+            float fireflyClamp;
         } pc;
-        static_assert(sizeof(pc) == 40, "AtrousReflPC size mismatch");
+        static_assert(sizeof(pc) == 44, "AtrousReflPC size mismatch");
 
         pc.stepSize = 1 << pass;
         pc.sigmaL = sigmaL;
@@ -2610,10 +2638,11 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
         pc.scissorOffsetY = dispatchRect.offset.y;
         pc.scissorExtentX = (int32_t)dispatchRect.extent.width;
         pc.scissorExtentY = (int32_t)dispatchRect.extent.height;
+        pc.fireflyClamp = fireflyClamp;
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.reflAtrousPipelineLayout, 0, 1,
                                 &vkRT.reflAtrousDescSets[frameIdx][descIdx], 0, NULL);
-        vkCmdPushConstants(cmd, vkRT.reflAtrousPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 40, &pc);
+        vkCmdPushConstants(cmd, vkRT.reflAtrousPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 44, &pc);
         vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
         const bool isLastPass = (pass == iters - 1);

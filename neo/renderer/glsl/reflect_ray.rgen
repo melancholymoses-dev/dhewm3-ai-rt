@@ -107,6 +107,8 @@ layout(set = 0, binding = 3) uniform ReflParams {
     float  guiReflGain;   // r_rtGuiReflGain — scales live GUI screen hits
     float  roughnessMax;  // r_rtReflRoughnessMax (Stage 4) — reflMode 3 only; above this an
                            // opaque pixel skips the reflection ray and takes GI alone
+    float  maxLuminance;  // r_rtReflMaxLuminance (2026-10-16 addendum) — hard luminance
+                           // ceiling on the final opaque radiance below. 0 = unbounded.
 } params;
 
 // Grid math only — no bindings of its own, so it can live alongside this set.
@@ -162,6 +164,19 @@ layout(location = 1) rayPayloadEXT GlassProbePayload glassProbe;
 // B0 debug mode 7: fixed gain on raw accum so the reflected subject reads through the
 // tonemap toe while mode 6 is judged (docs/plans/20260918_reflection_brightness.md F3).
 const float REFL_DEBUG_GAIN = 8.0;
+
+// 2026-10-16 addendum: a flat, absolute brightness ceiling on the final opaque radiance
+// (r_rtReflMaxLuminance), distinct from refl_atrous.comp's firefly clamp — that one is
+// LOCAL (only pulls down a texel that disagrees with its own neighbours), this one is a
+// direct "how bright can any reflection pixel get" knob for tuning overall brightness
+// down regardless of whether a pixel is a sampling outlier. 0 = unbounded.
+vec3 ReflClampLuminance(vec3 c, float maxLum)
+{
+    if (maxLum <= 0.0)
+        return c;
+    float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    return (lum > maxLum) ? c * (maxLum / max(lum, 1e-5)) : c;
+}
 
 // ---------------------------------------------------------------------------
 // In-scatter along the reflected segment (20261013_reflection_volumetrics.md).
@@ -635,5 +650,6 @@ void main()
     // Opaque: reusing R1's pre-trace `fresnel` is what makes that cull exact.
     // refl_composite.frag adds this straight through (no further Fresnel math there);
     // alpha carries F0 for potential future consumers (non-negative — "not glass").
-    imageStore(reflImage, coord, vec4(accum * params.reflBlend * fresnel, f0));
+    vec3 reflRadiance = ReflClampLuminance(accum * params.reflBlend * fresnel, params.maxLuminance);
+    imageStore(reflImage, coord, vec4(reflRadiance, f0));
 }

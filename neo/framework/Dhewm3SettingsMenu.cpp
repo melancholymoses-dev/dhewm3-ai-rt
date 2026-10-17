@@ -2509,8 +2509,10 @@ struct RTCVars
     idCVar *rtReflDenoiseAlpha = nullptr;
     idCVar *rtReflAtrousIterations = nullptr;
     idCVar *rtReflAtrousRoughnessGain = nullptr;
+    idCVar *rtReflAtrousFireflyClamp = nullptr;
     idCVar *rtReflRoughnessFloor = nullptr;
     idCVar *rtReflRoughnessScale = nullptr;
+    idCVar *rtReflMaxLuminance = nullptr;
 
     // GI fine-tuning
     idCVar *rtGITemporal = nullptr;
@@ -2651,8 +2653,10 @@ static void InitRTOptionsMenu()
     rtCVars.rtReflDenoiseAlpha = cvarSystem->Find("r_rtReflDenoiseAlpha");
     rtCVars.rtReflAtrousIterations = cvarSystem->Find("r_rtReflAtrousIterations");
     rtCVars.rtReflAtrousRoughnessGain = cvarSystem->Find("r_rtReflAtrousRoughnessGain");
+    rtCVars.rtReflAtrousFireflyClamp = cvarSystem->Find("r_rtReflAtrousFireflyClamp");
     rtCVars.rtReflRoughnessFloor = cvarSystem->Find("r_rtReflRoughnessFloor");
     rtCVars.rtReflRoughnessScale = cvarSystem->Find("r_rtReflRoughnessScale");
+    rtCVars.rtReflMaxLuminance = cvarSystem->Find("r_rtReflMaxLuminance");
     rtCVars.rtGITemporal = cvarSystem->Find("r_rtGITemporal");
     rtCVars.rtGITemporalAlpha = cvarSystem->Find("r_rtGITemporalAlpha");
     rtCVars.rtGISamples = cvarSystem->Find("r_rtGISamples");
@@ -2874,6 +2878,7 @@ static void DrawRTOptionsMenu()
         RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 5.0f, "%.2f");
         RTSliderFloat("Reflection Roughness Floor", rtCVars.rtReflRoughnessFloor, 0.0f, 1.0f, "%.2f");
         RTSliderFloat("Reflection Roughness Scale", rtCVars.rtReflRoughnessScale, 0.0f, 4.0f, "%.2f");
+        RTSliderFloat("Reflection Max Luminance", rtCVars.rtReflMaxLuminance, 0.0f, 16.0f, "%.1f");
         RTCheckbox("Light Shafts in Reflections", rtCVars.rtReflVol);
         ImGui::BeginDisabled(!(rtCVars.rtReflVol && rtCVars.rtReflVol->GetBool()));
         RTSliderInt("Shaft Samples per Ray", rtCVars.rtReflVolSteps, 1, 32);
@@ -2893,6 +2898,7 @@ static void DrawRTOptionsMenu()
         ImGui::BeginDisabled(!(rtCVars.rtReflDenoise && rtCVars.rtReflDenoise->GetInteger() >= 2));
         RTSliderInt("Spatial Filter Passes", rtCVars.rtReflAtrousIterations, 0, 8);
         RTSliderFloat("Spatial Filter Wash", rtCVars.rtReflAtrousRoughnessGain, 0.5f, 8.0f, "%.1f");
+        RTSliderFloat("Firefly Clamp", rtCVars.rtReflAtrousFireflyClamp, 0.0f, 8.0f, "%.1f");
         ImGui::EndDisabled();
 
         ImGui::EndTable();

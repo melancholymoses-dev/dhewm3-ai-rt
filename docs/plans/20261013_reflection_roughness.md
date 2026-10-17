@@ -78,6 +78,54 @@ more passes. Added `roughnessGain` (`r_rtReflAtrousRoughnessGain`, default 3.0, 
 reaches a full blend sooner. Roughness 0 is excluded before the gain is ever applied, so
 glass and screens stay exactly as sharp regardless of the gain setting.
 
+**2026-10-16, later same day:** more smoothing didn't fix the real complaint — bright
+single-pixel flashes at texture creases, there and gone as the view rotates. Root cause:
+Stage 3's GGX lobe is one sample per pixel with no light importance sampling, so a wide
+lobe (which is exactly what high roughness gives it) occasionally points straight at
+something far brighter than its surroundings. The luminance edge-stop in the blend can't
+remove this — an outlier has near-zero weight against normal neighbours, so it survives
+unblurred as its own centre value regardless of iteration count, which is why cranking
+`r_rtReflAtrousRoughnessGain`/iterations did nothing for it.
+
+Added a local firefly clamp in `refl_atrous.comp`, run before the edge-stopped blend:
+each of the 9 taps (and the centre) is scaled down if its luminance exceeds its own 3x3
+neighbours' mean by more than `r_rtReflAtrousFireflyClamp` (default 3.0, menu "Firefly
+Clamp", 0 disables). The reference mean excludes the centre tap itself so a firefly can't
+raise its own ceiling. This is local and relative, not a flat brightness cap — a surface
+that is uniformly bright (a real reflected screen, a sunlit wall) is unaffected, since its
+whole neighbourhood is bright together; only a texel that disagrees sharply with its
+immediate surroundings gets pulled down.
+
+Push constants grew from 40 to 44 bytes (`AtrousReflPC`/`PC` in `vk_reflections.cpp`/
+`refl_atrous.comp`) for the new `fireflyClamp` field.
+
+Also confirmed for the user: the reflection buffer stores the *hit surface's* own shaded
+colour (`reflect_ray.rchit`: `diffuse.rgb * irradiance` at the hit point, or raw emissive
+for a live screen) weighted by the *reflecting* surface's Schlick Fresnel — it is not
+multiplying the reflecting surface's own albedo into the result. `roughnessGain` only
+changes how much of the spatial blend applies at a given roughness; it has no effect on
+radiance magnitude, which is why it couldn't have capped the bright flashes.
+
+**2026-10-16, third addendum:** the firefly clamp helped, but the user wanted a second,
+separate knob — a flat ceiling on overall reflection brightness, not a per-pixel outlier
+test. Added `r_rtReflMaxLuminance` (default 0, unbounded; menu "Reflection Max
+Luminance"): applied in `reflect_ray.rgen` to the final opaque radiance (after reflBlend
+and Fresnel, so it reads the same units as what gets composited), via a new
+`ReflClampLuminance` helper. Glass is unaffected.
+
+| File | Change |
+|---|---|
+| `vk_reflections.cpp` | `r_rtReflMaxLuminance` cvar; `ReflParamsUBO.maxLuminance` (reused the struct's last pad float — offset 268, block still 272 bytes, no `static_assert` change); fill in `VK_RT_DispatchReflections` |
+| `reflect_ray.rgen` | `ReflParams.maxLuminance`; `ReflClampLuminance()`; applied at the opaque `imageStore` |
+| `Dhewm3SettingsMenu.cpp` | "Reflection Max Luminance" slider, next to Roughness Scale (not gated by denoise mode — this runs in the raygen, independent of `r_rtReflDenoise`) |
+
+Deliberately a *different* mechanism from the à-trous firefly clamp: that one is local
+(a texel is only pulled down if it disagrees with its own neighbours, so a uniformly
+bright reflected screen or sunlit wall is untouched); this one is absolute (anything
+over the ceiling gets capped regardless of its neighbours). The user wanted both —
+local for the sampling spikes, absolute for tuning the reflection layer's overall
+brightness down independent of that.
+
 Mode 11 (history age/rejection) always reads the raw temporal output, never the à-trous
 one — `VK_RT_GetReflReadView` special-cases it, since the debug tint's alpha is forced to
 1.0 and would otherwise be blurred by the filter, muddying the red/green boundary the mode

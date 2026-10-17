@@ -24,13 +24,19 @@ are excluded the same way — both as centres (nothing to denoise) and as
 neighbour samples (blending one in would paint a reflection onto a surface
 that was deliberately culled for having no F0).
 
+A local firefly clamp (r_rtReflAtrousFireflyClamp) runs before the blend: a single
+GGX sample with no light importance sampling occasionally points straight at
+something much brighter than its surroundings, and the edge-stopped blend alone
+can't remove that (an outlier gets near-zero weight against its neighbours, so it
+survives unblurred as its own centre value). See the comment at its use site.
+
 Inputs (set 0):
   binding 0 (combined image sampler)          — reflection buffer for this pass (ping-pong)
   binding 1 (rgba16f, storage, GENERAL)        — output reflection buffer for this pass
   binding 2 (combined image sampler)           — scene depth buffer
   binding 3 (combined image sampler)           — gbufAlbedo (alpha = packed class + roughness)
 
-Push constants: same 40-byte layout as gi_atrous.comp's PC block.
+Push constants: 44 bytes — gi_atrous.comp's PC block plus a trailing fireflyClamp float.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -64,6 +70,7 @@ layout(push_constant) uniform PC {
     int   scissorOffsetY;
     int   scissorExtentX;
     int   scissorExtentY;
+    float fireflyClamp;   // r_rtReflAtrousFireflyClamp — see the clamp below; 0 disables
 } pc;
 
 const float K[3][3] = float[3][3](
@@ -118,11 +125,71 @@ void main()
     }
 
     vec3  cCenter = cFull.rgb;
-    float lCenter = luminance(cCenter);
     float dCenter = texelFetch(depthSampler, coord, 0).r;
 
     float sigmaL2 = pc.sigmaL * pc.sigmaL + 0.0001;
     float sigmaZ2 = pc.sigmaZ * pc.sigmaZ + 0.0001;
+
+    // Gather the 3x3 once: used both for the firefly clamp below and the edge-stopped
+    // blend after it, so each neighbour is only texelFetch'd once per pass.
+    vec3  tapColour[9];
+    float tapDepth[9];
+    bool  tapValid[9];
+
+    for (int dy = -1; dy <= 1; dy++)
+    {
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            int idx = (dy + 1) * 3 + (dx + 1);
+            ivec2 sCoord = clamp(coord + ivec2(dx, dy) * pc.stepSize, ivec2(0), size - 1);
+
+            vec4 sFull = texelFetch(reflSrc, sCoord, 0);
+            // Same exclusion as the centre test above: skip glass and untraced
+            // neighbours rather than let them pull the average toward a value
+            // that belongs to a different surface or isn't a reflection at all.
+            tapValid[idx]  = sFull.a > VALID_ALPHA_THRESHOLD;
+            tapColour[idx] = sFull.rgb;
+            tapDepth[idx]  = texelFetch(depthSampler, sCoord, 0).r;
+        }
+    }
+
+    // Firefly clamp: a single-sample GGX lobe with no light importance sampling
+    // occasionally points straight at something far brighter than everything around
+    // it (a nearby light, a hot emissive) — a real bright surface lights up its whole
+    // neighbourhood together, not one texel, so anything that outshines its own
+    // neighbours' mean by more than fireflyClamp is the sampling artifact, not the
+    // surface. The luminance edge-stop below can't catch this on its own: an outlier
+    // has near-zero weight against normal neighbours, so it just survives as its own
+    // unblurred centre value — this runs first so the blend never sees the spike.
+    // Reference mean excludes the centre tap itself so a firefly can't inflate its
+    // own ceiling. 0 disables.
+    if (pc.fireflyClamp > 0.0)
+    {
+        float meanLum = 0.0;
+        float validCount = 0.0;
+        for (int i = 0; i < 9; i++)
+        {
+            if (i == 4 || !tapValid[i])
+                continue;
+            meanLum += luminance(tapColour[i]);
+            validCount += 1.0;
+        }
+        if (validCount > 0.0)
+        {
+            float cap = (meanLum / validCount) * pc.fireflyClamp;
+            for (int i = 0; i < 9; i++)
+            {
+                float l = luminance(tapColour[i]);
+                if (l > cap && l > 0.0001)
+                    tapColour[i] *= cap / l;
+            }
+            float lc = luminance(cCenter);
+            if (lc > cap && lc > 0.0001)
+                cCenter *= cap / lc;
+        }
+    }
+
+    float lCenter = luminance(cCenter);
 
     vec3  accumColour = vec3(0.0);
     float accumWeight = 0.0;
@@ -131,17 +198,12 @@ void main()
     {
         for (int dx = -1; dx <= 1; dx++)
         {
-            ivec2 sCoord = clamp(coord + ivec2(dx, dy) * pc.stepSize, ivec2(0), size - 1);
-
-            vec4 sFull = texelFetch(reflSrc, sCoord, 0);
-            // Same exclusion as the centre test above: skip glass and untraced
-            // neighbours rather than let them pull the average toward a value
-            // that belongs to a different surface or isn't a reflection at all.
-            if (sFull.a <= VALID_ALPHA_THRESHOLD)
+            int idx = (dy + 1) * 3 + (dx + 1);
+            if (!tapValid[idx])
                 continue;
 
-            vec3  sColour = sFull.rgb;
-            float sDepth  = texelFetch(depthSampler, sCoord, 0).r;
+            vec3  sColour = tapColour[idx];
+            float sDepth  = tapDepth[idx];
 
             float dl = lCenter - luminance(sColour);
             float wL = exp(-(dl * dl) / sigmaL2);
