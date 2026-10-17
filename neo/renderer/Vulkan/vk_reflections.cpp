@@ -106,6 +106,14 @@ static idCVar r_rtReflRoughLumExp(
     "dim reflected walls sit under the ceiling and pass unchanged. 0 = no roughness scaling.",
     0.0f, 8.0f);
 
+// Reflection refactor Stage 1 (20261017_reflection_pipeline_refactor.md). Quality setting
+// (taste contract #7): default 0 until converged A/B screenshots match.
+idCVar r_rtReflShadowPicks("r_rtReflShadowPicks", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
+                           "Shadow rays per opaque reflection hit. 0 = deterministic loop (up to 8 rays,\n"
+                           "lights past the budget unshadowed). 1-2 = importance-sample that many lights\n"
+                           "(unbiased, noisier; the denoiser absorbs it). Glass always uses 0.",
+                           0, 2);
+
 // Volumetrics in reflections (docs/plans/20261013_reflection_volumetrics.md). The
 // reflection ray marches the same froxel scatter grid the primary view resolves, so
 // light shafts — the flashlight beam above all — show up in glass. Needs
@@ -286,7 +294,8 @@ idCVar r_rtReflectionDebugMode(
 //   float  maxLuminance   offset 268 size  4  (r_rtReflMaxLuminance, 2026-10-16 addendum —
 //                                               took the last pad float; block still ends at
 //                                               272, already a multiple of 16, no new padding)
-//   total: 272 bytes — std140 rounds the block up to a multiple of
+//   int    shadowPicks    offset 272 size  4  (r_rtReflShadowPicks, refl-refactor Stage 1)
+//   total: 288 bytes — std140 rounds the block up to a multiple of
 //   16, and uboInfo.range is sizeof(ReflParamsUBO), which must not be smaller.
 // ---------------------------------------------------------------------------
 
@@ -331,8 +340,10 @@ struct ReflParamsUBO
                              // pad floats Stage 3 left here; _pad0 shrinks to match
     float maxLuminance;      // r_rtReflMaxLuminance (2026-10-16 addendum) — took the last pad
                              // float; block still lands on exactly 272, no new padding needed
+    int32_t shadowPicks;     // r_rtReflShadowPicks — 0 deterministic, 1-2 stochastic (opaque only)
+    int32_t _pad0[3];        // std140 block size rounds to 16
 };
-static_assert(sizeof(ReflParamsUBO) == 272, "ReflParamsUBO size mismatch");
+static_assert(sizeof(ReflParamsUBO) == 288, "ReflParamsUBO size mismatch");
 
 // ---------------------------------------------------------------------------
 // UBO layout matching refl_temporal_resolve.comp's ReflTemporalParams block.
@@ -1942,6 +1953,18 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         ubo.reflMode = idMath::ClampInt(1, 3, r_rtReflectionMode.GetInteger());
     ubo.roughnessMax = idMath::ClampFloat(0.0f, 1.0f, r_rtReflRoughnessMax.GetFloat());
     ubo.maxLuminance = Max(0.0f, r_rtReflMaxLuminance.GetFloat());
+    ubo.shadowPicks = idMath::ClampInt(0, 2, r_rtReflShadowPicks.GetInteger());
+    {
+        // Confirms the knob reaches the pass when A/B-ing it.
+        static int s_lastPicks = -1;
+        if (ubo.shadowPicks != s_lastPicks)
+        {
+            s_lastPicks = ubo.shadowPicks;
+            common->Printf("[Refl] opaque hit shadow rays: %s\n",
+                           ubo.shadowPicks > 0 ? va("stochastic, %d pick(s)", ubo.shadowPicks)
+                                               : "deterministic, up to 8");
+        }
+    }
     ubo.emitterCount = (int32_t)VK_RT_GetReflEmitterCount(frameIdx);
     ubo.glowTriCount = (int32_t)VK_RT_GetReflGlowTriCount(frameIdx);
     // 0 when off, so the glow triangles are also dropped in the rgen.

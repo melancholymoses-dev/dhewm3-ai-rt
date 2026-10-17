@@ -110,6 +110,7 @@ layout(set = 0, binding = 3) uniform ReflParams {
                            // opaque pixel skips the reflection ray and takes GI alone
     float  maxLuminance;  // r_rtReflMaxLuminance (2026-10-16 addendum) — hard luminance
                            // ceiling on the final opaque radiance below. 0 = unbounded.
+    int    shadowPicks;   // r_rtReflShadowPicks — opaque hits: 0 deterministic loop, 1-2 stochastic
 } params;
 
 // Grid math only — no bindings of its own, so it can live alongside this set.
@@ -483,6 +484,8 @@ void main()
     // on it here. Glass is exempt; its weight comes from the interface, not surface F0.
     float fresnel = 0.0;
     float lumCeiling = params.maxLuminance;
+    uint  lightSeed  = 0u;
+    int   lightPicks = 0;
     if (!isGlass)
     {
         float NdotV = clamp(dot(reflNormal, -viewDir), 0.0, 1.0);
@@ -531,6 +534,13 @@ void main()
         // back to the exact mirror direction is cheap and always valid.
         if (dot(reflDir, reflNormal) <= 0.0)
             reflDir = reflect(viewDir, reflNormal);
+
+        // Stochastic light picks at the hit (refl-refactor Stage 1). The pixel hash keeps
+        // neighbours in one world cell from all picking the same light, so à-trous can
+        // average them; the constant decorrelates it from the GGX sample above.
+        lightPicks = params.shadowPicks;
+        lightSeed  = wang_hash(seed ^ wang_hash(uint(coord.x) * 73856093u ^ uint(coord.y) * 19349663u)
+                               ^ 0x68bc21ebu);
     }
 
     if (params.debugMode == 5)
@@ -578,6 +588,8 @@ void main()
         reflPayload.transmittance = 0.0;
         reflPayload.hitT          = params.maxDist;
         reflPayload.hitFlags      = 0u;
+        reflPayload.lightSeed     = lightSeed + uint(i) * 0x9e3779b9u;
+        reflPayload.lightPicks    = lightPicks;
 
         traceRayEXT(
             topLevelAS,

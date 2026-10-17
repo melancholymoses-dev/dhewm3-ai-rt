@@ -72,12 +72,15 @@ If not, re-order the stages to match.
 
 ## Stage 1 — Stochastic lights at reflection hits
 
+Implemented 2026-10-17, awaiting build + A/B. Default `r_rtReflShadowPicks 0` (taste #7).
+
 | File | Change |
 |---|---|
-| `reflect_payload.glsl` | Add `uint seed` and `uint rayClass` (glass / opaque) |
-| `reflect_ray.rgen` | Fill both before `traceRayEXT`; seed per pixel per frame (`rt_WorldAnchoredSeed`) |
-| `reflect_ray.rchit` | Opaque rays: `rt_EvalDirectLightingStochastic(..., picks, seed)`. Glass rays keep the deterministic loop (sharp, no à-trous to absorb noise) |
-| `vk_reflections.cpp` | `r_rtReflShadowPicks` (0 = deterministic loop, 1–2 = stochastic). Passed via `rtLightBuf` or a reflection UBO field |
+| `reflect_payload.glsl` | Add `uint lightSeed`, `int lightPicks` (0 = deterministic; replaces a separate rayClass) |
+| `reflect_ray.rgen` | Opaque: `lightPicks = params.shadowPicks`, seed = `rt_WorldAnchoredSeed` × pixel hash. Glass: 0 |
+| `reflect_ray.rchit`, `player_reflect.rchit` | `lightPicks > 0` → `rt_EvalDirectLightingStochastic`, else the deterministic loop |
+| `rt_light_eval.glsl` | Stochastic loop takes `ambientScale` (occluded pick keeps that fraction, matching the deterministic loop). `gi_ray.rchit` passes 0 |
+| `vk_reflections.cpp` | `r_rtReflShadowPicks` (0–2) → `ReflParamsUBO.shadowPicks` (UBO 272 → 288). `[Refl]` log line on change |
 | `Dhewm3SettingsMenu.cpp` | Slider |
 
 Side benefit: the stochastic estimator is unbiased, so the "past the 8-ray budget, added

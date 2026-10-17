@@ -81,13 +81,20 @@ void main()
         if (dot(hitNorm, -gl_WorldRayDirectionEXT) < 0.0)
             hitNorm = -hitNorm;
 
-        vec3 irradiance = vec3(REFL_AMBIENT) +
-                          rt_EvalDirectLighting(hitPos, hitNorm, RT_LIGHT_MAX_LIGHTS,
-                                                REFL_MAX_SHADOW_LIGHTS, REFL_SHADOW_BIAS,
-                                                1.0, REFL_SHADOW_MIN_LUM,
-                                                rtLightBuf.reflAmbientScale,
-                                                REFL_SELF_SHADOW_MASK);
-        reflPayload.colour = diffuse.rgb * irradiance;
+        // Same stochastic/deterministic split as reflect_ray.rchit.
+        vec3 direct;
+        if (reflPayload.lightPicks > 0)
+            direct = rt_EvalDirectLightingStochastic(hitPos, hitNorm, RT_LIGHT_MAX_LIGHTS,
+                                                     reflPayload.lightPicks, REFL_SHADOW_BIAS, 1.0,
+                                                     reflPayload.lightSeed,
+                                                     rtLightBuf.reflAmbientScale, REFL_SELF_SHADOW_MASK);
+        else
+            direct = rt_EvalDirectLighting(hitPos, hitNorm, RT_LIGHT_MAX_LIGHTS,
+                                           REFL_MAX_SHADOW_LIGHTS, REFL_SHADOW_BIAS,
+                                           1.0, REFL_SHADOW_MIN_LUM,
+                                           rtLightBuf.reflAmbientScale,
+                                           REFL_SELF_SHADOW_MASK);
+        reflPayload.colour = diffuse.rgb * (vec3(REFL_AMBIENT) + direct);
     }
     else
     {

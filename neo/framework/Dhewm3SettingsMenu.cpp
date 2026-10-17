@@ -2516,6 +2516,7 @@ struct RTCVars
     idCVar *rtReflRoughnessScale = nullptr;
     idCVar *rtReflMaxLuminance = nullptr;
     idCVar *rtReflRoughLumExp = nullptr;
+    idCVar *rtReflShadowPicks = nullptr;
 
     // GI fine-tuning
     idCVar *rtGITemporal = nullptr;
@@ -2662,6 +2663,7 @@ static void InitRTOptionsMenu()
     rtCVars.rtReflRoughnessScale = cvarSystem->Find("r_rtReflRoughnessScale");
     rtCVars.rtReflMaxLuminance = cvarSystem->Find("r_rtReflMaxLuminance");
     rtCVars.rtReflRoughLumExp = cvarSystem->Find("r_rtReflRoughLumExp");
+    rtCVars.rtReflShadowPicks = cvarSystem->Find("r_rtReflShadowPicks");
     rtCVars.rtGITemporal = cvarSystem->Find("r_rtGITemporal");
     rtCVars.rtGITemporalAlpha = cvarSystem->Find("r_rtGITemporalAlpha");
     rtCVars.rtGISamples = cvarSystem->Find("r_rtGISamples");
@@ -2885,6 +2887,7 @@ static void DrawRTOptionsMenu()
         RTSliderFloat("Reflection Roughness Scale", rtCVars.rtReflRoughnessScale, 0.0f, 4.0f, "%.2f");
         RTSliderFloat("Reflection Max Luminance", rtCVars.rtReflMaxLuminance, 0.0f, 2.0f, "%.1f");
         RTSliderFloat("Rough Highlight Damping", rtCVars.rtReflRoughLumExp, 0.0f, 8.0f, "%.1f");
+        RTSliderInt("Reflection Shadow Picks (0 = all lights)", rtCVars.rtReflShadowPicks, 0, 2);
         RTCheckbox("Light Shafts in Reflections", rtCVars.rtReflVol);
         ImGui::BeginDisabled(!(rtCVars.rtReflVol && rtCVars.rtReflVol->GetBool()));
         RTSliderInt("Shaft Samples per Ray", rtCVars.rtReflVolSteps, 1, 32);
