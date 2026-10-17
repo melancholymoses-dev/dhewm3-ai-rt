@@ -36,7 +36,8 @@ Inputs (set 0):
   binding 2 (combined image sampler)           — scene depth buffer
   binding 3 (combined image sampler)           — gbufAlbedo (alpha = packed class + roughness)
 
-Push constants: 44 bytes — gi_atrous.comp's PC block plus a trailing fireflyClamp float.
+Push constants: 48 bytes — gi_atrous.comp's PC block plus trailing fireflyClamp/fireflyFloor
+floats.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -71,6 +72,8 @@ layout(push_constant) uniform PC {
     int   scissorExtentX;
     int   scissorExtentY;
     float fireflyClamp;   // r_rtReflAtrousFireflyClamp — see the clamp below; 0 disables
+    float fireflyFloor;   // r_rtReflAtrousFireflyFloor — absolute floor under the clamp's
+                           // neighbourhood-mean cap, see the clamp below
 } pc;
 
 const float K[3][3] = float[3][3](
@@ -163,7 +166,18 @@ void main()
     // unblurred centre value — this runs first so the blend never sees the spike.
     // Reference mean excludes the centre tap itself so a firefly can't inflate its
     // own ceiling. 0 disables.
-    if (pc.fireflyClamp > 0.0)
+    //
+    // Only runs on pass 0 (stepSize 1): the step width (and so the cap) grows every
+    // pass, and re-applying it would wear down a thin bright feature (a reflected
+    // light strip, a glint) a bit more each iteration for no benefit — one clamp
+    // before the first blend is enough, later passes just blend the already-clamped
+    // result.
+    //
+    // fireflyFloor keeps the cap from collapsing toward 0 when the whole neighbourhood
+    // is near-black (a single light glinting off dark metal, say): without it, a
+    // legitimate small highlight with no bright neighbours gets crushed to near
+    // nothing, which is the opposite of what this is for.
+    if (pc.fireflyClamp > 0.0 && pc.stepSize == 1)
     {
         float meanLum = 0.0;
         float validCount = 0.0;
@@ -176,7 +190,7 @@ void main()
         }
         if (validCount > 0.0)
         {
-            float cap = (meanLum / validCount) * pc.fireflyClamp;
+            float cap = max((meanLum / validCount) * pc.fireflyClamp, pc.fireflyFloor);
             for (int i = 0; i < 9; i++)
             {
                 float l = luminance(tapColour[i]);

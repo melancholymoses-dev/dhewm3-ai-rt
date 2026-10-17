@@ -19,7 +19,7 @@ they are things to check code against, not things to schedule.
 | # | Item | Doc | Status |
 |---|---|---|---|
 | 8 | **Optimization** — Vulkan core (F/A), RT uploads (R/B), not-yet-audited (X), **Stage L interaction overdraw**. Stage S shadow dispatch closed | `20261010_vk_core_audit.md`, closed half in `completed/20261010_vk_core_audit_closed.md` | **Parked** — see that doc's "Current lead" section. Three wins (S2 cull, `r_rtShadowSamples` 4 → 2, BLAS pooling); 17 findings dispatched or parked by measurement.  Pausing |
-| 8d | **Surface roughness in reflections** — extend past glass to opaque surfaces with a GGX lobe. Blocked on a reflection denoiser (the only RT pass without one) and a roughness ceiling to avoid double-counting probe GI. Stages 1-5 | `20261013_reflection_roughness.md` | Stages 1-4 written 2026-10-16, plus a Stage 1 addendum (`r_rtReflDenoise 2`, roughness-gated à-trous spatial filter) added the same day after manual testing surfaced single-sample GGX grain on rough opaque surfaces. Builds; Stages 1-3 partially smoke-tested in-session (mode 11 rejection/convergence, mode 12 roughness gradient, mode 2 + `r_rtReflRoughnessScale` lobe-widening all behave as expected) but none of the four formal Stage Checks have been run end to end, and the addendum itself is unverified. Stage 5 unstarted. Budget 20-40% frame time for the all-surface mode; **gates cleanup Phase 2b/2c**, which would otherwise reclaim the G-buffer alpha that F0 needs |
+| 8d | **Surface roughness in reflections** — extend past glass to opaque surfaces with a GGX lobe. Stages 1-4 | `completed/20261013_reflection_roughness.md` | **Done 2026-10-16.** Closed on live visual confirmation (sheen on floors, clear screen/emitter reflections, no fireflies or blinding pixels), not the formal numeric Stage Checks — none of those were run end to end. Three same-day addenda beyond the original plan: roughness-gated à-trous spatial filter (`r_rtReflDenoise 2`) with a tunable wash gain, a local firefly clamp (`r_rtReflAtrousFireflyClamp`), and a flat brightness ceiling (`r_rtReflMaxLuminance`). Stage 5's menu/preset/doc polish not done — see that doc's "What's left" |
 | 8e | **Cleanup + polish** — debug/cvar trim (1a/1b/1c), dead-path deletion, resets, presets, comment sweep | `20261010_cleanup_polish.md` | Reordered 2026-10-13: deletion runs *after* the gaining work, since the dead GI/vol paths measure 0.001 ms. 1a and 5a are unblocked and can land any time |
 | 8f | **Live GUI screens in reflections** — render GUIs to slot textures, admit GUI surfaces to the TLAS. Stages 0-3 | `completed/20261015_gui_reflections.md` | **Done 2026-10-16.** Bioscan screens live in the glass; gain 0.3, refresh every 2nd frame. Unchecked: pool size in the admin offices |
 
@@ -37,12 +37,10 @@ this says *when*.
 | 4b | ~~8f GUI reflections Stages 0-3~~ — **done 2026-10-16** | 8f | Doc in `completed/` |
 | 5 | Cleanup 1b (+ Stage S4 serial-path deletion) | 8e | Unblocked — Stage S closed |
 | 6 | ~~Optimization Stage L~~ — **parked 2026-10-14.** L1 landed (per-light labels); L2 blocked, L3 dropped | 8 | Four candidate causes measured negative. If optimization resumes, start with the AO ray budget or the E3 `vid_restart` leak — both cheap, neither needs new tooling |
-| 7 | 8d roughness Stages 1-5 | 8d | Stages 1-4 written and building. Formal Stage Checks still outstanding (Stage 1: bit-identical at `r_rtReflDenoise 0`, ≤0.3ms cost; Stage 2: FSR T&C/player-exclude unchanged; Stage 3: glass bit-identical, grazing energy flat; Stage 4: `r_rtReflRoughnessMax 0` ≡ mode 1, scene brightness flat under the sweep, no noise floor in dark corridors — mode 13 is the fast way to see the boundary first). Decide go/no-go on the 20-40% frame cost before Stage 5 ships mode 3 in a preset |
-| 8 | Cleanup 1c + Phase 2 | 8e | Needs the reflection arc resolved — **2c is irreversible** |
+| 7 | ~~8d roughness Stages 1-4~~ — **done 2026-10-16** | 8d | Closed on live testing, not the formal numeric Stage Checks (never run end to end). Doc in `completed/`. Stage 5 (menu/presets/docs) not done — not blocking |
+| 8 | Cleanup 1c + Phase 2 | 8e | **Unblocked** — 8d resolved. 2c is irreversible, reclaims the G-buffer alpha F0 needs |
 | 9 | Cleanup 3, 4 | 8e | Biggest surgery, 0.001 ms gain. Last of the code changes |
 | 10 | Cleanup 5b presets, then Phase 7 comments | 8e | Needs the final cvar set |
-
-If 8d is abandoned, step 8 unblocks immediately and Phase 2 can delete the F0 path outright.
 
 
 
@@ -83,7 +81,6 @@ driven by gpu.Interactions.
 |---|---|
 | `20261010_vk_core_audit.md` | **All optimization.** Open findings, open stages (B2 remainder, B3, B4, A3, E2-E4), the X verdicts, the baseline numbers and the next levers. Closed work is in `completed/20261010_vk_core_audit_closed.md`; the profiler reference is in `../vulkan_debugging.md` |
 | `20261010_cleanup_polish.md` | **All deletion and polish, no optimization.** Phase order 1a/1b/1c, the per-phase rules (cvar+UBO+shader+menu deleted together), presets and resets, comment sweep |
-| `20261013_reflection_roughness.md` | Roughness/GGX reflections, the denoiser, and the GI handoff ceiling |
 
 
 **Reference Documents**
@@ -101,6 +98,7 @@ All in `completed/`.
 
 | Doc | Owns |
 |---|---|
+| `20261013_reflection_roughness.md` | **Arc 8d.** Opaque reflections get a GGX lobe sourced from bump-map (Toksvig) roughness instead of a mirror; reflection temporal + roughness-gated à-trous denoiser; firefly clamp and flat brightness ceiling for the single-sample lobe's worst outliers |
 | `20261013_reflection_volumetrics.md` | **Arc 8c.** Flashlight beam in glass: reflected segment marched through `froxelScatter` (`r_rtReflVol*`), mean-direction phase grid, GL projected-light falloff image in the shared light eval |
 | `20261013_glass_geometric_normal.md` | **Arc 8b.** Glass patch crease normals: per-triangle symmetry test (`r_rtGlassNormalMode 2`, default), refl debug mode 9, the stock-map glass-patch census. Stage 3 map tour skipped — only the `mars_city1` cafeteria was checked |
 | `20261010_vk_core_audit_closed.md` | **Arc 8, closed half.** Stage S shadow dispatch in full, the closed B stages and their A/Bs (BLAS pooling, static flags, BAR placement, frame serialization), the 10 findings dispatched by measurement, the parked stages, and the three measurement defects |

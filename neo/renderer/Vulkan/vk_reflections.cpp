@@ -44,7 +44,7 @@ of the original Doom 3 GPL Source Code release.
 // r_rtReflections declared in RenderSystem_init.cpp
 
 static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "1000.0", CVAR_RENDERER | CVAR_FLOAT,
-                                     "Max reflection ray travel distance in world units (default 2500.0)");
+                                     "Max reflection ray travel distance in world units (default 1000.0)");
 
 static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "6.0", CVAR_RENDERER | CVAR_FLOAT,
                                   "Scale factor for reflection radiance, applied in reflect_ray.rgen. Max 10.");
@@ -121,7 +121,7 @@ static idCVar r_rtReflVolGain("r_rtReflVolGain", "1.0", CVAR_RENDERER | CVAR_FLO
                               "mean-direction grid landed, there is no phase-angle bias left to compensate for.");
 
 idCVar r_rtReflectionMode("r_rtReflectionMode", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
-                          "1 = glass only (default). Reflections are dispatched over the union screen rect of the\n"
+                          "1 = glass only. Reflections are dispatched over the union screen rect of the\n"
                           "    view's SURFTYPE_GLASS surfaces and skipped entirely when the view holds no glass;\n"
                           "    opaque geometry never reflects, so no per-pixel F0/Fresnel work is done at all.\n"
                           "2 = legacy full-screen. Every non-sky pixel is traced and gated by the specular-map F0\n"
@@ -169,7 +169,13 @@ idCVar r_rtReflAtrousFireflyClamp("r_rtReflAtrousFireflyClamp", "3.0", CVAR_REND
                             "luminance by more than this factor is scaled down to that cap before the\n"
                             "blend — tames single-sample GGX fireflies (a wide lobe with no light\n"
                             "importance sampling occasionally lands on something far brighter than its\n"
-                            "surroundings) that the luminance edge-stop alone can't remove. 0 disables.");
+                            "surroundings) that the luminance edge-stop alone can't remove. 0 disables.\n"
+                            "Only applied on the filter's first pass — see r_rtReflAtrousFireflyFloor.");
+idCVar r_rtReflAtrousFireflyFloor("r_rtReflAtrousFireflyFloor", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                            "r_rtReflAtrousFireflyClamp's cap never goes below this. Without a floor, a\n"
+                            "real small highlight with no bright neighbours (a light glinting off dark\n"
+                            "metal) sits in a near-black 3x3 mean and gets crushed toward 0 instead of\n"
+                            "merely capped — the opposite of what the clamp is for.");
 
 // Stage 2 (20261013_reflection_roughness.md). The Toksvig estimate (gbuffer.frag) is a
 // specular-AA signal — it only measures bump-map normal variance, so a flat/clean bump
@@ -1494,12 +1500,12 @@ static void VK_RT_InitReflAtrousPipeline(void)
     layoutCI.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.reflAtrousDescLayout));
 
-    // Push constants: 44 bytes — gi_atrous.comp's 40-byte PC block plus a trailing
-    // fireflyClamp float (see refl_atrous.comp).
+    // Push constants: 48 bytes — gi_atrous.comp's 40-byte PC block plus trailing
+    // fireflyClamp/fireflyFloor floats (see refl_atrous.comp).
     VkPushConstantRange pushRange = {};
     pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushRange.offset = 0;
-    pushRange.size = 44;
+    pushRange.size = 48;
 
     VkPipelineLayoutCreateInfo plCI = {};
     plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -2485,6 +2491,15 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
     const int frameIdx = vk.currentFrame;
 
+    // Guard against duplicate dispatch in the same frame (weapon subview etc.) — mirrors
+    // VK_RT_DispatchReflTemporal's own guard. Must come before the reflAtrousReadView
+    // clear below: a second call this frame must leave the first call's result (already
+    // the correct one to read, and already composited once) alone rather than null it
+    // out, and must not re-run the N full-screen passes against bufA/B a second time.
+    static int s_lastReflAtrousDispatchFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
+    if (s_lastReflAtrousDispatchFrame[frameIdx] == tr.frameCount)
+        return;
+
     // Stale from a previous frame (denoise toggled down, or an early return below)
     // must never leak forward — VK_RT_GetReflReadView checks this every frame.
     vkRT.reflAtrousReadView[frameIdx] = VK_NULL_HANDLE;
@@ -2513,6 +2528,11 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkRTImage_t &bufB = vkRT.reflAtrousB[frameIdx];
     if (bufA.image == VK_NULL_HANDLE || bufB.image == VK_NULL_HANDLE)
         return;
+    if (vkRT.gbufAlbedo[frameIdx].view == VK_NULL_HANDLE)
+        return; // bound below with no other check — VK_RT_DispatchReflTemporal checks its
+                // own gbuf views the same way before dispatching
+
+    s_lastReflAtrousDispatchFrame[frameIdx] = tr.frameCount;
 
     // --- Depth barrier: ATTACHMENT -> READ_ONLY for the edge-stop depth reads ---
     VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
@@ -2601,6 +2621,7 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
     const float sigmaZ = r_rtReflAtrousSigmaZ.GetFloat();
     const float roughnessGain = r_rtReflAtrousRoughnessGain.GetFloat();
     const float fireflyClamp = r_rtReflAtrousFireflyClamp.GetFloat();
+    const float fireflyFloor = r_rtReflAtrousFireflyFloor.GetFloat();
 
     const uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
     const uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
@@ -2625,8 +2646,9 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
             int32_t scissorExtentX;
             int32_t scissorExtentY;
             float fireflyClamp;
+            float fireflyFloor;
         } pc;
-        static_assert(sizeof(pc) == 44, "AtrousReflPC size mismatch");
+        static_assert(sizeof(pc) == 48, "AtrousReflPC size mismatch");
 
         pc.stepSize = 1 << pass;
         pc.sigmaL = sigmaL;
@@ -2639,10 +2661,11 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
         pc.scissorExtentX = (int32_t)dispatchRect.extent.width;
         pc.scissorExtentY = (int32_t)dispatchRect.extent.height;
         pc.fireflyClamp = fireflyClamp;
+        pc.fireflyFloor = fireflyFloor;
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.reflAtrousPipelineLayout, 0, 1,
                                 &vkRT.reflAtrousDescSets[frameIdx][descIdx], 0, NULL);
-        vkCmdPushConstants(cmd, vkRT.reflAtrousPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 44, &pc);
+        vkCmdPushConstants(cmd, vkRT.reflAtrousPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 48, &pc);
         vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
         const bool isLastPass = (pass == iters - 1);

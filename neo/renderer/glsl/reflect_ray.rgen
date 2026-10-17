@@ -510,6 +510,16 @@ void main()
         float u1 = randFloat(seed);
         float u2 = fract(randFloat(seed + 1u) + phiOffset);
         reflDir  = rt_SampleGGXReflection(reflNormal, viewDir, alpha, u1, u2);
+
+        // VNDF sampling only guarantees the sampled HALF-vector stays above the macro
+        // normal — reflect()'ing the view direction around it can still come out below
+        // the surface, especially at grazing angles with a wide lobe (high roughness).
+        // Left unchecked, that ray heads back into the surface it just left, hits its
+        // own backface or whatever is behind it (gl_RayFlagsNoneEXT does not cull
+        // either), and reads as a dark speckle or a leak of the next room. Falling
+        // back to the exact mirror direction is cheap and always valid.
+        if (dot(reflDir, reflNormal) <= 0.0)
+            reflDir = reflect(viewDir, reflNormal);
     }
 
     if (params.debugMode == 5)
