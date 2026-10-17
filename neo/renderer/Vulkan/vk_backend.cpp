@@ -414,6 +414,7 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_AO,
     VK_RTPROF_PHASE_REFLECTIONS,
     VK_RTPROF_PHASE_REFL_TEMPORAL,
+    VK_RTPROF_PHASE_REFL_ATROUS,
     VK_RTPROF_PHASE_GI,
     VK_RTPROF_PHASE_GI_TEMPORAL,
     VK_RTPROF_PHASE_GI_ATROUS,
@@ -501,6 +502,7 @@ static uint64_t s_rtProfFrameStart[VK_MAX_FRAMES_IN_FLIGHT] = {};
 // so a phase added to the enum without a name here shows up as a hole.
 static const char *const s_rtProfPhaseNames[VK_RTPROF_PHASE_COUNT] = {
     "TLAS",         "Shadows",      "AO",            "Refl",            "ReflTemporal",
+    "ReflAtrous",
     "GI",           "GITemporal",   "GIAtrous",      "ProbeTrace",      "ProbeBlend",
     "ProbeResolve", "GIComposite",  "Vol",           "VolTemporal",     "VolBilateral",
     "FroxelFill",   "FroxelIntegrate", "FroxelResolve", "VolComposite", "DepthPrepass",
@@ -5520,6 +5522,15 @@ void VK_RB_DrawView(const void *data)
             VK_RT_DispatchReflTemporal(cmdBuf, backEnd.viewDef);
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfReflTemporal);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_REFL_TEMPORAL, rtCpuReflTemporalStart);
+
+            // Stage 1 addendum: roughness-gated à-trous spatial filter on top of the
+            // temporal result. No-op below r_rtReflDenoise 2.
+            VK_SetRenderStage("RT_Reflections_Atrous");
+            const uint64_t rtCpuReflAtrousStart = VK_RTProfile_CPUStamp();
+            int rtProfReflAtrous = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_REFL_ATROUS);
+            VK_RT_DispatchReflAtrous(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfReflAtrous);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_REFL_ATROUS, rtCpuReflAtrousStart);
 
             VK_SetRenderStage("RT_GI");
             const uint64_t rtCpuGIStart = VK_RTProfile_CPUStamp();

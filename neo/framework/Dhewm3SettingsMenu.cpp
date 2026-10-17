@@ -2507,6 +2507,8 @@ struct RTCVars
     idCVar *rtGlassCreaseRatio = nullptr;
     idCVar *rtReflDenoise = nullptr;
     idCVar *rtReflDenoiseAlpha = nullptr;
+    idCVar *rtReflAtrousIterations = nullptr;
+    idCVar *rtReflAtrousRoughnessGain = nullptr;
     idCVar *rtReflRoughnessFloor = nullptr;
     idCVar *rtReflRoughnessScale = nullptr;
 
@@ -2647,6 +2649,8 @@ static void InitRTOptionsMenu()
     rtCVars.rtGlassCreaseRatio = cvarSystem->Find("r_rtGlassCreaseRatio");
     rtCVars.rtReflDenoise = cvarSystem->Find("r_rtReflDenoise");
     rtCVars.rtReflDenoiseAlpha = cvarSystem->Find("r_rtReflDenoiseAlpha");
+    rtCVars.rtReflAtrousIterations = cvarSystem->Find("r_rtReflAtrousIterations");
+    rtCVars.rtReflAtrousRoughnessGain = cvarSystem->Find("r_rtReflAtrousRoughnessGain");
     rtCVars.rtReflRoughnessFloor = cvarSystem->Find("r_rtReflRoughnessFloor");
     rtCVars.rtReflRoughnessScale = cvarSystem->Find("r_rtReflRoughnessScale");
     rtCVars.rtGITemporal = cvarSystem->Find("r_rtGITemporal");
@@ -2881,10 +2885,14 @@ static void DrawRTOptionsMenu()
         ImGui::BeginDisabled(!(rtCVars.rtGlassNormalMode && rtCVars.rtGlassNormalMode->GetInteger() == 2));
         RTSliderFloat("Glass Crease Ratio", rtCVars.rtGlassCreaseRatio, 0.0f, 1.0f, "%.2f");
         ImGui::EndDisabled();
-        static const char *const reflDenoiseModes[] = {"Off", "Temporal", "Temporal + Spatial (not yet implemented)"};
+        static const char *const reflDenoiseModes[] = {"Off", "Temporal", "Temporal + Spatial"};
         RTCombo("Reflection Denoise", rtCVars.rtReflDenoise, reflDenoiseModes, IM_ARRAYSIZE(reflDenoiseModes));
         ImGui::BeginDisabled(!(rtCVars.rtReflDenoise && rtCVars.rtReflDenoise->GetInteger() > 0));
         RTSliderFloat("Denoise Alpha Floor", rtCVars.rtReflDenoiseAlpha, 0.0f, 1.0f, "%.2f");
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(!(rtCVars.rtReflDenoise && rtCVars.rtReflDenoise->GetInteger() >= 2));
+        RTSliderInt("Spatial Filter Passes", rtCVars.rtReflAtrousIterations, 0, 8);
+        RTSliderFloat("Spatial Filter Wash", rtCVars.rtReflAtrousRoughnessGain, 0.5f, 8.0f, "%.1f");
         ImGui::EndDisabled();
 
         ImGui::EndTable();

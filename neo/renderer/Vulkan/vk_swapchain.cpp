@@ -70,6 +70,18 @@ static bool VK_PresentModeSupported(const VkPresentModeKHR *modes, uint32_t coun
     return false;
 }
 
+static const char *VK_PresentModeName(VkPresentModeKHR mode)
+{
+    switch (mode)
+    {
+        case VK_PRESENT_MODE_IMMEDIATE_KHR: return "IMMEDIATE (tearing)";
+        case VK_PRESENT_MODE_MAILBOX_KHR: return "MAILBOX (tearing possible on some Linux compositors)";
+        case VK_PRESENT_MODE_FIFO_KHR: return "FIFO (tear-free, spec-guaranteed)";
+        case VK_PRESENT_MODE_FIFO_RELAXED_KHR: return "FIFO_RELAXED (tear-free unless already late)";
+        default: return "unknown";
+    }
+}
+
 static VkPresentModeKHR VK_ChoosePresentMode(VkPhysicalDevice physDev)
 {
     uint32_t count = 0;
@@ -78,6 +90,7 @@ static VkPresentModeKHR VK_ChoosePresentMode(VkPhysicalDevice physDev)
     vkGetPhysicalDeviceSurfacePresentModesKHR(physDev, vk.surface, &count, modes);
 
     int swapInterval = r_swapInterval.GetInteger();
+    VkPresentModeKHR chosen;
     if (swapInterval != 0)
     {
         // Vsync on: FIFO is the only mode every Vulkan driver is required to
@@ -89,17 +102,29 @@ static VkPresentModeKHR VK_ChoosePresentMode(VkPhysicalDevice physDev)
         // frame that's already late presents immediately instead of waiting
         // out a full extra vblank.
         if (swapInterval < 0 && VK_PresentModeSupported(modes, count, VK_PRESENT_MODE_FIFO_RELAXED_KHR))
-            return VK_PRESENT_MODE_FIFO_RELAXED_KHR;
-        return VK_PRESENT_MODE_FIFO_KHR;
+            chosen = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+        else
+            chosen = VK_PRESENT_MODE_FIFO_KHR;
+    }
+    else
+    {
+        // Vsync off: uncapped framerate, tearing accepted. Prefer immediate (no
+        // present-time blocking at all), fall back to mailbox, then FIFO.
+        if (VK_PresentModeSupported(modes, count, VK_PRESENT_MODE_IMMEDIATE_KHR))
+            chosen = VK_PRESENT_MODE_IMMEDIATE_KHR;
+        else if (VK_PresentModeSupported(modes, count, VK_PRESENT_MODE_MAILBOX_KHR))
+            chosen = VK_PRESENT_MODE_MAILBOX_KHR;
+        else
+            chosen = VK_PRESENT_MODE_FIFO_KHR;
     }
 
-    // Vsync off: uncapped framerate, tearing accepted. Prefer immediate (no
-    // present-time blocking at all), fall back to mailbox, then FIFO.
-    if (VK_PresentModeSupported(modes, count, VK_PRESENT_MODE_IMMEDIATE_KHR))
-        return VK_PRESENT_MODE_IMMEDIATE_KHR;
-    if (VK_PresentModeSupported(modes, count, VK_PRESENT_MODE_MAILBOX_KHR))
-        return VK_PRESENT_MODE_MAILBOX_KHR;
-    return VK_PRESENT_MODE_FIFO_KHR;
+    // Diagnostic for "r_swapInterval 1 but still tearing" reports: confirms whether
+    // the tear is happening above this layer (wrong mode picked) or below it (driver/
+    // compositor presenting a tear-free swapchain image incorrectly — e.g. NVIDIA/X11
+    // without "Force Composition Pipeline" enabled in nvidia-settings).
+    common->Printf("VK Swapchain: r_swapInterval=%d -> present mode %s\n", swapInterval, VK_PresentModeName(chosen));
+
+    return chosen;
 }
 
 // ---------------------------------------------------------------------------

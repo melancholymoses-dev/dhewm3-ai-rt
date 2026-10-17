@@ -465,6 +465,28 @@ struct vkRTState_t
     VkDescriptorSet reflTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int reflTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
+    // --------------------------------------------------------------------------
+    // Reflection spatial filter (r_rtReflDenoise 2), à-trous wavelet, roughness-gated
+    // (20261013_reflection_roughness.md Stage 1 addendum). Runs on top of the
+    // temporal resolve's output. Per-slot ping-pong across N passes within one
+    // frame — same idiom as giAtrousA/B (vk_gi.cpp), NOT the cross-frame ping-pong
+    // reflHistory uses above, since every pass here both reads and writes the
+    // whole frame in one dispatch (no reprojection, no race).
+    // reflAtrousReadView is VK_NULL_HANDLE when the filter didn't run this frame
+    // (r_rtReflDenoise < 2, or the pipeline failed to load) — VK_RT_GetReflReadView
+    // falls back to the temporal/raw view in that case.
+    // --------------------------------------------------------------------------
+    vkRTImage_t reflAtrousA[VK_MAX_FRAMES_IN_FLIGHT];
+    vkRTImage_t reflAtrousB[VK_MAX_FRAMES_IN_FLIGHT];
+    VkImageView reflAtrousReadView[VK_MAX_FRAMES_IN_FLIGHT];
+
+    VkPipeline reflAtrousPipeline;
+    VkPipelineLayout reflAtrousPipelineLayout;
+    VkDescriptorSetLayout reflAtrousDescLayout;
+    VkDescriptorPool reflAtrousDescPool;
+    VkDescriptorSet reflAtrousDescSets[VK_MAX_FRAMES_IN_FLIGHT][3];
+    int reflAtrousDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
     // SBT buffers
     VkBuffer sbtBuffer;
     VkDeviceMemory sbtMemory;
@@ -843,6 +865,12 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // so r_rtReflDenoise 0 is bit-identical to the pre-Stage-1 path.
 void VK_RT_DispatchReflTemporal(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
+// Roughness-gated à-trous spatial filter (Stage 1 addendum, r_rtReflDenoise 2).
+// Must be called after VK_RT_DispatchReflTemporal and before any consumer of the
+// reflection buffer. No-op below r_rtReflDenoise 2 — VK_RT_GetReflReadView then
+// falls back to reflHistory (1) or reflBuffer[slot] (0), same as before this existed.
+void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
 // Highest r_rtReflectionDebugMode handled inside reflect_ray.rgen. Modes 2-4 are the
 // G-buffer checks (docs/plans/gbuffer_normal_pass.md); 5-7 are B0
 // (docs/plans/20260918_reflection_brightness.md). Anything in 2..this forces the
@@ -860,8 +888,9 @@ const int REFL_DEBUG_MAX_MODE = 13;
 void VK_RT_CompositeReflections(VkCommandBuffer cmd);
 
 // View to sample for any downstream reflection consumer (composite, interaction
-// binding 9, glass overlay): reflHistory when the denoiser is active and valid
-// for this slot, else reflBuffer[slot] directly.
+// binding 9, glass overlay): the à-trous output when r_rtReflDenoise is 2 and it
+// ran this frame, else reflHistory when the denoiser is active and valid for this
+// slot, else reflBuffer[slot] directly.
 VkImageView VK_RT_GetReflReadView(int frameIdx);
 
 void VK_RT_DestroyBLAS(vkBLAS_t *blas);

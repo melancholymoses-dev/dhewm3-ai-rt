@@ -43,13 +43,13 @@ of the original Doom 3 GPL Source Code release.
 
 // r_rtReflections declared in RenderSystem_init.cpp
 
-static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "2500.0", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "1000.0", CVAR_RENDERER | CVAR_FLOAT,
                                      "Max reflection ray travel distance in world units (default 2500.0)");
 
 static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "6.0", CVAR_RENDERER | CVAR_FLOAT,
                                   "Scale factor for reflection radiance, applied in reflect_ray.rgen. Max 10.");
 
-idCVar r_rtSpecF0Scale("r_rtSpecF0Scale", "0.2", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+idCVar r_rtSpecF0Scale("r_rtSpecF0Scale", "0.25", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                        "Scale factor applied after the power-curve remap of specular-map luminance to F0.\n"
                        "Reduces how much even bright specular texels contribute to reflections.\n"
                        "Tune with r_rtReflectionDebugMode 1 or 3 to see the resulting F0/Fresnel mask.");
@@ -63,7 +63,7 @@ idCVar r_rtSpecF0Gamma("r_rtSpecF0Gamma", "3", CVAR_RENDERER | CVAR_FLOAT | CVAR
 // ad-hoc grazing-angle clamp existed only to tame full-screen opaque reflections
 // before real per-pixel roughness (Stage 2) and a GGX lobe existed to do the job
 // physically — plain Schlick Fresnel replaces it in reflect_ray.rgen.
-idCVar r_rtReflRoughnessScale("r_rtReflRoughnessScale", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+idCVar r_rtReflRoughnessScale("r_rtReflRoughnessScale", "1.25", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                               "Multiplies Stage 2's packed per-pixel roughness before the GGX lobe samples it.\n"
                               "1.0 = roughness as written to the G-buffer. Retune here once real geometry (not\n"
                               "just the r_rtReflectionDebugMode 12 preview) is visible through the lobe.",
@@ -106,14 +106,14 @@ static idCVar r_rtReflVolGain("r_rtReflVolGain", "1.0", CVAR_RENDERER | CVAR_FLO
                               "scale on reflected in-scatter. 1.0 is the literal integral — since the "
                               "mean-direction grid landed, there is no phase-angle bias left to compensate for.");
 
-idCVar r_rtReflectionMode("r_rtReflectionMode", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
+idCVar r_rtReflectionMode("r_rtReflectionMode", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                           "1 = glass only (default). Reflections are dispatched over the union screen rect of the\n"
                           "    view's SURFTYPE_GLASS surfaces and skipped entirely when the view holds no glass;\n"
                           "    opaque geometry never reflects, so no per-pixel F0/Fresnel work is done at all.\n"
                           "2 = legacy full-screen. Every non-sky pixel is traced and gated by the specular-map F0\n"
                           "    remap (r_rtSpecF0Scale/Gamma) plus r_rtReflectionMinWeight. Predates Stages 2-3\n"
                           "    (roughness/GGX) and ignores r_rtReflRoughnessMax — kept as an A/B baseline.\n"
-                          "3 = glass + opaque-with-roughness (Stage 4, 20261013_reflection_roughness.md).\n"
+                          "3 = glass + opaque-with-roughness (default).\n"
                           "    Full-screen like mode 2, but opaque surfaces rougher than r_rtReflRoughnessMax\n"
                           "    skip the reflection ray entirely and take GI alone, so the GGX lobe never\n"
                           "    double-counts GI's own near-diffuse contribution at high roughness.\n"
@@ -123,17 +123,33 @@ idCVar r_rtReflectionMode("r_rtReflectionMode", "1", CVAR_RENDERER | CVAR_INTEGE
 // Temporal denoiser (Stage 1, docs/plans/20261013_reflection_roughness.md). Mirrors
 // vk_temporal.cpp's AO EMA pattern, but with a per-pixel variance-driven alpha and a
 // depth/normal disocclusion test instead of a single fixed alpha — see
-// VK_RT_DispatchReflTemporal. Mode 2 (spatial) is not implemented yet and currently
-// behaves like mode 1.
+// VK_RT_DispatchReflTemporal.
 idCVar r_rtReflDenoise("r_rtReflDenoise", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                       "0 = off (reflections sampled raw, pre-Stage-1 behaviour).\n"
                       "1 = temporal EMA accumulation.\n"
-                      "2 = reserved for temporal+spatial; currently identical to 1.",
+                      "2 = temporal + roughness-gated à-trous spatial filter (VK_RT_DispatchReflAtrous):\n"
+                      "    a roughness-0 pixel is untouched, a rough pixel is blended with its neighbours\n"
+                      "    in proportion to roughness * r_rtReflAtrousRoughnessGain. Tune with\n"
+                      "    r_rtReflAtrousIterations/SigmaL/SigmaZ/RoughnessGain.",
                       0, 2);
 idCVar r_rtReflDenoiseAlpha("r_rtReflDenoiseAlpha", "0.35", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                             "EMA floor: 0=use only history, 1=use only current frame. The effective alpha is\n"
                             "raised above this per-pixel when the accumulated variance says the signal hasn't\n"
                             "converged, so moving glass does not lag behind a fixed low alpha.");
+idCVar r_rtReflAtrousIterations("r_rtReflAtrousIterations", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
+                                "r_rtReflDenoise 2 only. À-trous passes (0-8); effective radius is 2^N - 1 pixels.\n"
+                                "Same default as r_rtGIAtrousIterations.",
+                                0, 8);
+idCVar r_rtReflAtrousSigmaL("r_rtReflAtrousSigmaL", "0.2", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                            "r_rtReflDenoise 2 only. Luminance edge-stop bandwidth — lower preserves more\n"
+                            "contrast (bright highlight next to a dark reflection) at the cost of more grain.");
+idCVar r_rtReflAtrousSigmaZ("r_rtReflAtrousSigmaZ", "0.01", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                            "r_rtReflDenoise 2 only. Depth edge-stop bandwidth (NDC) — keeps the blur from\n"
+                            "crossing a silhouette edge onto an unrelated surface.");
+idCVar r_rtReflAtrousRoughnessGain("r_rtReflAtrousRoughnessGain", "3.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                            "r_rtReflDenoise 2 only. Multiplies roughness before the spatial filter's mix()\n"
+                            "gate, so moderately rough surfaces reach a full wash sooner than roughness\n"
+                            "alone would. Roughness 0 (glass, screens) is unaffected and always stays sharp.");
 
 // Stage 2 (20261013_reflection_roughness.md). The Toksvig estimate (gbuffer.frag) is a
 // specular-AA signal — it only measures bump-map normal variance, so a flat/clean bump
@@ -141,7 +157,7 @@ idCVar r_rtReflDenoiseAlpha("r_rtReflDenoiseAlpha", "0.35", CVAR_RENDERER | CVAR
 // guarantees no opaque surface renders as a delta mirror once Stage 3's lobe exists;
 // Toksvig's variance rides on top of it. Does not touch glass — see reflect_ray.rgen,
 // Stage 3 keeps glass hardcoded to roughness 0 regardless of what's in the G-buffer.
-idCVar r_rtReflRoughnessFloor("r_rtReflRoughnessFloor", "0.2", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+idCVar r_rtReflRoughnessFloor("r_rtReflRoughnessFloor", "0.25", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                               "Minimum roughness for any opaque surface's G-buffer entry (r_rtReflectionDebugMode\n"
                               "12 previews it). 0 = Toksvig-only, flat bump maps can read as a perfect mirror.",
                               0.0f, 1.0f);
@@ -860,6 +876,32 @@ static void VK_RT_DestroyReflDenoiseImages(void)
     vkRT.reflHistoryValid = false;
 }
 
+// Spatial filter scratch (r_rtReflDenoise 2) — per-slot ping-pong across the N
+// passes of a single frame's dispatch, unlike reflHistory's cross-frame ping-pong.
+static void VK_RT_CreateReflAtrousImages(uint32_t width, uint32_t height)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        if (!VK_RT_AllocReflAuxImage(vkRT.reflAtrousA[i], width, height,
+                                     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT))
+            common->Warning("VK RT Refl Atrous: failed to allocate reflAtrousA[%d]", i);
+        if (!VK_RT_AllocReflAuxImage(vkRT.reflAtrousB[i], width, height,
+                                     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT))
+            common->Warning("VK RT Refl Atrous: failed to allocate reflAtrousB[%d]", i);
+        vkRT.reflAtrousReadView[i] = VK_NULL_HANDLE;
+    }
+}
+
+static void VK_RT_DestroyReflAtrousImages(void)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        VK_RT_FreeReflAuxImage(vkRT.reflAtrousA[i]);
+        VK_RT_FreeReflAuxImage(vkRT.reflAtrousB[i]);
+        vkRT.reflAtrousReadView[i] = VK_NULL_HANDLE;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // VK_RT_InitReflPipeline
 // Creates the reflection RT pipeline, SBT, descriptor sets, and sampler.
@@ -1391,6 +1433,112 @@ static void VK_RT_InitReflTemporalPipeline(void)
 }
 
 // ---------------------------------------------------------------------------
+// VK_RT_InitReflAtrousPipeline (r_rtReflDenoise 2, Stage 1 addendum)
+// ---------------------------------------------------------------------------
+
+static void VK_RT_InitReflAtrousPipeline(void)
+{
+    // refl_atrous.comp bindings:
+    //   binding 0: COMBINED_IMAGE_SAMPLER — input reflection buffer (ping-pong)
+    //   binding 1: STORAGE_IMAGE          — output reflection buffer (rgba16f, ping-pong)
+    //   binding 2: COMBINED_IMAGE_SAMPLER — depth sampler
+    //   binding 3: COMBINED_IMAGE_SAMPLER — gbufAlbedo (roughness gate)
+    VkDescriptorSetLayoutBinding bindings[4] = {};
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[3].binding = 3;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutCI = {};
+    layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCI.bindingCount = 4;
+    layoutCI.pBindings = bindings;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.reflAtrousDescLayout));
+
+    // Push constants: 40 bytes, same layout as gi_atrous.comp's PC block.
+    VkPushConstantRange pushRange = {};
+    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushRange.offset = 0;
+    pushRange.size = 40;
+
+    VkPipelineLayoutCreateInfo plCI = {};
+    plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plCI.setLayoutCount = 1;
+    plCI.pSetLayouts = &vkRT.reflAtrousDescLayout;
+    plCI.pushConstantRangeCount = 1;
+    plCI.pPushConstantRanges = &pushRange;
+    VK_CHECK(vkCreatePipelineLayout(vk.device, &plCI, NULL, &vkRT.reflAtrousPipelineLayout));
+
+    VkShaderModule compModule = VK_LoadSPIRV("glprogs/glsl/refl_atrous.comp.spv");
+    if (compModule == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT Refl Atrous: failed to load refl_atrous.comp.spv — spatial filter disabled");
+        return;
+    }
+
+    VkPipelineShaderStageCreateInfo stageCI = {};
+    stageCI.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageCI.module = compModule;
+    stageCI.pName = "main";
+
+    VkComputePipelineCreateInfo pipeCI = {};
+    pipeCI.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeCI.stage = stageCI;
+    pipeCI.layout = vkRT.reflAtrousPipelineLayout;
+    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipeCI, NULL, &vkRT.reflAtrousPipeline));
+    vkDestroyShaderModule(vk.device, compModule, NULL);
+
+    // Pool: 3 descriptor sets per frame slot (pass0: temporal view -> A; pass1/3/5: A -> B;
+    // pass2/4/6: B -> A — same precomputed-triplet scheme as GI's atrous).
+    const int totalSets = VK_MAX_FRAMES_IN_FLIGHT * 3;
+    VkDescriptorPoolSize poolSizes[2] = {};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[0].descriptorCount = 3 * totalSets; // src + depth + gbufAlbedo per set
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[1].descriptorCount = 1 * totalSets;
+
+    VkDescriptorPoolCreateInfo poolCI = {};
+    poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCI.maxSets = totalSets;
+    poolCI.poolSizeCount = 2;
+    poolCI.pPoolSizes = poolSizes;
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &vkRT.reflAtrousDescPool));
+
+    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT * 3];
+    for (int i = 0; i < totalSets; i++)
+        layouts[i] = vkRT.reflAtrousDescLayout;
+
+    VkDescriptorSetAllocateInfo dsAlloc = {};
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkRT.reflAtrousDescPool;
+    dsAlloc.descriptorSetCount = totalSets;
+    dsAlloc.pSetLayouts = layouts;
+    // Allocate flat: [0][0],[0][1],[0][2],[1][0],[1][1],[1][2]
+    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, &vkRT.reflAtrousDescSets[0][0]));
+
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        vkRT.reflAtrousDescSetLastUpdatedFrameCount[i] = -1;
+
+    common->Printf("VK RT Refl Atrous: spatial filter pipeline initialized\n");
+}
+
+// ---------------------------------------------------------------------------
 // VK_RT_InitReflections (public entry)
 // ---------------------------------------------------------------------------
 
@@ -1398,6 +1546,7 @@ void VK_RT_InitReflections(void)
 {
     VK_RT_InitReflPipeline();
     VK_RT_InitReflTemporalPipeline();
+    VK_RT_InitReflAtrousPipeline();
     VK_RT_ResizeReflections(vk.swapchainExtent.width, vk.swapchainExtent.height);
     // Step 8: only when vk.gbufferSupported — reflect_ray.rgen's Fresnel/debug-mode
     // work (which this composite pass displays) needs gbufNormal to exist.
@@ -1495,6 +1644,29 @@ void VK_RT_ShutdownReflections(void)
     }
     VK_RT_DestroyReflDenoiseImages();
 
+    // Spatial filter (r_rtReflDenoise 2, Stage 1 addendum)
+    if (vkRT.reflAtrousDescPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(vk.device, vkRT.reflAtrousDescPool, NULL);
+        vkRT.reflAtrousDescPool = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflAtrousDescLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.reflAtrousDescLayout, NULL);
+        vkRT.reflAtrousDescLayout = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflAtrousPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.reflAtrousPipeline, NULL);
+        vkRT.reflAtrousPipeline = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflAtrousPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(vk.device, vkRT.reflAtrousPipelineLayout, NULL);
+        vkRT.reflAtrousPipelineLayout = VK_NULL_HANDLE;
+    }
+    VK_RT_DestroyReflAtrousImages();
+
     VK_RT_DestroyNullLightSsbo();
     VK_RT_DestroyNullGbufNormal();
     VK_RT_ShutdownReflEmitters();
@@ -1512,12 +1684,15 @@ void VK_RT_ResizeReflections(uint32_t width, uint32_t height)
     VK_RT_CreateReflImages(width, height);
     VK_RT_DestroyReflDenoiseImages();
     VK_RT_CreateReflDenoiseImages(width, height);
+    VK_RT_DestroyReflAtrousImages();
+    VK_RT_CreateReflAtrousImages(width, height);
 
     // Force descriptor set refresh at next dispatch
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         vkRT.reflDescSetLastUpdatedFrameCount[i] = -1;
         vkRT.reflTemporalDescSetLastUpdatedFrameCount[i] = -1;
+        vkRT.reflAtrousDescSetLastUpdatedFrameCount[i] = -1;
     }
 }
 
@@ -2273,6 +2448,211 @@ void VK_RT_DispatchReflTemporal(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
 }
 
+// ---------------------------------------------------------------------------
+// VK_RT_DispatchReflAtrous (public) — r_rtReflDenoise 2, Stage 1 addendum.
+// Roughness-gated à-trous spatial filter, run on top of the temporal resolve's
+// output. Mirrors VK_RT_DispatchGIAtrous's N-pass ping-pong structure
+// (vk_gi.cpp) — see refl_atrous.comp for the per-pixel roughness gate itself.
+// Must run after VK_RT_DispatchReflTemporal and before the resumed render pass.
+// ---------------------------------------------------------------------------
+void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
+{
+    const int frameIdx = vk.currentFrame;
+
+    // Stale from a previous frame (denoise toggled down, or an early return below)
+    // must never leak forward — VK_RT_GetReflReadView checks this every frame.
+    vkRT.reflAtrousReadView[frameIdx] = VK_NULL_HANDLE;
+
+    if (!vkRT.isInitialized)
+        return;
+    if (!r_useRayTracing.GetBool() || !r_rtReflections.GetBool() || r_rtReflDenoise.GetInteger() < 2)
+        return;
+    if (vkRT.reflAtrousPipeline == VK_NULL_HANDLE)
+        return;
+    if (!vk.gbufferSupported)
+        return; // no roughness to gate on
+
+    const int iters = idMath::ClampInt(0, 8, r_rtReflAtrousIterations.GetInteger());
+    if (iters == 0)
+        return;
+
+    if (s_reflDispatchRectFrame[frameIdx] != tr.frameCount)
+        return; // nothing traced this frame — mirrors VK_RT_DispatchReflTemporal's own guard
+
+    const VkRect2D dispatchRect = s_reflDispatchRect[frameIdx];
+    if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
+        return;
+
+    vkRTImage_t &bufA = vkRT.reflAtrousA[frameIdx];
+    vkRTImage_t &bufB = vkRT.reflAtrousB[frameIdx];
+    if (bufA.image == VK_NULL_HANDLE || bufB.image == VK_NULL_HANDLE)
+        return;
+
+    // --- Depth barrier: ATTACHMENT -> READ_ONLY for the edge-stop depth reads ---
+    VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+    if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
+        vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
+        depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+
+    {
+        VkImageMemoryBarrier depthToRead = {};
+        depthToRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthToRead.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthToRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        depthToRead.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthToRead.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        depthToRead.image = vk.depthImage;
+        depthToRead.subresourceRange = {depthAspect, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
+                             NULL, 0, NULL, 1, &depthToRead);
+    }
+
+    // --- Update descriptor sets (once per tr.frameCount per slot) ---
+    // DS[frameIdx][0]: temporal readView(sampler) -> bufA — rebuilt each frame (that
+    //                  view's underlying image alternates with reflPingPong)
+    // DS[frameIdx][1]: bufA(sampler) -> bufB — stable after images are created
+    // DS[frameIdx][2]: bufB(sampler) -> bufA — stable after images are created
+    if (vkRT.reflAtrousDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount)
+    {
+        VkDescriptorImageInfo depthInfo = {};
+        depthInfo.sampler = vkRT.depthSampler;
+        depthInfo.imageView = vk.depthSampledView;
+        depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+        VkDescriptorImageInfo albedoInfo = {};
+        albedoInfo.sampler = vkRT.depthSampler; // texelFetch ignores filter/wrap state
+        albedoInfo.imageView = vkRT.gbufAlbedo[frameIdx].view;
+        albedoInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkDescriptorImageInfo srcInfos[3] = {};
+        srcInfos[0] = {vkRT.reflSampler, VK_RT_GetReflReadView(frameIdx), VK_IMAGE_LAYOUT_GENERAL}; // temporal -> A
+        srcInfos[1] = {vkRT.reflSampler, bufA.view, VK_IMAGE_LAYOUT_GENERAL};                       // A -> B
+        srcInfos[2] = {vkRT.reflSampler, bufB.view, VK_IMAGE_LAYOUT_GENERAL};                       // B -> A
+
+        VkDescriptorImageInfo dstInfos[3] = {};
+        dstInfos[0] = {VK_NULL_HANDLE, bufA.view, VK_IMAGE_LAYOUT_GENERAL};
+        dstInfos[1] = {VK_NULL_HANDLE, bufB.view, VK_IMAGE_LAYOUT_GENERAL};
+        dstInfos[2] = {VK_NULL_HANDLE, bufA.view, VK_IMAGE_LAYOUT_GENERAL};
+
+        VkWriteDescriptorSet writes[12] = {};
+        for (int s = 0; s < 3; s++)
+        {
+            VkDescriptorSet ds = vkRT.reflAtrousDescSets[frameIdx][s];
+
+            writes[s * 4 + 0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[s * 4 + 0].dstSet = ds;
+            writes[s * 4 + 0].dstBinding = 0;
+            writes[s * 4 + 0].descriptorCount = 1;
+            writes[s * 4 + 0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[s * 4 + 0].pImageInfo = &srcInfos[s];
+
+            writes[s * 4 + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[s * 4 + 1].dstSet = ds;
+            writes[s * 4 + 1].dstBinding = 1;
+            writes[s * 4 + 1].descriptorCount = 1;
+            writes[s * 4 + 1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[s * 4 + 1].pImageInfo = &dstInfos[s];
+
+            writes[s * 4 + 2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[s * 4 + 2].dstSet = ds;
+            writes[s * 4 + 2].dstBinding = 2;
+            writes[s * 4 + 2].descriptorCount = 1;
+            writes[s * 4 + 2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[s * 4 + 2].pImageInfo = &depthInfo;
+
+            writes[s * 4 + 3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[s * 4 + 3].dstSet = ds;
+            writes[s * 4 + 3].dstBinding = 3;
+            writes[s * 4 + 3].descriptorCount = 1;
+            writes[s * 4 + 3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[s * 4 + 3].pImageInfo = &albedoInfo;
+        }
+        vkUpdateDescriptorSets(vk.device, 12, writes, 0, NULL);
+        vkRT.reflAtrousDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+    }
+
+    const float sigmaL = r_rtReflAtrousSigmaL.GetFloat();
+    const float sigmaZ = r_rtReflAtrousSigmaZ.GetFloat();
+    const float roughnessGain = r_rtReflAtrousRoughnessGain.GetFloat();
+
+    const uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
+    const uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.reflAtrousPipeline);
+
+    for (int pass = 0; pass < iters; pass++)
+    {
+        // pass 0 -> DS[0] (temporal -> A); pass 1,3,5… -> DS[1] (A -> B); pass 2,4,6… -> DS[2] (B -> A).
+        const int descIdx = (pass == 0) ? 0 : (1 + (pass - 1) % 2);
+
+        struct AtrousReflPC
+        {
+            int32_t stepSize;
+            float sigmaL;
+            float sigmaZ;
+            float roughnessGain;
+            int32_t screenWidth;
+            int32_t screenHeight;
+            int32_t scissorOffsetX;
+            int32_t scissorOffsetY;
+            int32_t scissorExtentX;
+            int32_t scissorExtentY;
+        } pc;
+        static_assert(sizeof(pc) == 40, "AtrousReflPC size mismatch");
+
+        pc.stepSize = 1 << pass;
+        pc.sigmaL = sigmaL;
+        pc.sigmaZ = sigmaZ;
+        pc.roughnessGain = roughnessGain;
+        pc.screenWidth = (int32_t)bufA.width;
+        pc.screenHeight = (int32_t)bufA.height;
+        pc.scissorOffsetX = dispatchRect.offset.x;
+        pc.scissorOffsetY = dispatchRect.offset.y;
+        pc.scissorExtentX = (int32_t)dispatchRect.extent.width;
+        pc.scissorExtentY = (int32_t)dispatchRect.extent.height;
+
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.reflAtrousPipelineLayout, 0, 1,
+                                &vkRT.reflAtrousDescSets[frameIdx][descIdx], 0, NULL);
+        vkCmdPushConstants(cmd, vkRT.reflAtrousPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 40, &pc);
+        vkCmdDispatch(cmd, groupsX, groupsY, 1);
+
+        const bool isLastPass = (pass == iters - 1);
+        VkMemoryBarrier mb = {};
+        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             isLastPass ? (VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT)
+                                        : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             0, 1, &mb, 0, NULL, 0, NULL);
+    }
+
+    // Update the read view to whichever buffer the final pass wrote.
+    // pass 0 -> A, pass 1 -> B, pass 2 -> A, pass 3 -> B …
+    const bool finalInA = ((iters - 1) % 2 == 0);
+    vkRT.reflAtrousReadView[frameIdx] = finalInA ? bufA.view : bufB.view;
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT Refl Atrous: dispatch slot=%d iters=%d rect=(%d,%d %u,%u)\n", frameIdx, iters,
+                       dispatchRect.offset.x, dispatchRect.offset.y, (unsigned int)dispatchRect.extent.width,
+                       (unsigned int)dispatchRect.extent.height);
+
+    // --- Depth barrier: restore ATTACHMENT_OPTIMAL for the upcoming render pass ---
+    {
+        VkImageMemoryBarrier depthRestore = {};
+        depthRestore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthRestore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        depthRestore.dstAccessMask =
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthRestore.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthRestore.image = vk.depthImage;
+        depthRestore.subresourceRange = {depthAspect, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0,
+                             NULL, 0, NULL, 1, &depthRestore);
+    }
+}
+
 // View for any downstream reflection consumer. See the header comment.
 VkImageView VK_RT_GetReflReadView(int frameIdx)
 {
@@ -2283,6 +2663,13 @@ VkImageView VK_RT_GetReflReadView(int frameIdx)
     // exception: it IS the denoiser's own history/rejection state.
     if (debugMode >= 2 && debugMode <= REFL_DEBUG_MAX_MODE && debugMode != 11)
         return vkRT.reflBuffer[frameIdx].view;
+    // Mode 11 IS the denoiser's own history/rejection state (written directly into
+    // reflHistory by refl_temporal_resolve.comp, alpha forced to 1.0 — see its own
+    // comment) — show it exactly as the temporal pass wrote it. The spatial filter
+    // would otherwise treat that alpha as "a real traced pixel" and blur the red/
+    // green rejection boundary the mode exists to let you read precisely.
+    if (debugMode != 11 && r_rtReflDenoise.GetInteger() >= 2 && vkRT.reflAtrousReadView[frameIdx] != VK_NULL_HANDLE)
+        return vkRT.reflAtrousReadView[frameIdx];
     if (r_rtReflDenoise.GetInteger() > 0 && vkRT.reflHistoryValid &&
         vkRT.reflHistory[vkRT.reflPingPong].view != VK_NULL_HANDLE)
         return vkRT.reflHistory[vkRT.reflPingPong].view;

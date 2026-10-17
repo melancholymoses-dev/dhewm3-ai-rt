@@ -48,6 +48,47 @@ means the composite is filtering the overlay.
 **Check:** `r_rtReflDenoise 0` is bit-identical to today. Mode 1 on Mars City glass shows no
 added lag on a fast strafe and no ghosting on the player reflection. Cost ≤ 0.3 ms at 1440p.
 
+**Addendum (2026-10-16): `r_rtReflDenoise 2`, the spatial half of mode 2, implemented.**
+Manual testing of Stage 3/4 surfaced visible single-sample GGX grain on high-roughness
+opaque surfaces (expected — see Stage 3's design, one sample per pixel, temporal-only
+convergence) — worst right after a disocclusion, before the EMA has caught up. Added:
+
+| File | Change |
+|---|---|
+| `glsl/refl_atrous.comp` | **New.** B3-spline À-trous spatial filter, same N-pass ping-pong shape as `gi_atrous.comp` (depth + luminance edge-stopping), run on the temporal resolve's output |
+| `vk_reflections.cpp` | `VK_RT_DispatchReflAtrous`, wired into `VK_RT_InitReflections`/`ShutdownReflections`/`ResizeReflections`; `r_rtReflAtrousIterations/SigmaL/SigmaZ/RoughnessGain`; `VK_RT_GetReflReadView` prefers the à-trous output over raw `reflHistory` when it ran this frame |
+| `vk_backend.cpp` | Dispatch after `VK_RT_DispatchReflTemporal`, before GI. New profiler phase `VK_RTPROF_PHASE_REFL_ATROUS` |
+| `CMakeLists.txt` | New shader |
+
+The filter is **roughness-gated per pixel**, not a flat blur: `refl_atrous.comp` mixes the
+filtered and unfiltered colour by Stage 2's packed roughness (`mix(cCenter, filtered,
+clamp(roughness * roughnessGain, 0, 1))`), so a roughness-0 pixel — glass-adjacent trim,
+GUI screens, anything sharp — is written back byte-for-byte unchanged, and only genuinely
+rough surfaces pay for the blur. This was the point: a flat spatial filter would have cost
+the sharp reflections' crispness to fix noise that only exists on the rough ones.
+Glass (negative alpha sentinel) and untraced/non-reflective pixels (alpha ≤ 1/255, the same
+threshold `reflect_ray.rgen`'s own F0 early-out uses) are excluded both as filter centres
+and as neighbour samples — letting either contaminate a neighbour's blend would paint a
+reflection onto, or blur the wrong surface into, a pixel that was deliberately excluded.
+
+**2026-10-16, same day:** raw `roughness` as the mix factor washed out too little on
+surfaces with low-but-nonzero Toksvig/floor roughness — the user wanted more wash, not
+more passes. Added `roughnessGain` (`r_rtReflAtrousRoughnessGain`, default 3.0, menu
+"Spatial Filter Wash") multiplying roughness before the clamp, so moderate roughness
+reaches a full blend sooner. Roughness 0 is excluded before the gain is ever applied, so
+glass and screens stay exactly as sharp regardless of the gain setting.
+
+Mode 11 (history age/rejection) always reads the raw temporal output, never the à-trous
+one — `VK_RT_GetReflReadView` special-cases it, since the debug tint's alpha is forced to
+1.0 and would otherwise be blurred by the filter, muddying the red/green boundary the mode
+exists to show precisely.
+
+**Addendum check:** `r_rtReflDenoise 1` vs `2` on the same rough opaque surface (needs
+`r_rtReflectionMode 2` or `3` to have any opaque surface to look at) — `2` should show
+visibly less single-sample speckle in the first ~0.25s after a disocclusion, while a
+roughness-0 surface (glass trim, a GUI screen) in the same shot stays pixel-identical
+between the two settings.
+
 ---
 
 ## Stage 2 — Roughness source
