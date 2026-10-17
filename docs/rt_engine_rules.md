@@ -12,13 +12,16 @@ relevant `docs/plans/completed/` doc; it is not repeated here.
 
 Anything that fights these gets cut or demoted.
 
-1. **Shadows are the feature.** Soft, shaped, from more lights. This is where "dynamic
-   lighting" actually lives.
+1. **Drama of light and shadow is the goal.** High dynamic range, strong contrast. Shadow —
+   the absence of light — is what makes the contrast; soft penumbrae are a refinement, not
+   the point.
 2. **Darkness stays black.** GI may tint lit regions; it must never lift the noise floor of
    dark ones.
-3. **Light the air sparingly.** Volumetrics from hero lights only.
-4. **Reflections are set dressing.** Glass and mirrors, plus the odd hero surface by
-   explicit opt-in. The assets carry no PBR data; don't pretend they do.
+3. **Volumetrics shape the light.** Beams and shafts that show where light goes. Not a
+   uniform haze over every room.
+4. **Reflections add presence.** Glass, sheen on metal, screens and emitters glowing in nearby
+   surfaces. Rough surfaces read as a wash, not mirrors or pinpoint highlights. The assets
+   carry no PBR data — F0 and roughness are derived — so don't chase physical exactness.
 5. **No map editing.** Engine-side rules, budgets and debug overlays. Small def-file mods
    are allowed.
 6. **Debug visualization before tuning.** Every feature ships with an overlay mode;
@@ -29,6 +32,8 @@ Anything that fights these gets cut or demoted.
    culling work: the shipping threshold is the one where screenshots are unchanged; anything
    past it is a quality tier the player picks. `r_skip*` cvars are probes for splitting a
    measurement, never a configuration.
+8. **Budget follows impact.** Reflections and volumetrics carry the look; GI and soft RT
+   shadows have to justify their cost with a visible change.
 
 ---
 
