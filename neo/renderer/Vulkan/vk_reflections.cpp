@@ -54,7 +54,7 @@ idCVar r_rtSpecF0Scale("r_rtSpecF0Scale", "0.25", CVAR_RENDERER | CVAR_FLOAT | C
                        "Reduces how much even bright specular texels contribute to reflections.\n"
                        "Tune with r_rtReflectionDebugMode 1 or 3 to see the resulting F0/Fresnel mask.");
 
-idCVar r_rtSpecF0Gamma("r_rtSpecF0Gamma", "3", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+idCVar r_rtSpecF0Gamma("r_rtSpecF0Gamma", "2.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                        "Power exponent for remapping raw specular-map luminance to physically plausible F0.\n"
                        "Higher values restrict reflections to only the brightest specular texels (true metal/wet).\n"
                        "Tune with r_rtReflectionDebugMode 1 or 3.");
@@ -94,16 +94,17 @@ idCVar r_rtReflectionMinWeight(
 // a direct, absolute "how bright can any reflection pixel get" knob, for tuning overall
 // reflection brightness down regardless of whether a pixel is a sampling outlier.
 // 0 disables (unbounded, pre-existing behaviour). Glass is untouched — see reflect_ray.rgen.
-idCVar r_rtReflMaxLuminance("r_rtReflMaxLuminance", "1", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+idCVar r_rtReflMaxLuminance("r_rtReflMaxLuminance", "0.75", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                             "Hard luminance ceiling on opaque reflection radiance (after reflBlend and\n"
                             "Fresnel), independent of r_rtReflAtrousFireflyClamp's per-pixel outlier test.\n"
                             "Scaled down by roughness via r_rtReflRoughLumExp. 0 = unbounded. Glass is unaffected.",
                             0.0f, 16.0f);
-static idCVar r_rtReflRoughLumExp("r_rtReflRoughLumExp", "3", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                                  "Opaque reflection ceiling = r_rtReflMaxLuminance * (1 - roughness)^this. Stops a\n"
-                                  "rough surface returning a full-brightness LED/lamp from one lucky GGX ray (speckle);\n"
-                                  "dim reflected walls sit under the ceiling and pass unchanged. 0 = no roughness scaling.",
-                                  0.0f, 8.0f);
+static idCVar r_rtReflRoughLumExp(
+    "r_rtReflRoughLumExp", "3", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+    "Opaque reflection ceiling = r_rtReflMaxLuminance * (1 - roughness)^this. Stops a\n"
+    "rough surface returning a full-brightness LED/lamp from one lucky GGX ray (speckle);\n"
+    "dim reflected walls sit under the ceiling and pass unchanged. 0 = no roughness scaling.",
+    0.0f, 8.0f);
 
 // Volumetrics in reflections (docs/plans/20261013_reflection_volumetrics.md). The
 // reflection ray marches the same froxel scatter grid the primary view resolves, so
@@ -151,7 +152,7 @@ idCVar r_rtReflDenoise("r_rtReflDenoise", "2", CVAR_RENDERER | CVAR_INTEGER | CV
                        "    in proportion to roughness * r_rtReflAtrousRoughnessGain. Tune with\n"
                        "    r_rtReflAtrousIterations/SigmaZ/RoughnessGain/FireflyClamp.",
                        0, 2);
-idCVar r_rtReflDenoiseAlpha("r_rtReflDenoiseAlpha", "0.03", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+idCVar r_rtReflDenoiseAlpha("r_rtReflDenoiseAlpha", "0.3", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                             "Opaque-surface EMA alpha: 0=use only history, 1=use only current frame. Fixed —\n"
                             "no variance boost, since on rough opaque surfaces high variance is GGX noise,\n"
                             "not motion. Glass uses r_rtReflDenoiseAlphaGlass instead.");
@@ -166,7 +167,7 @@ idCVar r_rtReflAtrousIterations("r_rtReflAtrousIterations", "3", CVAR_RENDERER |
 idCVar r_rtReflAtrousSigmaZ("r_rtReflAtrousSigmaZ", "0.01", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                             "r_rtReflDenoise 2 only. Depth edge-stop bandwidth (NDC) — keeps the blur from\n"
                             "crossing a silhouette edge onto an unrelated surface.");
-idCVar r_rtReflAtrousRoughnessGain("r_rtReflAtrousRoughnessGain", "3.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+idCVar r_rtReflAtrousRoughnessGain("r_rtReflAtrousRoughnessGain", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                                    "r_rtReflDenoise 2 only. Multiplies roughness before the spatial filter's mix()\n"
                                    "gate, so moderately rough surfaces reach a full wash sooner than roughness\n"
                                    "alone would. Roughness 0 (glass, screens) is unaffected and always stays sharp.");
@@ -184,7 +185,7 @@ idCVar r_rtReflAtrousFireflyClamp("r_rtReflAtrousFireflyClamp", "1.0", CVAR_REND
 // guarantees no opaque surface renders as a delta mirror once Stage 3's lobe exists;
 // Toksvig's variance rides on top of it. Does not touch glass — see reflect_ray.rgen,
 // Stage 3 keeps glass hardcoded to roughness 0 regardless of what's in the G-buffer.
-idCVar r_rtReflRoughnessFloor("r_rtReflRoughnessFloor", "0.25", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+idCVar r_rtReflRoughnessFloor("r_rtReflRoughnessFloor", "0.3", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                               "Minimum roughness for any opaque surface's G-buffer entry (r_rtReflectionDebugMode\n"
                               "12 previews it). 0 = Toksvig-only, flat bump maps can read as a perfect mirror.",
                               0.0f, 1.0f);
@@ -307,7 +308,7 @@ struct ReflParamsUBO
     int32_t emitterCount; // projectile glow discs in the emitter SSBO (binding 6)
     float glowGain;       // r_rtReflGlowGain
     int32_t glowTriCount; // additive translucent triangles after the discs in binding 6
-    float roughLumExp; // r_rtReflRoughLumExp — reuses the pre-mat4 slot retired with grazingGain
+    float roughLumExp;    // r_rtReflRoughLumExp — reuses the pre-mat4 slot retired with grazingGain
 
     // Froxel scatter grid (20261013_reflection_volumetrics.md). Mirrors
     // VolFroxelSlices in vol_froxel_sample.glsl plus the forward projection the
