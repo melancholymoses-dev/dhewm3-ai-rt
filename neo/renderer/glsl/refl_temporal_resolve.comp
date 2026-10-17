@@ -21,10 +21,10 @@ real motion or fails to smooth anything. Per pixel:
   3. On reset (first use / camera cut) or rejection, history is replaced
      outright, same NaN-avoidance reasoning as the AO/GI passes.
   4. Otherwise, EMA both the colour and its first two luminance moments at the
-     same per-pixel alpha, floor = r_rtReflDenoiseAlpha, raised when the
-     moments say the signal hasn't converged (relative variance high) — see
-     the "Alpha must be adaptive" note in the plan: a fixed low alpha
-     low-passes a scene that's still moving.
+     same per-pixel alpha. Opaque: fixed r_rtReflDenoiseAlpha, after a 3x3
+     firefly clamp on the current sample. Glass: floor r_rtReflDenoiseAlphaGlass,
+     raised when the moments say the signal hasn't converged (relative variance
+     high) — see the "Alpha must be adaptive" note in the plan.
 
 Alpha channel is passed through from the CURRENT frame always, never EMA'd:
 it carries reflect_ray.rgen's Schlick weight and its negative-sign "skip me"
@@ -95,7 +95,18 @@ layout(set = 0, binding = 8) uniform ReflTemporalParams {
     int   resetHistory;      // camera cut or first use — force every pixel
     int   debugMode;         // r_rtReflectionDebugMode
     int   maxAge;
+    float glassAlpha;        // r_rtReflDenoiseAlphaGlass
+    float fireflyClamp;      // r_rtReflAtrousFireflyClamp — pre-accumulation clamp, 0 disables
 };
+
+// Same threshold as reflect_ray.rgen's F0 early-out and refl_atrous.comp: at or
+// below this the pixel never traced (glass's negative sentinel also fails it).
+const float VALID_ALPHA_THRESHOLD = 1.0 / 255.0;
+
+float ReflTemporal_Luminance(vec3 c)
+{
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
 
 // Satisfies rt_indirect.glsl's includer contract (sampler2D depthSampler + a
 // mat4 invViewProj in scope) for rt_ReconstructWorldPos.
@@ -131,7 +142,43 @@ void main()
     ivec2 rectMax = min(scissorOffset + rectExtent - ivec2(1), dims - ivec2(1));
 
     vec4 current = imageLoad(currentImage, coord);
-    float curLum = dot(current.rgb, vec3(0.2126, 0.7152, 0.0722));
+    bool isGlass = current.a < 0.0;
+
+    // Firefly clamp before accumulation: a single GGX sample that hit a lamp would
+    // otherwise enter history at full strength and fade over ~1/alpha frames. Cap at
+    // the second-brightest traced tap of this frame's 3x3 (same rule as refl_atrous),
+    // so a lone spike drops to its neighbours' level. Opaque only — glass is a mirror.
+    if (fireflyClamp > 0.0 && current.a > VALID_ALPHA_THRESHOLD)
+    {
+        float max1 = -1.0;
+        float max2 = -1.0;
+        for (int dy = -1; dy <= 1; dy++)
+        {
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                ivec2 s = clamp(coord + ivec2(dx, dy), rectMin, rectMax);
+                vec4 t = imageLoad(currentImage, s);
+                if (t.a <= VALID_ALPHA_THRESHOLD)
+                    continue;
+                float l = ReflTemporal_Luminance(t.rgb);
+                if (l > max1)
+                {
+                    max2 = max1;
+                    max1 = l;
+                }
+                else if (l > max2)
+                {
+                    max2 = l;
+                }
+            }
+        }
+        float cap = max2 * fireflyClamp;
+        float lc = ReflTemporal_Luminance(current.rgb);
+        if (max2 >= 0.0 && lc > cap && lc > 0.0001)
+            current.rgb *= cap / lc;
+    }
+
+    float curLum = ReflTemporal_Luminance(current.rgb);
 
     bool rejected = false;
     float age = 0.0;
@@ -192,7 +239,14 @@ void main()
                     float variance = max(0.0, histMean2 - histMean * histMean);
                     float relVar = variance / max(histMean * histMean, 1e-4);
 
-                    float alpha = clamp(baseAlpha * (1.0 + varianceGain * sqrt(relVar)), baseAlpha, 1.0);
+                    // Glass (negative alpha sentinel) gets its own, higher floor: history
+                    // follows the pane's motion, not the reflected image's parallax.
+                    // The variance boost is glass-only: on glass high variance means the
+                    // image moved, on rough opaque it means GGX noise, and boosting there
+                    // let the noisiest pixels skip averaging entirely.
+                    float alpha = isGlass
+                        ? clamp(glassAlpha * (1.0 + varianceGain * sqrt(relVar)), glassAlpha, 1.0)
+                        : baseAlpha;
 
                     outColor = vec4(mix(hist.rgb, current.rgb, alpha), current.a);
                     float newMean = mix(histMean, curLum, alpha);

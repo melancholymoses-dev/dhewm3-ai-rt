@@ -2508,6 +2508,7 @@ struct RTCVars
     idCVar *rtGlassCreaseRatio = nullptr;
     idCVar *rtReflDenoise = nullptr;
     idCVar *rtReflDenoiseAlpha = nullptr;
+    idCVar *rtReflDenoiseAlphaGlass = nullptr;
     idCVar *rtReflAtrousIterations = nullptr;
     idCVar *rtReflAtrousRoughnessGain = nullptr;
     idCVar *rtReflAtrousFireflyClamp = nullptr;
@@ -2652,6 +2653,7 @@ static void InitRTOptionsMenu()
     rtCVars.rtGlassCreaseRatio = cvarSystem->Find("r_rtGlassCreaseRatio");
     rtCVars.rtReflDenoise = cvarSystem->Find("r_rtReflDenoise");
     rtCVars.rtReflDenoiseAlpha = cvarSystem->Find("r_rtReflDenoiseAlpha");
+    rtCVars.rtReflDenoiseAlphaGlass = cvarSystem->Find("r_rtReflDenoiseAlphaGlass");
     rtCVars.rtReflAtrousIterations = cvarSystem->Find("r_rtReflAtrousIterations");
     rtCVars.rtReflAtrousRoughnessGain = cvarSystem->Find("r_rtReflAtrousRoughnessGain");
     rtCVars.rtReflAtrousFireflyClamp = cvarSystem->Find("r_rtReflAtrousFireflyClamp");
@@ -2892,12 +2894,13 @@ static void DrawRTOptionsMenu()
         static const char *const reflDenoiseModes[] = {"Off", "Temporal", "Temporal + Spatial"};
         RTCombo("Reflection Denoise", rtCVars.rtReflDenoise, reflDenoiseModes, IM_ARRAYSIZE(reflDenoiseModes));
         ImGui::BeginDisabled(!(rtCVars.rtReflDenoise && rtCVars.rtReflDenoise->GetInteger() > 0));
-        RTSliderFloat("Denoise Alpha Floor", rtCVars.rtReflDenoiseAlpha, 0.0f, 1.0f, "%.2f");
+        RTSliderFloat("Denoise Alpha", rtCVars.rtReflDenoiseAlpha, 0.0f, 1.0f, "%.2f");
+        RTSliderFloat("Glass Denoise Alpha Floor", rtCVars.rtReflDenoiseAlphaGlass, 0.0f, 1.0f, "%.2f");
+        RTSliderFloat("Firefly Clamp", rtCVars.rtReflAtrousFireflyClamp, 0.0f, 8.0f, "%.1f");
         ImGui::EndDisabled();
         ImGui::BeginDisabled(!(rtCVars.rtReflDenoise && rtCVars.rtReflDenoise->GetInteger() >= 2));
         RTSliderInt("Spatial Filter Passes", rtCVars.rtReflAtrousIterations, 0, 8);
         RTSliderFloat("Spatial Filter Wash", rtCVars.rtReflAtrousRoughnessGain, 0.5f, 8.0f, "%.1f");
-        RTSliderFloat("Firefly Clamp", rtCVars.rtReflAtrousFireflyClamp, 0.0f, 8.0f, "%.1f");
         ImGui::EndDisabled();
 
         ImGui::EndTable();

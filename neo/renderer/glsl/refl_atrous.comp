@@ -36,7 +36,7 @@ Inputs (set 0):
   binding 2 (combined image sampler)           — scene depth buffer
   binding 3 (combined image sampler)           — gbufAlbedo (alpha = packed class + roughness)
 
-Push constants: 44 bytes — gi_atrous.comp's PC block plus a trailing fireflyClamp float.
+Push constants: 48 bytes — gi_atrous.comp's PC block plus trailing fireflyClamp and debugMode.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -71,6 +71,7 @@ layout(push_constant) uniform PC {
     int   scissorExtentX;
     int   scissorExtentY;
     float fireflyClamp;   // r_rtReflAtrousFireflyClamp — see the clamp below; 0 disables
+    int   debugMode;      // r_rtReflectionDebugMode — 14 = branch view, see below
 } pc;
 
 const float K[3][3] = float[3][3](
@@ -104,6 +105,47 @@ void main()
         return;
 
     vec4 cFull = texelFetch(reflSrc, coord, 0);
+
+    // Debug 14: classify each pixel by the branch pass 0 takes, then later passes copy
+    // it through untouched. Grey = glass, dark blue = untraced, red = roughness 0
+    // (skipped), yellow = traced but no traced 3x3 neighbour (blur is a no-op),
+    // green = filtered, brightness = roughness gate (share of the blurred result used).
+    if (pc.debugMode == 14)
+    {
+        if (pc.stepSize != 1)
+        {
+            imageStore(reflDst, coord, cFull);
+            return;
+        }
+        vec3 vis;
+        if (cFull.a < 0.0)
+            vis = vec3(0.25);
+        else if (cFull.a <= VALID_ALPHA_THRESHOLD)
+            vis = vec3(0.0, 0.0, 0.3);
+        else
+        {
+            ivec2 aSz = textureSize(gbufAlbedoSampler, 0);
+            float r   = GBuf_UnpackRoughness(texelFetch(gbufAlbedoSampler, min(coord, aSz - 1), 0).a);
+            int   n   = 0;
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    if (dx == 0 && dy == 0)
+                        continue;
+                    ivec2 s = clamp(coord + ivec2(dx, dy), ivec2(0), size - 1);
+                    if (texelFetch(reflSrc, s, 0).a > VALID_ALPHA_THRESHOLD)
+                        n++;
+                }
+            if (r <= 0.0)
+                vis = vec3(1.0, 0.0, 0.0);
+            else if (n == 0)
+                vis = vec3(1.0, 1.0, 0.0);
+            else
+                vis = vec3(0.0, 0.15 + 0.85 * clamp(r * pc.roughnessGain, 0.0, 1.0), 0.0);
+        }
+        imageStore(reflDst, coord, vec4(vis, 1.0));
+        return;
+    }
 
     // Glass, sky, or a pixel that never traced (F0 too low) — nothing to denoise,
     // and (for glass) nothing this filter is allowed to touch. Pass through exactly.
