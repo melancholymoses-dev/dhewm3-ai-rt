@@ -60,8 +60,8 @@ The third person shadow was also always there, but never activated.  This is ess
 This kept the original GL pipeline that can be toggled back to, and created a Vulkan pipeline in parallel.  That was the essential starting point for the vendor neutral ray-tracing work. 
 
 ## 2. Ray Traced shadows.
-![Ray Traced Shadows](docs/img/screenshots/20260830_shadows_on.jpg)
-![Ray Traced Original](docs/img/screenshots/20260830_shadows_off.jpg)
+![Ray Traced Shadows](docs/img/screenshots/20261018_shadows_rt.jpg)
+![Ray Traced Original](docs/img/screenshots/20261018_shadows_stencil.jpg)
 Top screenshot is RT, lower screenshot is original stencil.  Slight differences in shadows, and we're blurring some.  In all, it really is not that noticeable.  The third-person player model showing up is more impactful in shadows. 
 
 ## 3. Ray-Traced Ambient Occlusion with temporal filtering.   
@@ -71,7 +71,8 @@ Now running properly and leads to darkening in the corners.  This is fairly subt
 
 ## 4. Ray traced Reflections
 
-![Ray Traced Reflection](docs/img/screenshots/20261018_reflection.jpg)
+![Ray Traced Reflection - Glass](docs/img/screenshots/20261018_reflection.jpg)
+![Ray Traced Reflection - Specular](docs/img/screenshots/20261018_specular.jpg)
 Currently reflections are glass, with GUIs, projectiles, and specular rough reflections.  Working on including muzzle flash and particles in here.  
 
 With `g_showplayershadow` toggled on, the third person player model is visible and can be reflected.  
