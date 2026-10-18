@@ -104,7 +104,7 @@ wall and a multi-light room. `REFLECTIONS` ms drops. No new light leaking throug
 
 ### 2a — Octahedral normal frees a channel (no image change)
 
-Implemented 2026-10-17, not yet verified in-game.
+Done 2026-10-17, verified in-game alongside 2b.
 
 `gbufNormal` (RGBA8) stores a 2-DoF unit normal in 3 channels. Octahedral encoding fits it
 in RG (~1° worst case, comparable to today). No spare bit exists elsewhere: `gbufAlbedo`
@@ -133,7 +133,7 @@ in the two `gbuffer*.frag`.
 
 ### 2b — Coarse F0 and demodulation
 
-Implemented 2026-10-17, not yet verified in-game.
+Done 2026-10-17, verified by eye: smoothing visibly better across scuffed panels.
 
 | File | Change |
 |---|---|
@@ -157,8 +157,15 @@ where the final contribution is scaled down anyway.
 
 **Check:** debug 14 on the scuffed wall: no dark-blue blotches inside a panel. Scuff detail
 still visible in the final composite (comes back from fine F0). Debug 3 unchanged.
-Overall reflection brightness unchanged vs. Stage 2a — if highlights clip or dim, the
-`r_rtReflMaxLuminance` rescale is the suspect, not the demodulation.
+
+Retuned window (Slow, 2026-10-18): `r_rtReflMaxLuminance` 6, `r_rtReflRoughLumExp` 2.5,
+`r_rtSpecF0Scale` 0.332 / `Gamma` 2.46. The 6 vs the new 8.0 default is exactly the
+0.332/0.25 F0 ratio, so the rescale's sizing held. Defaults left at 8.0, which is
+correct for the stock remap.
+
+`r_rtReflectionMinWeight` is now a coarse-F0 threshold, so a value tuned against
+per-pixel F0 reads far stricter — a hand-tuned 0.2 culled whole panels and had to come
+back to 0.04. Flag this when Stage 5 touches the knob again.
 
 ---
 
@@ -187,19 +194,66 @@ colour bleeding into the floor. Floor/wall crease stays split.
 
 ## Stage 4 — Half-res opaque trace
 
+Split into three after reading the code 2026-10-18: the resolution change needs glass and
+opaque in separate images with separate denoiser chains, and that separation is most of
+the work. 4a is a parity-gated refactor, 4b the dispatch split, 4c the resolution change.
+
+Glass and opaque **cannot** share one buffer once their resolutions differ. The cheap
+alternative — one full-res buffer, one ray per 2×2 block, incident light replicated to all
+4 pixels with 2b's exact per-pixel alpha — fails only on glass: it must stay full-res and
+sharp, the two populations are told apart solely by alpha sign in that buffer, and the
+opaque pass would need a per-pixel glass probe to know where not to write, which spends
+the rays it just saved.
+
+### 4a — One chain struct, one instance (no image change)
+
+All reflection denoiser state is local to `vk_reflections.cpp` (only two `reflBuffer`
+null-checks leak, both in `vk_backend.cpp` beside a `VK_RT_GetReflReadView` call), so the
+refactor is contained.
+
 | File | Change |
 |---|---|
-| `vk_reflections.cpp` | Opaque buffers at half res: trace, history, moments, à-trous A/B. Glass keeps full-res `reflBuffer` and its own dispatch over the glass rect |
-| `reflect_ray.rgen` | Opaque launch: one ray per 2×2 block; sub-pixel rotates over 4 frames on a **per-slot counter**, not `tr.frameCount` (engine rule) |
-| `refl_temporal_resolve.comp`, `refl_atrous.comp` | Run at half res; depth/normal fetched at the traced sub-pixel |
-| `glsl/refl_upsample.comp` | **New.** Joint bilateral 2×2 → full res, using Stage 3's depth + normal stops |
-| `vk_backend.cpp` | Dispatch upsample after à-trous; composite reads its output |
-| `CMakeLists.txt` | New shader |
-| `vk_reflections.cpp` | `r_rtReflOpaqueHalfRes` (0/1) |
+| `vk_raytracing.h` | `vkReflChain_t`: trace image, `history[2]`, `moments[2]`, `atrousA/B`, `atrousReadView`, `pingPong`, `historyValid`, `prevCamPos/Fwd`, temporal + à-trous desc sets and their `lastUpdated` counters, `dispatchRect`/`Frame`, the three per-slot duplicate-dispatch guards |
+| `vk_reflections.cpp` | The three dispatch bodies and `VK_RT_GetReflReadView` take a `vkReflChain_t *`. Image create/destroy/resize parameterised. One instance, wired exactly as today |
+
+**Check:** screenshot parity — the image must not change at all. Glass mirrors, debug 11,
+14, 15 all as before.
+
+### 4b — Split the populations
+
+| File | Change |
+|---|---|
+| `vk_reflections.cpp` | Second chain instance. Two rgen dispatches: glass over `VK_RT_GlassScreenRect`, opaque full-screen. Temporal + à-trous run per chain |
+| `reflect_ray.rgen` | `params.population`: glass pass writes only glass pixels, opaque pass only opaque. Removes the shared-buffer alpha-sign negotiation |
+| `refl_composite.frag`, `glass_refl_overlay.frag` | Composite reads the opaque chain (no glass sentinel test left), overlay reads the glass chain. Both get simpler |
+
+Free ray saving: `VK_RT_GlassScreenRect` exists but only gates mode 1 today, so **mode 3
+fires a full-res glass probe ray at every pixel on screen**, including in rooms with no
+glass. Restricting the glass dispatch to its rect is only valid once the populations split.
+
+Debug modes: full-screen visualizations (2, 3, 4, 6, 12, 13) ride the **opaque** chain and
+force that dispatch full-screen, as they force mode 2/3 today. 11, 14 and 15 are per-chain
+state and show the opaque chain's; glass versions are not worth a cvar.
+
+**Check:** parity again — splitting where a pixel's radiance is stored must not change it.
+Then `ring.draws`-matched captures: glass-free rooms lose the glass probe entirely.
+
+### 4c — Half res
+
+| File | Change |
+|---|---|
+| `vk_reflections.cpp` | Opaque chain images at half res. `r_rtReflOpaqueHalfRes` (0/1) |
+| `reflect_ray.rgen` | Opaque launch one ray per 2×2 block; sub-pixel rotates over 4 frames on a **per-slot counter**, not `tr.frameCount` (engine rule) |
+| `refl_temporal_resolve.comp`, `refl_atrous.comp` | Half-res grid; depth/normal/motion fetched at the traced sub-pixel |
+| `glsl/refl_upsample.comp` | **New.** Joint bilateral 2×2 → full res, reusing Stage 3's plane + normal stops |
+| `vk_backend.cpp`, `CMakeLists.txt` | Dispatch upsample after à-trous; composite reads its output. New shader |
 
 **Check:** converged screenshots 0 vs 1 at the LED wall, a metal floor with wall wash, a rail
 over a floor. No 2×2 blockiness at edges, no crawl on a slow strafe. Trace ms ~¼. Debug 14
 still meaningful (classifies the half-res grid).
+
+Watch: `r_rtReflAtrousIterations` is 1 in the tuned config, so the upsample carries more of
+the spatial reconstruction than one à-trous pass alone would suggest.
 
 ---
 

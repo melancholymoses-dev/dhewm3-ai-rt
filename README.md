@@ -49,40 +49,43 @@ I made no attempts to preserve Dhewm3's Mac builds since the driver situation se
 
 # Ray Tracing Changes
 
-0. Tweaked lighting on projectiles for some weapons (pulse rifle, rocket launcher)
+## 0. Tweaked lighting on projectiles for some weapons (pulse rifle, rocket launcher)
 
 ![Restored plasma particle luminance.](docs/img/screenshots/20260331_restore_luminance.jpg)
 This is just a definition on the weapon to activate an existing effect.  This was already in-game but probably off for 2005 performance reasons.  Most noticeable on plasma and rockets.  
 
 The third person shadow was also always there, but never activated.  This is essential for RT reflections reflections, and adds a lot of atmosphere on its own.  See Item 9 for the shadow. 
 
-1. Vulkan rendering pipeline and acceleration structures.  This kept the original GL pipeline that can be toggled back to, and created a Vulkan pipeline in parallel.  That was the essential starting point for the vendor neutral ray-tracing work. 
+## 1. Vulkan rendering pipeline and acceleration structures.  
+This kept the original GL pipeline that can be toggled back to, and created a Vulkan pipeline in parallel.  That was the essential starting point for the vendor neutral ray-tracing work. 
 
-2. Ray Traced shadows.
+## 2. Ray Traced shadows.
 ![Ray Traced Shadows](docs/img/screenshots/20260830_shadows_on.jpg)
 ![Ray Traced Original](docs/img/screenshots/20260830_shadows_off.jpg)
-Ray Traced Shadows are in.  Top screenshot is RT, lower screenshot is original stencil.  Slight differences in shadows, and we're blurring some.  In all, it really is not that noticeable.  The third-person player model showing up is more impactful in shadows.  
+Top screenshot is RT, lower screenshot is original stencil.  Slight differences in shadows, and we're blurring some.  In all, it really is not that noticeable.  The third-person player model showing up is more impactful in shadows. 
 
-3. Ray-Traced Ambient Occlusion with temporal filtering.   
+## 3. Ray-Traced Ambient Occlusion with temporal filtering.   
 Now running properly and leads to darkening in the corners.  This is fairly subtle.
 ![RT Ambient Occlusion](docs/img/screenshots/20260830_AO_on.jpg)
 ![RT Ambient Occlusion Off](docs/img/screenshots/20260830_AO_off.jpg)
 
-4. Ray traced Reflections
+## 4. Ray traced Reflections
 
-![Ray Traced Reflection](docs/img/screenshots/20261013_reflection.jpg)
-Ray Traced reflections are going.  With `g_showplayershadow` toggled on, the third person player model is visible and can be reflected.  Animations not perfectly in sync between third person and first person, but that was already a problem with mirrors.   Animated entities are visible behind you!  This could be fun for horror applications - though comes with a performance cost.  This is perhaps the biggest improvement, but could be possible without RT.
-Currently reflections are just in glass, but the project intends to try and add diffuse reflections back with roughness corrections. Working on including muzzle flash and particles in here.  
+![Ray Traced Reflection](docs/img/screenshots/20261018_reflection.jpg)
+Currently reflections are glass, with GUIs, projectiles, and specular rough reflections.  Working on including muzzle flash and particles in here.  
 
-5. Global Illumination
+With `g_showplayershadow` toggled on, the third person player model is visible and can be reflected.  
+
+Animations are not perfectly in sync between third person and first person, but that was already a problem with mirrors.   Animated entities are visible behind you!  This could be fun for horror applications - though comes with a performance cost.  This is perhaps the biggest improvement graphically.
+
+## 5. Global Illumination
 This adds one-bounce global illumination.  Reflected surfaces can share luminance (e.g. light bouncing off a red wall illuminates a shadow with red light).  This is potentially most helpful in other games (like Quake4) where the harsh lighting of Doom 3 clashes with the outdoor spaces (pitch black under bridges at midday).  
 
 Early attempts allowed GI to pass beyond the light box limits with a flatter fall-off with distance.  This killed the original art direction and led grey lighting everywhere, and never looked good.   As it is, this is hard to notice in the game.  
 
-5b. Tone mapping 
 The global illumination passes were washing out the color and killing the mood.  We have added a Uchimara tone-map to try to restore that dynamic range while sticking close to the original art style even with all the additional luminance.
 
-6. Volumetric Lighting 
+## 6. Volumetric Lighting 
 This gives light shafts more substance, with light filling the air.  Lends a lot of mood, especially for moving lights and shadows.  It does soften the harsh lighting of Doom 3, but gives light more volume, so a worthwhile tradeoff.  Also been working to include flashlights and reflections here.  
 ![Volumetrics On](docs/img/screenshots/20261013_vol_on.jpg)
 ![Volumetrics Off](docs/img/screenshots/20261013_vol_off.jpg)
@@ -90,17 +93,17 @@ This gives light shafts more substance, with light filling the air.  Lends a lot
 I may have tuned directed volumetrics a bit high (captures the  experience of driving at night now):
 ![Volumetrics On](docs/img/screenshots/20261013_blinding_vol.jpg)
 
-7. FSR Upscaling
+## 7. FSR Upscaling
 
 Added Upscaling to try and buy back some time from RT effects.  We're just using 
 AMD Fidelity FX FSR2, with FSR1 as backup, and bilinear upscale as simplest version.  
 Likely sticking with FSR2 since FSR3 is harder to build on Linux, and it works on AMD and Nvidia Hardware.  It mostly looks acceptable, and buys back some performance.  There are some unavoidable tradeoffs between blurriness and aliasing, especially noticeable on grids. 
 
-8. Controller Update
+## 8. Controller Update
 Tweaked handling of controller with a light auto-aim and added a D-pad weapon selector ala Half-life 2.  Need to test it works on more controllers. 
 
-9. First Person Body
-Added a custom first person body, based off the marine body, and adjusted in Blender by hand.  Note: that shadow could appear in the original game!  The softness comes from the RT shadows.
+## 9. First Person Body
+Added a custom first person body, based off the marine body, and adjusted in Blender by hand.  Note: the third person shadow could appear in the original game!  The softness comes from the RT shadows.
 ![Doom guy has legs!](docs/img/screenshots/20261013_legs_shadow.jpg)
 
 I may also mess around with more embodiment with tilt/head bob/rumble and feedback - I did love the crunchiness of the shooting in Syndicate (2012).
@@ -114,14 +117,12 @@ See `docs/Dhewm3-AI-RT-Settings.md` for a fuller list.
 ## Overall Impact of RT
 
 Mostly, the ray-tracing is computationally expensive, and tends to fight the original art direction - which the map design and gameplay were already optimized towards.  
-More physically based rendering tends to not be impressive given the game and art direction was built to lean into the original engine.  
 The various effects here tend to soften the harsh shadows of the original for a more diffuse brighter look.
 
-The two effects I've tried that seem to actually add something are the reflections, and volumetric lighting.  Those both lean into what I liked about Doom 3: moody atmosphere and the play of light and shadow.  
+The two effects I've tried that seem to actually add something are the reflections (both specular and glass), and the volumetric lighting.  Those both lean into what I liked about Doom 3: moody atmosphere and the play of light and shadow.  
 
-- Of all of these, the reflections seem like the biggest upgrade (and there are ways of doing that without ray-tracing).  
-Glass is plentiful enough early on.  Working to increase scope of reflections to particles/lighting while maintaining performance.
-- Global illumination was less impressive than I hoped, but the volumetrics help a lot with mood.  I could see GI having the biggest improvement to a game like Quake 4 where Doom's harsh shadows look odd in exterior environments.
+Global illumination was less impressive than I hoped, but specular reflection gives what I'd hoped GI would add.  I could see GI having the biggest improvement to a game like Quake 4 where Doom's harsh shadows look odd in exterior environments.  
+Shadows and Ambient Occlusion are fairly subtle and look nearly the same for a fair computational cost.  
 
 ## Additional Files
 
@@ -134,11 +135,11 @@ Those should be copied to `base/def` alongside the shaders to take effect in gam
 - Updated Plasma Rifle particles to shed blue light on pulses.
 - Updated Rockets to show light.
 
-- First person model is in base/models/sp_player.md5mesh and based on the original third person model, though hacked on in Blender.  
+- First person model is in base/models/sp_player.md5mesh and based on the original third person model, though hacked on in Blender so it looks okay from camera perspective.   
 
-- There is also a material for tracking added GI accent lights in logging.   Game will break without that material  
+- There is also a material for tracking added GI accent lights in logging.   Game will break without that material.
 
-- Also a test map `simple` included that I have used for checking shadows/volumetrics/reflections and weapon effects. 
+- Also a test map ("`simple`") included that I have used for checking shadows/volumetrics/reflections and weapon effects. 
 
 # GENERAL NOTES
 
