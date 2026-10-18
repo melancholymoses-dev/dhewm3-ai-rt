@@ -2880,17 +2880,6 @@ static void DrawRTOptionsMenu()
         RTSliderFloat("Screen Reflection Brightness", rtCVars.rtGuiReflGain, 0.0f, 2.0f, "%.2f");
         RTSliderInt("Screen Refresh Interval (frames)", rtCVars.rtGuiTexInterval, 1, 4);
         ImGui::EndDisabled();
-        ImGui::TableNextColumn();
-        RTSliderFloat("Specular F0 Scale (Fresnel intensity)", rtCVars.rtSpecF0Scale, 0.0f, 1.0f);
-        RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 5.0f, "%.2f");
-        RTSliderFloat("Reflection Roughness Floor", rtCVars.rtReflRoughnessFloor, 0.0f, 1.0f, "%.2f");
-        RTSliderFloat("Reflection Roughness Scale", rtCVars.rtReflRoughnessScale, 0.0f, 4.0f, "%.2f");
-        // Range widened with Stage 2b: the ceiling now bounds incident light, not
-        // post-Fresnel radiance, so the useful values are ~10x larger.
-        RTSliderFloat("Reflection Max Luminance", rtCVars.rtReflMaxLuminance, 0.0f, 24.0f, "%.1f");
-        RTSliderFloat("Rough Highlight Damping", rtCVars.rtReflRoughLumExp, 0.0f, 8.0f, "%.1f");
-        RTSliderInt("Reflection Shadow Picks (0 = all lights)", rtCVars.rtReflShadowPicks, 0, 2);
-        RTCheckbox("Light Shafts in Reflections", rtCVars.rtReflVol);
         ImGui::BeginDisabled(!(rtCVars.rtReflVol && rtCVars.rtReflVol->GetBool()));
         RTSliderInt("Shaft Samples per Ray", rtCVars.rtReflVolSteps, 1, 32);
         ImGui::EndDisabled();
@@ -2899,12 +2888,21 @@ static void DrawRTOptionsMenu()
         ImGui::BeginDisabled(!(rtCVars.rtGlassNormalMode && rtCVars.rtGlassNormalMode->GetInteger() == 2));
         RTSliderFloat("Glass Crease Ratio", rtCVars.rtGlassCreaseRatio, 0.0f, 1.0f, "%.2f");
         ImGui::EndDisabled();
+        ImGui::TableNextColumn();
+        RTSliderFloat("Specular F0 Scale (Fresnel intensity)", rtCVars.rtSpecF0Scale, 0.0f, 1.0f);
+        RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 5.0f, "%.2f");
+        RTSliderFloat("Reflection Roughness Floor", rtCVars.rtReflRoughnessFloor, 0.0f, 1.0f, "%.2f");
+        RTSliderFloat("Reflection Roughness Scale", rtCVars.rtReflRoughnessScale, 0.0f, 4.0f, "%.2f");
+        RTSliderFloat("Reflection Max Luminance", rtCVars.rtReflMaxLuminance, 0.0f, 24.0f, "%.1f");
+        RTSliderFloat("Rough Highlight Damping", rtCVars.rtReflRoughLumExp, 0.0f, 8.0f, "%.1f");
+        RTSliderInt("Reflection Shadow Picks (0 = all lights)", rtCVars.rtReflShadowPicks, 0, 2);
+        RTCheckbox("Light Shafts in Reflections", rtCVars.rtReflVol);
         static const char *const reflDenoiseModes[] = {"Off", "Temporal", "Temporal + Spatial"};
         RTCombo("Reflection Denoise", rtCVars.rtReflDenoise, reflDenoiseModes, IM_ARRAYSIZE(reflDenoiseModes));
         ImGui::BeginDisabled(!(rtCVars.rtReflDenoise && rtCVars.rtReflDenoise->GetInteger() > 0));
+        RTSliderFloat("Firefly Clamp", rtCVars.rtReflAtrousFireflyClamp, 0.0f, 8.0f, "%.1f");
         RTSliderFloat("Denoise Alpha", rtCVars.rtReflDenoiseAlpha, 0.0f, 1.0f, "%.2f");
         RTSliderFloat("Glass Denoise Alpha Floor", rtCVars.rtReflDenoiseAlphaGlass, 0.0f, 1.0f, "%.2f");
-        RTSliderFloat("Firefly Clamp", rtCVars.rtReflAtrousFireflyClamp, 0.0f, 8.0f, "%.1f");
         ImGui::EndDisabled();
         ImGui::BeginDisabled(!(rtCVars.rtReflDenoise && rtCVars.rtReflDenoise->GetInteger() >= 2));
         RTSliderInt("Spatial Filter Passes", rtCVars.rtReflAtrousIterations, 0, 8);
