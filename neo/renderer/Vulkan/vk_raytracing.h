@@ -210,6 +210,92 @@ struct vkFroxelGrid_t
     uint32_t depth;
 };
 
+// ---------------------------------------------------------------------------
+// vkReflChain_t — one reflection trace + denoise chain
+//
+// Bundles everything that is per-population rather than per-renderer: the traced
+// image, the temporal EMA's cross-frame ping-pong history/moments, the à-trous
+// scratch, the descriptor sets for all three passes, and the bookkeeping those
+// passes need (launch rect, duplicate-dispatch guards, cached bound views).
+// Pipelines, layouts, pools and samplers stay shared in vkRTState_t — two chains
+// run the same shaders over different images.
+//
+// Stage 4a of docs/plans/20261017_reflection_pipeline_refactor.md introduces this
+// with exactly one instance; 4b adds a second so glass and opaque can be traced
+// and filtered at different rates and resolutions.
+// ---------------------------------------------------------------------------
+struct vkReflChain_t
+{
+    const char *name; // appears in this chain's log lines
+
+    // Whether the à-trous filter runs on this chain. False for glass: refl_atrous.comp
+    // excludes negative-alpha pixels from both the centre test and the 3x3 taps, so
+    // every pass over a glass image is a copy. The temporal EMA does run on glass —
+    // that is what r_rtReflDenoiseAlphaGlass feeds.
+    bool spatialFilter;
+
+    vkRTImage_t trace[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F, full res, what the denoisers read
+
+    // Stage 4c: when half-res tracing is on for this chain, reflect_ray.rgen writes
+    // HERE instead and refl_upsample.comp reconstructs trace[] from it. Allocated only
+    // for a chain with halfResCapable; image NULL means "trace at full res this frame".
+    vkRTImage_t traceHalf[VK_MAX_FRAMES_IN_FLIGHT];
+    bool halfResCapable; // opaque only — glass must stay sharp and is already rect-bound
+
+    // Temporal EMA state. Shared across frame slots (the recurrence is sequential
+    // across frames), ping-ponged across frames because the resolve reprojects —
+    // it reads a different pixel than it writes, so one read-write image races.
+    // pingPong is the index most recently WRITTEN, i.e. what consumers read.
+    vkRTImage_t history[2]; // rgb = EMA'd radiance, a = this frame's Fresnel weight
+    vkRTImage_t moments[2]; // mean, mean^2, history depth, age
+    int pingPong;
+    bool historyValid;
+    idVec3 prevCamPos;
+    idVec3 prevCamFwd;
+
+    // À-trous scratch: per-slot ping-pong across the N passes of ONE frame, unlike
+    // history's cross-frame ping-pong. atrousReadView is VK_NULL_HANDLE when the
+    // filter didn't run this frame.
+    vkRTImage_t atrousA[VK_MAX_FRAMES_IN_FLIGHT];
+    vkRTImage_t atrousB[VK_MAX_FRAMES_IN_FLIGHT];
+    VkImageView atrousReadView[VK_MAX_FRAMES_IN_FLIGHT];
+
+    VkDescriptorSet traceDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int traceDescSetLastUpdated[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorSet upsampleDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int upsampleDescSetLastUpdated[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorSet temporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int temporalDescSetLastUpdated[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorSet atrousDescSets[VK_MAX_FRAMES_IN_FLIGHT][3];
+    int atrousDescSetLastUpdated[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // The rect the rgen actually launched over and the frame it launched on, so both
+    // filters touch exactly the pixels that were traced and nothing stale outside.
+    VkRect2D dispatchRect[VK_MAX_FRAMES_IN_FLIGHT];
+    int dispatchRectFrame[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // Duplicate-dispatch guards: the backend can issue a second RC_DRAW_VIEW in one
+    // frame (weapon subview, 2D overlay), which would re-run the EMA on its own output.
+    int lastTraceFrame[VK_MAX_FRAMES_IN_FLIGHT];
+    int lastTemporalFrame[VK_MAX_FRAMES_IN_FLIGHT];
+    int lastAtrousFrame[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // Cached bound resources for the trace set's in-frame change detection — a purge
+    // or toggle can swap a view inside a frame the cache would otherwise call current.
+    VkAccelerationStructureKHR lastTlas[VK_MAX_FRAMES_IN_FLIGHT];
+    VkImageView lastStorageView[VK_MAX_FRAMES_IN_FLIGHT];
+    VkImageView lastDepthView[VK_MAX_FRAMES_IN_FLIGHT];
+    VkBuffer lastLightSsbo[VK_MAX_FRAMES_IN_FLIGHT];
+    VkImageView lastGbufView[VK_MAX_FRAMES_IN_FLIGHT];
+    VkImageView lastGbufAlbedoView[VK_MAX_FRAMES_IN_FLIGHT];
+    VkImageView lastFroxelView[VK_MAX_FRAMES_IN_FLIGHT];
+    VkImageView lastFroxelDirView[VK_MAX_FRAMES_IN_FLIGHT];
+};
+
+// Chain 0 = opaque, chain 1 = glass (Stage 4b). The descriptor pools are sized by
+// this, so adding a population is a matter of the count plus its dispatch routing.
+#define VK_REFL_CHAIN_COUNT 2
+
 // Global RT state
 struct vkRTState_t
 {
@@ -303,10 +389,11 @@ struct vkRTState_t
     // --------------------------------------------------------------------------
     // RT Reflections (Step 5.3)
     //
-    // One RGBA16F buffer per frame-in-flight slot.
+    // Per-chain resources live in reflChain[]; see vkReflChain_t. Everything the
+    // chains share (pipelines, layouts, pools, samplers) stays here.
     // --------------------------------------------------------------------------
-    vkRTImage_t reflBuffer[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F reflection colour
-    VkSampler reflSampler;                           // linear-clamp for interaction shader
+    vkReflChain_t reflChain[VK_REFL_CHAIN_COUNT];
+    VkSampler reflSampler; // linear-clamp for interaction shader
 
     // --------------------------------------------------------------------------
     // RT Global Illumination
@@ -413,8 +500,6 @@ struct vkRTState_t
     VkPipelineLayout reflPipelineLayout;
     VkDescriptorSetLayout reflDescLayout;
     VkDescriptorPool reflDescPool;
-    VkDescriptorSet reflDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int reflDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     VkBuffer sbtReflBuffer;
     VkDeviceMemory sbtReflMemory;
@@ -433,59 +518,27 @@ struct vkRTState_t
     VkDescriptorPool reflCompositeDescPool;
     VkDescriptorSet reflCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // --------------------------------------------------------------------------
-    // Reflection temporal denoiser (20261013_reflection_roughness.md Stage 1)
-    //
-    // SHARED, not per slot — same reasoning as aoHistory/giHistory: the EMA
-    // recurrence is sequential across frames. But unlike AO/GI's temporal passes,
-    // this one reprojects (reads a DIFFERENT pixel, Q, than it writes, P), so a
-    // single read-write image per buffer is a data race within the dispatch —
-    // nothing orders "has Q already been written this dispatch" against "read Q".
-    // Ping-pong across frames instead, same idiom as aoHistory/aoScratch's
-    // within-frame ping-pong: reflPingPong is the index most recently WRITTEN
-    // (what consumers should read); VK_RT_DispatchReflTemporal reads index
-    // reflPingPong and writes 1-reflPingPong, then flips.
-    //
-    // reflHistory carries rgb (EMA'd radiance) and a (always the CURRENT frame's
-    // Schlick weight/sentinel, never filtered). reflMoments carries (mean,
-    // mean^2, history depth, history age) per pixel for the variance-driven
-    // alpha and the depth disocclusion test.
-    // --------------------------------------------------------------------------
-    vkRTImage_t reflHistory[2]; // RGBA16F accumulated reflection history, ping-pong
-    vkRTImage_t reflMoments[2]; // RGBA16F: mean, mean^2, historyDepthRaw, age, ping-pong
-    int reflPingPong;           // index of the buffer most recently written
-    bool reflHistoryValid;
-    idVec3 reflPrevCamPos;
-    idVec3 reflPrevCamFwd;
-
+    // Reflection temporal denoiser (20261013_reflection_roughness.md Stage 1).
+    // Images and ping-pong state are per chain — see vkReflChain_t.
     VkPipeline reflTemporalPipeline;
     VkPipelineLayout reflTemporalPipelineLayout;
     VkDescriptorSetLayout reflTemporalDescLayout;
     VkDescriptorPool reflTemporalDescPool;
-    VkDescriptorSet reflTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int reflTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // --------------------------------------------------------------------------
+    // Half-res reconstruction (Stage 4c, r_rtReflOpaqueHalfRes). Compute pipeline for
+    // refl_upsample.comp; runs between the trace and the temporal resolve.
+    VkPipeline reflUpsamplePipeline;
+    VkPipelineLayout reflUpsamplePipelineLayout;
+    VkDescriptorSetLayout reflUpsampleDescLayout;
+    VkDescriptorPool reflUpsampleDescPool;
+
     // Reflection spatial filter (r_rtReflDenoise 2), à-trous wavelet, roughness-gated
-    // (20261013_reflection_roughness.md Stage 1 addendum). Runs on top of the
-    // temporal resolve's output. Per-slot ping-pong across N passes within one
-    // frame — same idiom as giAtrousA/B (vk_gi.cpp), NOT the cross-frame ping-pong
-    // reflHistory uses above, since every pass here both reads and writes the
-    // whole frame in one dispatch (no reprojection, no race).
-    // reflAtrousReadView is VK_NULL_HANDLE when the filter didn't run this frame
-    // (r_rtReflDenoise < 2, or the pipeline failed to load) — VK_RT_GetReflReadView
-    // falls back to the temporal/raw view in that case.
-    // --------------------------------------------------------------------------
-    vkRTImage_t reflAtrousA[VK_MAX_FRAMES_IN_FLIGHT];
-    vkRTImage_t reflAtrousB[VK_MAX_FRAMES_IN_FLIGHT];
-    VkImageView reflAtrousReadView[VK_MAX_FRAMES_IN_FLIGHT];
-
+    // (20261013_reflection_roughness.md Stage 1 addendum). Runs on top of the temporal
+    // resolve's output. Scratch images and the read view are per chain.
     VkPipeline reflAtrousPipeline;
     VkPipelineLayout reflAtrousPipelineLayout;
     VkDescriptorSetLayout reflAtrousDescLayout;
     VkDescriptorPool reflAtrousDescPool;
-    VkDescriptorSet reflAtrousDescSets[VK_MAX_FRAMES_IN_FLIGHT][3];
-    int reflAtrousDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // SBT buffers
     VkBuffer sbtBuffer;
@@ -855,20 +908,20 @@ void VK_RT_ResizeReflections(uint32_t width, uint32_t height);
 // Dispatch reflection rays for the current view (once per frame).
 // Must be outside a render pass.  Depth must be in ATTACHMENT_OPTIMAL on entry;
 // this function transitions to READ_ONLY_OPTIMAL and back.
-// Output: reflBuffer[currentFrame] is ready for FRAGMENT sampling when this returns.
+// Output: the chain's trace[currentFrame] is ready for FRAGMENT sampling on return.
 void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
-// Temporal EMA denoise of reflBuffer (Stage 1, 20261013_reflection_roughness.md).
+// Temporal EMA denoise of the traced image (Stage 1, 20261013_reflection_roughness.md).
 // Must be called after VK_RT_DispatchReflections and before any consumer of the
 // reflection buffer (composite, interaction, glass overlay). No-op when
-// r_rtReflDenoise is 0 — VK_RT_GetReflReadView then just returns reflBuffer[slot],
+// r_rtReflDenoise is 0 — VK_RT_GetReflReadView then just returns the traced image,
 // so r_rtReflDenoise 0 is bit-identical to the pre-Stage-1 path.
 void VK_RT_DispatchReflTemporal(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Roughness-gated à-trous spatial filter (Stage 1 addendum, r_rtReflDenoise 2).
 // Must be called after VK_RT_DispatchReflTemporal and before any consumer of the
 // reflection buffer. No-op below r_rtReflDenoise 2 — VK_RT_GetReflReadView then
-// falls back to reflHistory (1) or reflBuffer[slot] (0), same as before this existed.
+// falls back to the temporal history (1) or the traced image (0).
 void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Highest r_rtReflectionDebugMode handled inside reflect_ray.rgen. Modes 2-4 are the
@@ -878,8 +931,8 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // per-surface glass overlay.
 // 8 = projectile emitter discs (vk_rt_emitters.cpp); 9 = glass crease split; 10 = GUI hits;
 // 11 = reflection denoiser history age / rejection mask (VK_RT_DispatchReflTemporal)
-// 14 = à-trous branch view (refl_atrous.comp)
-const int REFL_DEBUG_MAX_MODE = 14;
+// 14 = à-trous branch view, 15 = à-trous edge-stop weight (refl_atrous.comp)
+const int REFL_DEBUG_MAX_MODE = 15;
 
 // Additively composite reflBuffer onto the framebuffer (Step 8, see
 // docs/plans/gbuffer_normal_pass.md). Must be called INSIDE the main render
@@ -890,9 +943,19 @@ void VK_RT_CompositeReflections(VkCommandBuffer cmd);
 
 // View to sample for any downstream reflection consumer (composite, interaction
 // binding 9, glass overlay): the à-trous output when r_rtReflDenoise is 2 and it
-// ran this frame, else reflHistory when the denoiser is active and valid for this
-// slot, else reflBuffer[slot] directly.
+// ran this frame, else the temporal history when the denoiser is active and valid
+// for this slot, else the traced image directly.
 VkImageView VK_RT_GetReflReadView(int frameIdx);
+
+// Same, for glass_refl_overlay.frag's per-pane draw (Stage 4b). Returns the glass
+// chain when the populations were split this frame, else the opaque chain — where the
+// pane's radiance sits behind the negative-alpha sentinel, as before the split.
+VkImageView VK_RT_GetReflGlassReadView(int frameIdx);
+
+// Whether VK_RT_GetReflReadView has a real image to hand out for this slot. Callers
+// binding the reflection map must check this rather than reaching into the chain's
+// images, which Stage 4b will split by population.
+bool VK_RT_ReflReadReady(int frameIdx);
 
 void VK_RT_DestroyBLAS(vkBLAS_t *blas);
 

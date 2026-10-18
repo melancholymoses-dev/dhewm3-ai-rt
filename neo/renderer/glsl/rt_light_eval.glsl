@@ -364,9 +364,12 @@ vec3 rt_EvalDirectLighting(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowB
 // never be picked (starving its bucket) or be picked at a tiny p and spike
 // through the wSum/w0 division. Each pick lands wholly in one bucket, so the two
 // buckets sum ray-for-ray to what this returned before at s = 1.
+//
+// ambientScale: an occluded pick keeps this fraction, same as the deterministic loop.
+// GI passes 0; reflections pass rtLightBuf.reflAmbientScale (refl-refactor Stage 1).
 void rt_EvalDirectLightingStochasticBuckets(vec3 hitPos, vec3 hitNorm, int maxLights, int picks,
                                             float shadowBias, float contribScale, uint seed,
-                                            uint cullMask,
+                                            float ambientScale, uint cullMask,
                                             out vec3 stableOut, out vec3 fastNormOut, out vec3 fastScaledOut)
 {
     stableOut     = vec3(0.0);
@@ -381,7 +384,7 @@ void rt_EvalDirectLightingStochasticBuckets(vec3 hitPos, vec3 hitNorm, int maxLi
     if (n <= k)
     {
         rt_EvalDirectLightingBuckets(hitPos, hitNorm, maxLights, RT_LIGHT_MAX_LIGHTS, shadowBias,
-                                     contribScale, 0.0, 0.0, cullMask, stableOut, fastNormOut,
+                                     contribScale, 0.0, ambientScale, cullMask, stableOut, fastNormOut,
                                      fastScaledOut);
         return;
     }
@@ -422,9 +425,10 @@ void rt_EvalDirectLightingStochasticBuckets(vec3 hitPos, vec3 hitNorm, int maxLi
         return;
 
     bool occluded = rt_TraceLightShadow(hitPos, hitNorm, d0, t0, shadowBias, cullMask);
-    if (!occluded)
+    float vis0    = occluded ? ambientScale : 1.0;
+    if (vis0 > 0.0)
     {
-        vec3 v = c0 * (wSum / w0);
+        vec3 v = c0 * (vis0 * wSum / w0);
         if (rt_LightIsBucketed(i0)) { fastNormOut += v; fastScaledOut += v * rt_LightFastScale(i0); }
         else                        { stableOut   += v * rt_LightFastScale(i0); }
     }
@@ -436,9 +440,10 @@ void rt_EvalDirectLightingStochasticBuckets(vec3 hitPos, vec3 hitNorm, int maxLi
         bool occluded1 = (i1 == i0)
                              ? occluded
                              : rt_TraceLightShadow(hitPos, hitNorm, d1, t1, shadowBias, cullMask);
-        if (!occluded1)
+        float vis1 = occluded1 ? ambientScale : 1.0;
+        if (vis1 > 0.0)
         {
-            vec3 v = c1 * (wSum / w1);
+            vec3 v = c1 * (vis1 * wSum / w1);
             if (rt_LightIsBucketed(i1)) { fastNormOut += v; fastScaledOut += v * rt_LightFastScale(i1); }
             else                        { stableOut   += v * rt_LightFastScale(i1); }
         }
@@ -452,11 +457,11 @@ void rt_EvalDirectLightingStochasticBuckets(vec3 hitPos, vec3 hitNorm, int maxLi
 
 vec3 rt_EvalDirectLightingStochastic(vec3 hitPos, vec3 hitNorm, int maxLights, int picks,
                                      float shadowBias, float contribScale, uint seed,
-                                     uint cullMask)
+                                     float ambientScale, uint cullMask)
 {
     vec3 stable, fastNorm, fastScaled;
     rt_EvalDirectLightingStochasticBuckets(hitPos, hitNorm, maxLights, picks, shadowBias, contribScale,
-                                           seed, cullMask, stable, fastNorm, fastScaled);
+                                           seed, ambientScale, cullMask, stable, fastNorm, fastScaled);
     return stable + fastScaled;
 }
 

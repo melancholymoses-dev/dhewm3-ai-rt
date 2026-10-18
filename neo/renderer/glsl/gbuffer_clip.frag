@@ -56,6 +56,7 @@ layout(set=0, binding=0) uniform GBufferParams {
 };
 
 #include "gbuf_albedo_class.glsl"
+#include "rt_gbuf_normal_fmt.glsl"
 
 // Same alpha packing as gbuffer.frag — keep the two in step.
 int GBuf_SurfaceClass() {
@@ -68,7 +69,7 @@ layout(set=0, binding=2) uniform sampler2D u_DiffuseMap; // alpha test only
 layout(set=0, binding=3) uniform sampler2D u_SpecularMap;
 
 layout(location = 0) out vec4 fragColor;  // attachment 0 (hdrScene) — write-masked off in the pipeline
-layout(location = 1) out vec4 outGbuf;    // attachment 1 (gbufNormal) — rgb = world normal, a = F0
+layout(location = 1) out vec4 outGbuf;    // attachment 1 (gbufNormal) — see rt_gbuf_normal_fmt.glsl
 layout(location = 2) out vec4 outAlbedo;  // attachment 2 (gbufAlbedo) — rgb = diffuse sample
 layout(location = 3) out vec2 outMotion;  // attachment 3 (motionVectors) — GL NDC, Y up
 
@@ -106,12 +107,19 @@ void main() {
     float specLum = dot(specMap, vec3(0.299, 0.587, 0.114));
     float f0      = clamp(pow(max(specLum, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0, 1.0);
 
+    // Coarse F0 for the reflection trace mask (Stage 2b) — see gbuffer.frag.
+    const float GBUF_F0_COARSE_MIP = 4.0; // keep in step with gbuffer.frag
+    vec3  specCoarse    = textureLod(u_SpecularMap, vary_TexCoord_Specular, GBUF_F0_COARSE_MIP).rgb;
+    float specLumCoarse = dot(specCoarse, vec3(0.299, 0.587, 0.114));
+    float f0Coarse      = clamp(pow(max(specLumCoarse, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0,
+                                GBUF_NORMAL_B_MAX);
+
     // Toksvig roughness, floored at u_RoughnessFloor — see gbuffer.frag for the derivation.
     float toksvigLen      = min(nTSLen, nTSFixedLen);
     float toksvigVariance = (1.0 - toksvigLen) / max(toksvigLen, 1e-3);
     float roughness       = max(clamp(sqrt(toksvigVariance), 0.0, 1.0), u_RoughnessFloor);
 
-    outGbuf   = vec4(nWS * 0.5 + 0.5, f0);
+    outGbuf   = vec4(GBuf_EncodeNormal(nWS), f0Coarse, f0);
     outAlbedo = vec4(diffuseSample.rgb, GBuf_PackAlbedoAlpha(GBuf_SurfaceClass(), roughness));
     outMotion = GBuf_MotionVector(vary_CurClip, vary_PrevClip);
     fragColor = vec4(0.0);

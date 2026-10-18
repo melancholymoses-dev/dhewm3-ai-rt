@@ -12,23 +12,29 @@ relevant `docs/plans/completed/` doc; it is not repeated here.
 
 Anything that fights these gets cut or demoted.
 
-1. **Shadows are the feature.** Soft, shaped, from more lights. This is where "dynamic
-   lighting" actually lives.
+1. **Drama of light and shadow is the goal.** High dynamic range, strong contrast. Shadow —
+   the absence of light — is what makes the contrast; soft penumbrae are a refinement, not
+   the point.
 2. **Darkness stays black.** GI may tint lit regions; it must never lift the noise floor of
    dark ones.
-3. **Light the air sparingly.** Volumetrics from hero lights only.
-4. **Reflections are set dressing.** Glass and mirrors, plus the odd hero surface by
-   explicit opt-in. The assets carry no PBR data; don't pretend they do.
+3. **Volumetrics shape the light.** Beams and shafts that show where light goes. Not a
+   uniform haze over every room.
+4. **Reflections add presence.** Glass, sheen on metal, screens and emitters glowing in nearby
+   surfaces. Rough surfaces read as a wash, not mirrors or pinpoint highlights. The assets
+   carry no PBR data — F0 and roughness are derived — so don't chase physical exactness.
 5. **No map editing.** Engine-side rules, budgets and debug overlays. Small def-file mods
    are allowed.
 6. **Debug visualization before tuning.** Every feature ships with an overlay mode;
-   constants get tuned from the overlay, not by eye on the final composite.
+   constants get tuned from the overlay, not by eye on the final composite. Overlays are
+   scaffolding: delete one once its feature is settled, and never let one constrain a design.
 7. **Optimization means the same image for less work.** Turning a feature down is not an
    optimization — pure black renders very fast. A change that alters the image is a quality
    setting and must be an explicit opt-in with its own cvar, never a default. Corollary for
    culling work: the shipping threshold is the one where screenshots are unchanged; anything
    past it is a quality tier the player picks. `r_skip*` cvars are probes for splitting a
    measurement, never a configuration.
+8. **Budget follows impact.** Reflections and volumetrics carry the look; GI and soft RT
+   shadows have to justify their cost with a visible change.
 
 ---
 
@@ -45,6 +51,10 @@ Each cost a debugging session. They apply to any new RT code.
 | A mapped buffer or descriptor set the CPU **writes** while recording needs one copy per frame slot, indexed by `vk.currentFrame` | The previous frame is still on the GPU. `r_vkSerializeFrames 1` is the check; the failure is GPU-dependent and can hide on one vendor |
 | Use the vertex normal, not `gl_HitKindEXT` | Doom 3 winds front faces opposite to GL/Vulkan, so every visible surface reports back-facing |
 | A pixel-skipping pattern keys off a per-slot counter, never `tr.frameCount` | Frames in flight desynchronise the pattern from the resource it writes |
+| Admit rays at the scale the denoiser filters at, and keep the per-pixel weight out of the filtered signal | A cull on a per-pixel quantity leaves holes no filter can blur across, and the surviving pixels carry that quantity's pattern into the blur. Coarse mask to admit, fine weight in alpha, multiply at composite |
+| Trace below full res, but reconstruct the per-pixel BRDF weight at full res — only the incident light is upsampled | Interpolating the weight smears every specular trim edge; recomputing it from the full-res G-buffer keeps material detail at quarter ray rate. The corollary of the demodulation rule above |
+| A reconstruction pass belongs **before** the temporal and spatial filters, not after | Reprojection and plane edge stops are what most dislike a coarse grid; upsampling first leaves both working full-res and leaves the denoisers unmodified |
+| A sub-pixel pattern that rotates must not feed a reprojecting accumulator | One history pixel then accumulates several different world positions, which straddle edges, so the disocclusion test rejects forever and the EMA never converges |
 | Shared GLSL that compute shaders include stays pipeline-agnostic — no ray payload, no `traceRayEXT`, no TLAS | `rt_light_struct.glsl` is that home; `rt_light_eval.glsl` is not. An RT-only built-in in a compute shader fails silently |
 | Validate bindless descriptors against `backendData`; reset append-only slot tables on level load | An `idImage*` survives a purge but its `VkImageView` does not |
 | Per-object GPU buffers come from a `vk_buffer_pool`, never their own `vkAllocateMemory` | ~0.3 ms per call on Windows regardless of size; per-surface allocation made a 35-BLAS first-sight frame cost 133 ms |
@@ -67,6 +77,7 @@ Re-litigate only with new measurements.
 | **Patch vertex normals can invent curvature on flat glass; tell creases from arcs by symmetry, not angle** | `GenerateNormals` averages across a patch crease, and a one-row flat facet then ramps its normal across its whole height — an inverting lens. Deviation size overlaps real arcs (both ~5°); lopsided per-triangle vertex tilt doesn't (`r_rtGlassNormalMode 2`) |
 | **F0 and roughness are independent, and GGX needs both** | F0 is reflectance at normal incidence, roughness is lobe width. Doom 3 has no per-material gloss (one global NdotH table), and the specular map is already spent on F0 — so roughness comes from bump-map normal variance, which is real data the assets carry |
 | **The opaque-reflection firefly clamp runs every à-trous pass (1/2/4) with no absolute floor** | A floor or a pass-0-only clamp "to preserve real highlights" left white specks on black and outlined railings. Single-sample GGX reflections aren't physical enough for isolated highlights to be trusted |
+| **Screen-space filter edge stops use plane distance, not depth** | `|dot(pT − pC, nGeo)| / viewDist` with `nGeo` from depth. Raw NDC depth is dead past ~20 units; relative depth blocks grazing floors. The bump-mapped G-buffer normal only for the normal stop, at low power (~4) |
 | **Opaque reflections clamp fireflies before temporal accumulation, and get no variance-boosted alpha** | An unclamped spike enters history and lingers ~1/alpha frames. The variance boost (built for moving glass) gave the noisiest GGX pixels alpha ≈ 1, so they flickered through unaveraged |
 
 ---

@@ -290,6 +290,22 @@ commfire2 is the 21 ms p95 and is a different shape from the others: 84% of the 
   >=6 layers rather than a shallow frame with a tail.  commfire1 vs commfire2 is the same
   map, so viewpoint variance exceeds map variance — always quote the viewpoint.
 
+=====================================================================================
+OPAQUE REFLECTIONS, 2026-10-17. Ryzen 5 2600 / RX 9070 XT, mchq, 2577 frames, 1440p.
+Arc 8g baseline (20261017_reflection_pipeline_refactor.md). Before = mchq_r3.csv (10-14,
+glass only). Both native 1440p, no upscaling. 10-17 ran AO 2 samples,
+r_rtShadowSamples 3, bloom off; probe resolve -0.9 and froxel fill -0.5 unexplained.
+=====================================================================================
+                                 10-14 (mchq_r3)    10-17 (mchq)
+  gpu.Refl p50 / p95             0.00 / —           10.09 / 13.39
+  gpu.ReflTemporal / ReflAtrous  —                  0.17 / 0.12
+  GPU frame p50 (RT + raster)    12.0               17.2
+  frame.backend p50 = fps        12.1 / 83          18.0 / 56
+  lights.view / casting p50      17 / —             19 / 12
+  Reflections ~60% of the GPU frame; denoise ~3% of the reflection cost. Still GPU-bound
+  (CPU busy 3.40 ms). gpu.Refl has no internal split — trace, hit shading (<=8 shadow
+  rays) and the reflected volumetric march are one span.
+
 Next capture
 ------------
 The only capture recipe. r_vkRTProfileGroups is a console filter and is always left at 63;

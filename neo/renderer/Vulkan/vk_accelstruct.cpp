@@ -2368,7 +2368,8 @@ void VK_RT_BeginLevelLoad(void)
     {
         vkRT.shadowDescSetLastUpdatedFrameCount[i] = -1;
         vkRT.aoDescSetLastUpdatedFrameCount[i] = -1;
-        vkRT.reflDescSetLastUpdatedFrameCount[i] = -1;
+        for (int c = 0; c < VK_REFL_CHAIN_COUNT; c++)
+            vkRT.reflChain[c].traceDescSetLastUpdated[i] = -1;
         vkRT.blurDescSetLastUpdatedFrameCount[i] = -1;
         vkRT.temporalDescSetLastUpdatedFrameCount[i] = -1;
         vkRT.atrousDescSetLastUpdatedFrameCount[i] = -1;
@@ -2377,6 +2378,9 @@ void VK_RT_BeginLevelLoad(void)
     vkRT.aoHistoryValid = false;
     vkRT.giHistoryValid = false;
     vkRT.volHistoryValid = false;
+    // reflChain[].historyValid is deliberately not touched: a level load always trips
+    // either the camera-cut test or !prevFrameValid on the first frame, so the reflection
+    // EMA resets itself. Left as-is by Stage 4a rather than quietly changed.
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT: BeginLevelLoad — cleared %d model BLAS cache entries, freed TLAS\n",
                        s_modelBLASCacheCount);

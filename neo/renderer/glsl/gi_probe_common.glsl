@@ -163,30 +163,18 @@ ivec3 gip_ScheduledCell(int slot)
 }
 
 // ---------------------------------------------------------------------------
-// Octahedral mapping (Cigolle et al. / DDGI)
+// Octahedral mapping — the math lives in rt_gbuf_normal_fmt.glsl, which the
+// G-buffer normal format shares (Stage 2a).  These names stay for the probe
+// atlas call sites.
 // ---------------------------------------------------------------------------
 
-vec2 gip_SignNotZero(vec2 v)
-{
-    return vec2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0);
-}
+#include "rt_gbuf_normal_fmt.glsl"
 
 // Unit vector -> [-1,1]^2
-vec2 gip_OctEncode(vec3 n)
-{
-    float l1 = abs(n.x) + abs(n.y) + abs(n.z);
-    n /= max(l1, 1e-8);
-    return (n.z < 0.0) ? ((1.0 - abs(n.yx)) * gip_SignNotZero(n.xy)) : n.xy;
-}
+vec2 gip_OctEncode(vec3 n) { return rt_OctEncode(n); }
 
 // [-1,1]^2 -> unit vector
-vec3 gip_OctDecode(vec2 e)
-{
-    vec3 v = vec3(e.x, e.y, 1.0 - abs(e.x) - abs(e.y));
-    if (v.z < 0.0)
-        v.xy = (1.0 - abs(v.yx)) * gip_SignNotZero(v.xy);
-    return normalize(v);
-}
+vec3 gip_OctDecode(vec2 e) { return rt_OctDecode(e); }
 
 // ---------------------------------------------------------------------------
 // Atlas addressing.  `side` is the FULL tile side including the one-texel

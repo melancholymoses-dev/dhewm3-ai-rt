@@ -1538,28 +1538,10 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     const float directScale = idMath::ClampFloat(0.0f, 2.0f, r_rtGIDirectScale.GetFloat());
     *lightScalePtr = backEnd.overBright * (giActive ? directScale : 1.0f);
 
-    // useReflections: 1 when RT reflection buffer is valid this frame.
-    // Disabled for portal/mirror subviews: the buffer was populated from the primary
-    // camera and sampling it in a different view produces a screen-space artifact
-    // (wrong geometry, rectangular footprint un-transformed by the portal projection).
-    int *useReflPtr = (int *)(lightScalePtr + 1);
-    const bool isPrimaryView = (backEnd.viewDef == NULL || backEnd.viewDef->superView == NULL);
-    const bool hasReflBuffer = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtReflections.GetBool() &&
-                               vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && isPrimaryView;
-    *useReflPtr = (hasReflBuffer && !isWeaponDepthHack) ? 1 : 0;
-
-    // specF0Scale / specF0Gamma — Fresnel/F0 remap curve parameters (Stage 2).
-    // reflDebugMode — 1 = output Fresnel as greyscale for tuning; 0 = off.
-    extern idCVar r_rtSpecF0Scale;
-    extern idCVar r_rtSpecF0Gamma;
-    extern idCVar r_rtReflectionDebugMode;
-    float *specF0ScalePtr = (float *)(useReflPtr + 1);
-    specF0ScalePtr[0] = idMath::ClampFloat(0.0f, 1.0f, r_rtSpecF0Scale.GetFloat());
-    specF0ScalePtr[1] = idMath::ClampFloat(0.1f, 8.0f, r_rtSpecF0Gamma.GetFloat());
-    int *reflDbgPtr = (int *)(specF0ScalePtr + 2);
-    *reflDbgPtr = r_rtReflectionDebugMode.GetInteger();
+    // Four retired ints follow lightScale (VkInteractionUBO::_retired), then shadowMaskLayer.
     // shadowMaskLayer (P1b) — ring memory is never cleared, so always write it.
-    reflDbgPtr[1] = (s_shadowMaskLayer >= 0) ? s_shadowMaskLayer : 0;
+    int *shadowLayerPtr = (int *)(lightScalePtr + 1) + 4;
+    *shadowLayerPtr = (s_shadowMaskLayer >= 0) ? s_shadowMaskLayer : 0;
 
     // Write UBO descriptor
     VkDescriptorBufferInfo bufInfo = {};
@@ -1639,11 +1621,11 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     // Binding 9: reflection map (or 1x1 black fallback when off)
     VkDescriptorImageInfo reflMapInfo = {};
     if (r_useRayTracing.GetBool() && vk.rayTracingSupported && vkRT.isInitialized && r_rtReflections.GetBool() &&
-        vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE)
+        VK_RT_ReflReadReady(vk.currentFrame) && vkRT.reflSampler != VK_NULL_HANDLE)
     {
         reflMapInfo.sampler = vkRT.reflSampler;
-        // VK_RT_GetReflReadView: reflHistory when the Stage-1 temporal denoiser
-        // (r_rtReflDenoise) is on and has valid data, else reflBuffer unfiltered.
+        // VK_RT_GetReflReadView: the temporal history when the Stage-1 denoiser
+        // (r_rtReflDenoise) is on and has valid data, else the traced image unfiltered.
         reflMapInfo.imageView = VK_RT_GetReflReadView(vk.currentFrame);
         reflMapInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
@@ -2629,7 +2611,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         if (mat->GetSurfaceType() == SURFTYPE_GLASS && !reflDebugActive && r_useRayTracing.GetBool() &&
             r_rtReflections.GetBool() && vk.rayTracingSupported && vkRT.isInitialized &&
             vkPipes.glassReflPipeline != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE &&
-            vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE)
+            VK_RT_ReflReadReady(vk.currentFrame))
         {
             if (numPendingGlass < 256)
             {
@@ -2695,9 +2677,10 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
         VkDescriptorImageInfo ovReflInfo = {};
         ovReflInfo.sampler = vkRT.reflSampler;
-        // VK_RT_GetReflReadView: reflHistory when the Stage-1 temporal denoiser
-        // (r_rtReflDenoise) is on and has valid data, else reflBuffer unfiltered.
-        ovReflInfo.imageView = VK_RT_GetReflReadView(vk.currentFrame);
+        // Stage 4b: the glass chain's view when the populations were split this frame,
+        // else the opaque chain's (glass behind the negative-alpha sentinel, as before).
+        // Either way: the denoised history/à-trous output when r_rtReflDenoise is on.
+        ovReflInfo.imageView = VK_RT_GetReflGlassReadView(vk.currentFrame);
         ovReflInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
         VkWriteDescriptorSet ovWrites[2] = {};
@@ -5125,7 +5108,8 @@ void VK_RB_DrawView(const void *data)
         }
 
         // Begin render pass (one pass for the entire EndFrame; all views composite into it)
-        // clearValues[2] (gbufNormal, Stage 3.5) = {0.5, 0.5, 0.5, 0.0}: null normal, F0 0 —
+        // clearValues[2] (gbufNormal, Stage 3.5) = {0.5, 0.5, 1.0, 0.0}: B == 1.0 is the
+        // "prepass never wrote this pixel" sentinel (rt_gbuf_normal_fmt.glsl), F0 0 —
         // only consumed when vk.gbufferSupported, but harmless to fill in unconditionally.
         // clearValues[3] (gbufAlbedo, gi_albedo_target.md) = {1,1,1,1}: WHITE, so a pixel
         // the prepass never writes modulates GI by 1.0 (legacy behavior), not by 0.
@@ -5134,7 +5118,7 @@ void VK_RB_DrawView(const void *data)
         VkClearValue clearValues[5] = {};
         clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
         clearValues[1].depthStencil = {1.0f, 128};
-        clearValues[2].color = {{0.5f, 0.5f, 0.5f, 0.0f}};
+        clearValues[2].color = {{0.5f, 0.5f, 1.0f, 0.0f}};
         clearValues[3].color = {{1.0f, 1.0f, 1.0f, 1.0f}};
         clearValues[4].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
 

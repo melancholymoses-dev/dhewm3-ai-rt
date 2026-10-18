@@ -17,7 +17,8 @@ uses for bounce lighting.  Shadow rays are budgeted at REFL_MAX_SHADOW_LIGHTS
 per hit (miss index 2 → gi_shadow.rmiss) and skipped for lights whose
 contribution at the hit is below REFL_SHADOW_MIN_LUM (P4); lights past the
 budget/threshold fall back to NdotL × falloff only so the cap degrades
-gracefully.  When no lights are available (numLights == 0) the shader falls
+gracefully.  Opaque rays with payload lightPicks > 0 (r_rtReflShadowPicks) take
+the stochastic loop instead: 1-2 shadow rays, no budget leak.  When no lights are available (numLights == 0) the shader falls
 back to raw diffuse albedo (flat shading).
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
@@ -115,12 +116,20 @@ void main()
         // GI-bounce-only knob (the pre-P5 drift where GI applied it and reflections
         // didn't is now explicit here).
         // 0xFF: the player *should* cast shadows into the reflected world (B1).
-        vec3 irradiance = vec3(REFL_AMBIENT) +
-                          rt_EvalDirectLighting(hitPos, hitNorm, RT_LIGHT_MAX_LIGHTS,
-                                                REFL_MAX_SHADOW_LIGHTS, REFL_SHADOW_BIAS,
-                                                1.0, REFL_SHADOW_MIN_LUM,
-                                                rtLightBuf.reflAmbientScale, 0xFFu);
-        reflPayload.colour = diffuse.rgb * irradiance;
+        // lightPicks > 0 (opaque rays, r_rtReflShadowPicks): 1-2 importance-sampled
+        // shadow rays, unbiased, so no unshadowed leak past a budget.
+        vec3 direct;
+        if (reflPayload.lightPicks > 0)
+            direct = rt_EvalDirectLightingStochastic(hitPos, hitNorm, RT_LIGHT_MAX_LIGHTS,
+                                                     reflPayload.lightPicks, REFL_SHADOW_BIAS, 1.0,
+                                                     reflPayload.lightSeed,
+                                                     rtLightBuf.reflAmbientScale, 0xFFu);
+        else
+            direct = rt_EvalDirectLighting(hitPos, hitNorm, RT_LIGHT_MAX_LIGHTS,
+                                           REFL_MAX_SHADOW_LIGHTS, REFL_SHADOW_BIAS,
+                                           1.0, REFL_SHADOW_MIN_LUM,
+                                           rtLightBuf.reflAmbientScale, 0xFFu);
+        reflPayload.colour = diffuse.rgb * (vec3(REFL_AMBIENT) + direct);
     }
     else
     {

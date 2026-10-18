@@ -6,7 +6,8 @@ dhewm3-rt - G-buffer normal/F0 prepass fragment shader (Stage 3.5), opaque varia
 Writes the world-space bump-mapped shading normal and a normalized F0 to the
 gbufNormal attachment so the RT reflection pass can use the correct normal
 (rather than the flat geometric normal from rt_ReconstructNormal) and early-out
-on non-reflective pixels. See docs/plans/gbuffer_normal_pass.md.
+on non-reflective pixels. See docs/plans/gbuffer_normal_pass.md, and
+rt_gbuf_normal_fmt.glsl for the channel layout (the normal is octahedral in RG).
 
 Also writes the material's diffuse/albedo sample to gbufAlbedo (attachment 2,
 docs/plans/gi_albedo_target.md) so the GI albedo-modulate compute pass can turn
@@ -75,6 +76,7 @@ layout(set=0, binding=0) uniform GBufferParams {
 };
 
 #include "gbuf_albedo_class.glsl"
+#include "rt_gbuf_normal_fmt.glsl"
 
 // Surface class packed into gbufAlbedo's alpha (see gbuf_albedo_class.glsl).
 // View-local wins over the T&C bit because anything non-ordinary is already fully
@@ -92,7 +94,7 @@ layout(set=0, binding=2) uniform sampler2D u_DiffuseMap;
 layout(set=0, binding=3) uniform sampler2D u_SpecularMap;
 
 layout(location = 0) out vec4 fragColor;  // attachment 0 (hdrScene) — write-masked off in the pipeline
-layout(location = 1) out vec4 outGbuf;    // attachment 1 (gbufNormal) — rgb = world normal, a = F0
+layout(location = 1) out vec4 outGbuf;    // attachment 1 (gbufNormal) — see rt_gbuf_normal_fmt.glsl
 layout(location = 2) out vec4 outAlbedo;  // attachment 2 (gbufAlbedo) — rgb = diffuse sample
 layout(location = 3) out vec2 outMotion;  // attachment 3 (motionVectors) — GL NDC, Y up
 
@@ -128,12 +130,21 @@ void main() {
     vec3  nTSFixed    = textureLod(u_BumpMap, vary_TexCoord_Bump, GBUF_ROUGHNESS_FIXED_MIP).rgb * 2.0 - 1.0;
     float nTSFixedLen = length(nTSFixed);
 
-    // Same specular-luminance → F0 remap as interaction.frag's Fresnel block, so
-    // r_rtReflectionDebugMode 1 (interaction.frag) and mode 3 (this G-buffer's F0,
-    // see the plan's Step 9) agree on the same surfaces.
+    // Specular-luminance → F0 remap (r_rtSpecF0Scale/Gamma); r_rtReflectionDebugMode 3
+    // shows the result.
     vec3  specMap = texture(u_SpecularMap, vary_TexCoord_Specular).rgb;
     float specLum = dot(specMap, vec3(0.299, 0.587, 0.114));
     float f0      = clamp(pow(max(specLum, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0, 1.0);
+
+    // Coarse F0 for the reflection trace mask (Stage 2b): the same remap on a fixed,
+    // distance-independent mip, so it describes the panel rather than the scuff. A
+    // scuffed texel inside a reflective surface then still traces a ray, and the
+    // denoisers get a signal with no holes to blur across.
+    const float GBUF_F0_COARSE_MIP = 4.0; // keep in step with gbuffer_clip.frag
+    vec3  specCoarse    = textureLod(u_SpecularMap, vary_TexCoord_Specular, GBUF_F0_COARSE_MIP).rgb;
+    float specLumCoarse = dot(specCoarse, vec3(0.299, 0.587, 0.114));
+    float f0Coarse      = clamp(pow(max(specLumCoarse, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0,
+                                GBUF_NORMAL_B_MAX);
 
     // Toksvig/LEAN roughness (Stage 2): trilinear mip filtering shortens a bump map's
     // averaged per-texel normal in proportion to the sub-pixel normal variance inside
@@ -147,7 +158,7 @@ void main() {
     float toksvigVariance = (1.0 - toksvigLen) / max(toksvigLen, 1e-3);
     float roughness       = max(clamp(sqrt(toksvigVariance), 0.0, 1.0), u_RoughnessFloor);
 
-    outGbuf   = vec4(nWS * 0.5 + 0.5, f0);
+    outGbuf   = vec4(GBuf_EncodeNormal(nWS), f0Coarse, f0);
     outAlbedo = vec4(texture(u_DiffuseMap, vary_TexCoord_Diffuse).rgb,
                      GBuf_PackAlbedoAlpha(GBuf_SurfaceClass(), roughness));
     outMotion = GBuf_MotionVector(vary_CurClip, vary_PrevClip);

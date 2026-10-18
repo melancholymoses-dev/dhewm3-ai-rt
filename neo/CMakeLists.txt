@@ -772,6 +772,7 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/reflect_ray.rmiss
 	renderer/glsl/refl_atrous.comp
 	renderer/glsl/refl_temporal_resolve.comp
+	renderer/glsl/refl_upsample.comp
 	renderer/glsl/shadow_blur.comp
 	renderer/glsl/shadow_ray.rahit	
 	renderer/glsl/shadow_ray.rgen
@@ -825,6 +826,9 @@ set(GLSL_INCLUDES
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_light_eval.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_phase.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_gbuf_normal.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_gbuf_normal_fmt.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/refl_alpha.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/refl_fresnel.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/gbuf_albedo_class.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_ggx.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_player_exclude.glsl"

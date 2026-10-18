@@ -28,8 +28,10 @@ real motion or fails to smooth anything. Per pixel:
 
 Alpha channel is passed through from the CURRENT frame always, never EMA'd:
 it carries reflect_ray.rgen's Schlick weight and its negative-sign "skip me"
-sentinel for refl_composite.frag, both recomputed fresh every frame and
-neither a noisy quantity.
+sentinel for refl_composite.frag (refl_alpha.glsl), both recomputed fresh every
+frame and neither a noisy quantity. Since Stage 2b that weight is demodulated
+out of the colour, so this pass EMAs incident light only — a pixel and its
+scuffed neighbour now carry the same quantity and average correctly.
 
 Debug mode 11 (r_rtReflectionDebugMode): replaces the output colour with
 green = history age (brighter = older/more converged) or red = rejected this
@@ -99,10 +101,6 @@ layout(set = 0, binding = 8) uniform ReflTemporalParams {
     float fireflyClamp;      // r_rtReflAtrousFireflyClamp — pre-accumulation clamp, 0 disables
 };
 
-// Same threshold as reflect_ray.rgen's F0 early-out and refl_atrous.comp: at or
-// below this the pixel never traced (glass's negative sentinel also fails it).
-const float VALID_ALPHA_THRESHOLD = 1.0 / 255.0;
-
 float ReflTemporal_Luminance(vec3 c)
 {
     return dot(c, vec3(0.2126, 0.7152, 0.0722));
@@ -111,6 +109,8 @@ float ReflTemporal_Luminance(vec3 c)
 // Satisfies rt_indirect.glsl's includer contract (sampler2D depthSampler + a
 // mat4 invViewProj in scope) for rt_ReconstructWorldPos.
 #include "rt_indirect.glsl"
+#include "rt_gbuf_normal_fmt.glsl"
+#include "refl_alpha.glsl"
 
 // Raw decode of the G-buffer shading normal, no orientation gate — this pass
 // only needs "is it the same surface", not a camera-facing guarantee.
@@ -119,11 +119,7 @@ vec3 ReflTemporal_DecodeNormal(ivec2 coord)
 {
     ivec2 sz = textureSize(gbufNormalSampler, 0);
     vec4 g = texelFetch(gbufNormalSampler, clamp(coord, ivec2(0), sz - 1), 0);
-    if (all(lessThanEqual(abs(g.rgb - vec3(0.5)), vec3(1.0 / 255.0))))
-        return vec3(0.0);
-    vec3 n = g.rgb * 2.0 - 1.0;
-    float len = length(n);
-    return (len < 0.5) ? vec3(0.0) : (n / len);
+    return GBuf_NormalValid(g) ? GBuf_DecodeNormal(g.rg) : vec3(0.0);
 }
 
 void main()
@@ -142,13 +138,13 @@ void main()
     ivec2 rectMax = min(scissorOffset + rectExtent - ivec2(1), dims - ivec2(1));
 
     vec4 current = imageLoad(currentImage, coord);
-    bool isGlass = current.a < 0.0;
+    bool isGlass = ReflAlpha_IsGlass(current.a);
 
     // Firefly clamp before accumulation: a single GGX sample that hit a lamp would
     // otherwise enter history at full strength and fade over ~1/alpha frames. Cap at
     // the second-brightest traced tap of this frame's 3x3 (same rule as refl_atrous),
     // so a lone spike drops to its neighbours' level. Opaque only — glass is a mirror.
-    if (fireflyClamp > 0.0 && current.a > VALID_ALPHA_THRESHOLD)
+    if (fireflyClamp > 0.0 && ReflAlpha_Traced(current.a))
     {
         float max1 = -1.0;
         float max2 = -1.0;
@@ -158,7 +154,7 @@ void main()
             {
                 ivec2 s = clamp(coord + ivec2(dx, dy), rectMin, rectMax);
                 vec4 t = imageLoad(currentImage, s);
-                if (t.a <= VALID_ALPHA_THRESHOLD)
+                if (!ReflAlpha_Traced(t.a))
                     continue;
                 float l = ReflTemporal_Luminance(t.rgb);
                 if (l > max1)
@@ -178,7 +174,13 @@ void main()
             current.rgb *= cap / lc;
     }
 
-    float curLum = ReflTemporal_Luminance(current.rgb);
+    // Capped because the moments buffer is fp16 and y holds lum^2: 128^2 = 16384, well
+    // inside half's range. Stage 2b made this reachable — the colour here is now
+    // undemodulated incident light, ~10x the post-Fresnel values this used to see, and
+    // r_rtReflMaxLuminance 0 leaves it unbounded. An inf moment reads as histBad and
+    // resets the pixel's history every frame. Only glass's variance boost consumes
+    // these, and it saturates far below the cap.
+    float curLum = min(ReflTemporal_Luminance(current.rgb), 128.0);
 
     bool rejected = false;
     float age = 0.0;
