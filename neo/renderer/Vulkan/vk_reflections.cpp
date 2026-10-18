@@ -133,6 +133,12 @@ idCVar r_rtReflectionMode("r_rtReflectionMode", "3", CVAR_RENDERER | CVAR_INTEGE
                           "Use r_rtReflections 0 to turn the feature off entirely.",
                           1, 3);
 
+idCVar r_rtReflOpaqueHalfRes("r_rtReflOpaqueHalfRes", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
+                             "trace opaque reflections at half resolution (one ray per 2x2 block) and "
+                             "reconstruct full res with a joint bilateral upsample before denoising. ~1/4 the "
+                             "reflection rays. The per-pixel Fresnel weight is still computed at full res, so "
+                             "material detail is unaffected. Glass is never half res.");
+
 idCVar r_rtReflDenoise("r_rtReflDenoise", "2", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                        "0 = off (reflections sampled raw, pre-Stage-1 behaviour).\n"
                        "1 = temporal EMA accumulation.\n"
@@ -267,6 +273,7 @@ idCVar r_rtReflectionDebugMode(
 //   int    glassRectY     offset 284 size  4
 //   int    glassRectW     offset 288 size  4
 //   int    glassRectH     offset 292 size  4
+//   int    reflScale      offset 296 size  4  (Stage 4c — 1 full res, 2 half res)
 //   total: 304 bytes — std140 rounds the block up to a multiple of
 //   16, and uboInfo.range is sizeof(ReflParamsUBO), which must not be smaller.
 // ---------------------------------------------------------------------------
@@ -323,7 +330,9 @@ struct ReflParamsUBO
     int32_t glassRectY;
     int32_t glassRectW;
     int32_t glassRectH;
-    int32_t _pad0[2]; // std140 block size rounds to 16
+    // Stage 4c: reflImage is 1/reflScale the G-buffer's size. 1 full res, 2 half res.
+    int32_t reflScale;
+    int32_t _pad0[1]; // std140 block size rounds to 16
 };
 
 // Which surfaces a reflect_ray.rgen dispatch is responsible for (ubo.population).
@@ -939,6 +948,31 @@ static void VK_RT_DestroyReflDenoiseImages(vkReflChain_t *chain)
 
 // Spatial filter scratch (r_rtReflDenoise 2) — per-slot ping-pong across the N
 // passes of a single frame's dispatch, unlike history's cross-frame ping-pong.
+// Stage 4c: the rgen's half-res target. Quarter the area of trace[], and only for a
+// chain that can run at half res — glass stays sharp. STORAGE for the rgen's
+// imageStore, SAMPLED for refl_upsample.comp's texelFetch.
+static void VK_RT_CreateReflHalfImages(vkReflChain_t *chain, uint32_t width, uint32_t height)
+{
+    if (!chain->halfResCapable)
+        return;
+
+    const uint32_t hw = Max(1u, (width + 1) / 2);
+    const uint32_t hh = Max(1u, (height + 1) / 2);
+
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        if (!VK_RT_AllocReflAuxImage(chain->traceHalf[i], hw, hh,
+                                     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT))
+            common->Warning("VK RT Refl[%s]: failed to allocate traceHalf[%d] — half res unavailable", chain->name, i);
+    }
+}
+
+static void VK_RT_DestroyReflHalfImages(vkReflChain_t *chain)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        VK_RT_FreeReflAuxImage(chain->traceHalf[i]);
+}
+
 static void VK_RT_CreateReflAtrousImages(vkReflChain_t *chain, uint32_t width, uint32_t height)
 {
     // A chain that never runs the filter has no use for the scratch — two full-screen
@@ -1658,14 +1692,17 @@ static void VK_RT_InitReflChainState(void)
 {
     static const char *chainNames[VK_REFL_CHAIN_COUNT] = {"opaque", "glass"};
     static const bool chainSpatial[VK_REFL_CHAIN_COUNT] = {true, false};
+    static const bool chainHalfRes[VK_REFL_CHAIN_COUNT] = {true, false};
 
     for (int c = 0; c < VK_REFL_CHAIN_COUNT; c++)
     {
         vkReflChain_t *chain = &vkRT.reflChain[c];
         chain->name = chainNames[c];
         chain->spatialFilter = chainSpatial[c];
+        chain->halfResCapable = chainHalfRes[c];
         for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         {
+            chain->upsampleDescSetLastUpdated[i] = -1;
             chain->dispatchRectFrame[i] = -1;
             chain->lastTraceFrame[i] = -1;
             chain->lastTemporalFrame[i] = -1;
@@ -1677,10 +1714,103 @@ static void VK_RT_InitReflChainState(void)
     }
 }
 
+// ---------------------------------------------------------------------------
+// VK_RT_InitReflUpsamplePipeline (Stage 4c)
+// Compute pipeline for refl_upsample.comp. A load failure leaves the pipeline NULL,
+// which VK_RT_ReflHalfResActive treats as "half res unavailable" — the renderer then
+// traces full res rather than displaying an unreconstructed quarter-size image.
+// ---------------------------------------------------------------------------
+// mat4 (64) + 3 ints + 3 floats. Must match refl_upsample.comp's Push block.
+#define REFL_UPSAMPLE_PC_SIZE 88
+
+static void VK_RT_InitReflUpsamplePipeline(void)
+{
+    // binding 0 reflHalf (sampler), 1 reflFull (storage), 2 depth, 3 gbufNormal, 4 gbufAlbedo
+    VkDescriptorSetLayoutBinding bindings[5] = {};
+    for (int i = 0; i < 5; i++)
+    {
+        bindings[i].binding = (uint32_t)i;
+        bindings[i].descriptorCount = 1;
+        bindings[i].descriptorType =
+            (i == 1) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+
+    VkDescriptorSetLayoutCreateInfo layoutCI = {};
+    layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCI.bindingCount = 5;
+    layoutCI.pBindings = bindings;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.reflUpsampleDescLayout));
+
+    VkPushConstantRange pcRange = {};
+    pcRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pcRange.offset = 0;
+    pcRange.size = REFL_UPSAMPLE_PC_SIZE;
+
+    VkPipelineLayoutCreateInfo plCI = {};
+    plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plCI.setLayoutCount = 1;
+    plCI.pSetLayouts = &vkRT.reflUpsampleDescLayout;
+    plCI.pushConstantRangeCount = 1;
+    plCI.pPushConstantRanges = &pcRange;
+    VK_CHECK(vkCreatePipelineLayout(vk.device, &plCI, NULL, &vkRT.reflUpsamplePipelineLayout));
+
+    VkShaderModule compModule = VK_LoadSPIRV("glprogs/glsl/refl_upsample.comp.spv");
+    if (compModule == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT Refl: failed to load refl_upsample.comp.spv — half-res tracing disabled");
+        return;
+    }
+
+    VkPipelineShaderStageCreateInfo stageCI = {};
+    stageCI.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageCI.module = compModule;
+    stageCI.pName = "main";
+
+    VkComputePipelineCreateInfo pipeCI = {};
+    pipeCI.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeCI.stage = stageCI;
+    pipeCI.layout = vkRT.reflUpsamplePipelineLayout;
+    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipeCI, NULL, &vkRT.reflUpsamplePipeline));
+    vkDestroyShaderModule(vk.device, compModule, NULL);
+
+    const uint32_t sets = VK_MAX_FRAMES_IN_FLIGHT * VK_REFL_CHAIN_COUNT;
+    VkDescriptorPoolSize poolSizes[2] = {
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sets * 4},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, sets},
+    };
+    VkDescriptorPoolCreateInfo poolCI = {};
+    poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCI.maxSets = sets;
+    poolCI.poolSizeCount = 2;
+    poolCI.pPoolSizes = poolSizes;
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &vkRT.reflUpsampleDescPool));
+
+    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        layouts[i] = vkRT.reflUpsampleDescLayout;
+    for (int c = 0; c < VK_REFL_CHAIN_COUNT; c++)
+    {
+        vkReflChain_t *chain = &vkRT.reflChain[c];
+        VkDescriptorSetAllocateInfo dsAlloc = {};
+        dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        dsAlloc.descriptorPool = vkRT.reflUpsampleDescPool;
+        dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
+        dsAlloc.pSetLayouts = layouts;
+        VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, chain->upsampleDescSets));
+        for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+            chain->upsampleDescSetLastUpdated[i] = -1;
+    }
+
+    common->Printf("VK RT Refl: half-res upsample pipeline initialized\n");
+}
+
 void VK_RT_InitReflections(void)
 {
     VK_RT_InitReflChainState();
     VK_RT_InitReflPipeline();
+    VK_RT_InitReflUpsamplePipeline();
     VK_RT_InitReflTemporalPipeline();
     VK_RT_InitReflAtrousPipeline();
     VK_RT_ResizeReflections(vk.swapchainExtent.width, vk.swapchainExtent.height);
@@ -1805,6 +1935,30 @@ void VK_RT_ShutdownReflections(void)
     for (int c = 0; c < VK_REFL_CHAIN_COUNT; c++)
         VK_RT_DestroyReflAtrousImages(&vkRT.reflChain[c]);
 
+    // Half-res reconstruction (Stage 4c)
+    if (vkRT.reflUpsampleDescPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(vk.device, vkRT.reflUpsampleDescPool, NULL);
+        vkRT.reflUpsampleDescPool = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflUpsampleDescLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.reflUpsampleDescLayout, NULL);
+        vkRT.reflUpsampleDescLayout = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflUpsamplePipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.reflUpsamplePipeline, NULL);
+        vkRT.reflUpsamplePipeline = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflUpsamplePipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(vk.device, vkRT.reflUpsamplePipelineLayout, NULL);
+        vkRT.reflUpsamplePipelineLayout = VK_NULL_HANDLE;
+    }
+    for (int c = 0; c < VK_REFL_CHAIN_COUNT; c++)
+        VK_RT_DestroyReflHalfImages(&vkRT.reflChain[c]);
+
     VK_RT_DestroyNullLightSsbo();
     VK_RT_DestroyNullGbufNormal();
     VK_RT_ShutdownReflEmitters();
@@ -1830,12 +1984,15 @@ void VK_RT_ResizeReflections(uint32_t width, uint32_t height)
         VK_RT_CreateReflDenoiseImages(chain, width, height);
         VK_RT_DestroyReflAtrousImages(chain);
         VK_RT_CreateReflAtrousImages(chain, width, height);
+        VK_RT_DestroyReflHalfImages(chain);
+        VK_RT_CreateReflHalfImages(chain, width, height);
 
         // Force descriptor set refresh at next dispatch, and drop any launch rect
         // recorded against the images that were just freed.
         for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         {
             chain->traceDescSetLastUpdated[i] = -1;
+            chain->upsampleDescSetLastUpdated[i] = -1;
             chain->temporalDescSetLastUpdated[i] = -1;
             chain->atrousDescSetLastUpdated[i] = -1;
             chain->dispatchRectFrame[i] = -1;
@@ -1927,6 +2084,104 @@ static bool VK_RT_GlassScreenRect(const viewDef_t *viewDef, uint32_t bufW, uint3
 // two filters blend exactly the pixels reflect_ray.rgen wrote and nothing stale
 // outside that rect — the rect is debug-mode and glass-rect dependent.
 
+// Stage 4c. Every clause is a reason to fall back to full-res tracing rather than
+// display an unreconstructed quarter-size image: population gating keeps half res out
+// of REFL_POP_BOTH, so mode 2 and every debug mode stay exact; a failed shader load
+// leaves reflUpsamplePipeline NULL; a failed allocation leaves traceHalf NULL.
+static bool VK_RT_ReflHalfResActive(const vkReflChain_t *chain, int frameIdx, int population)
+{
+    return chain->halfResCapable && population == REFL_POP_OPAQUE && r_rtReflOpaqueHalfRes.GetBool() &&
+           vkRT.reflUpsamplePipeline != VK_NULL_HANDLE && chain->traceHalf[frameIdx].image != VK_NULL_HANDLE &&
+           chain->trace[frameIdx].image != VK_NULL_HANDLE;
+}
+
+// Reconstruct chain->trace[] from chain->traceHalf[]. Runs between the trace and the
+// temporal resolve, so everything downstream sees a full-res image and needs no
+// knowledge of the half-res grid at all.
+static void VK_RT_DispatchReflUpsample(VkCommandBuffer cmd, const viewDef_t *viewDef, vkReflChain_t *chain)
+{
+    const int frameIdx = vk.currentFrame;
+    const vkRTImage_t &dst = chain->trace[frameIdx];
+    const vkRTImage_t &src = chain->traceHalf[frameIdx];
+
+    if (vkRT.gbufNormal[frameIdx].view == VK_NULL_HANDLE || vkRT.gbufAlbedo[frameIdx].view == VK_NULL_HANDLE)
+        return; // nothing to reconstruct against; the caller already traced half res,
+                // so this frame's reflections are lost rather than wrong
+
+    if (chain->upsampleDescSetLastUpdated[frameIdx] != tr.frameCount)
+    {
+        VkDescriptorImageInfo srcInfo = {vkRT.reflSampler, src.view, VK_IMAGE_LAYOUT_GENERAL};
+        VkDescriptorImageInfo dstInfo = {VK_NULL_HANDLE, dst.view, VK_IMAGE_LAYOUT_GENERAL};
+        VkDescriptorImageInfo depthInfo = {vkRT.depthSampler, vk.depthSampledView,
+                                           VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
+        // texelFetch only, so the sampler's filter/wrap state is irrelevant.
+        VkDescriptorImageInfo normalInfo = {vkRT.depthSampler, vkRT.gbufNormal[frameIdx].view,
+                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo albedoInfo = {vkRT.depthSampler, vkRT.gbufAlbedo[frameIdx].view,
+                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+
+        const VkDescriptorImageInfo *infos[5] = {&srcInfo, &dstInfo, &depthInfo, &normalInfo, &albedoInfo};
+        VkWriteDescriptorSet writes[5] = {};
+        for (int b = 0; b < 5; b++)
+        {
+            writes[b].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[b].dstSet = chain->upsampleDescSets[frameIdx];
+            writes[b].dstBinding = (uint32_t)b;
+            writes[b].descriptorCount = 1;
+            writes[b].descriptorType =
+                (b == 1) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[b].pImageInfo = infos[b];
+        }
+        vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
+        chain->upsampleDescSetLastUpdated[frameIdx] = tr.frameCount;
+    }
+
+    struct UpsamplePC
+    {
+        float invViewProj[16];
+        int32_t screenWidth;
+        int32_t screenHeight;
+        int32_t reflScale;
+        float sigmaPlane;
+        float normalPower;
+        float roughnessScale;
+    } pc;
+    static_assert(sizeof(pc) == REFL_UPSAMPLE_PC_SIZE, "UpsamplePC size mismatch");
+
+    VK_RT_ReflInvViewProj(viewDef, pc.invViewProj);
+    // Depth is rasterised at render extent; the refl images are display-sized.
+    pc.screenWidth = Min((int32_t)dst.width, (int32_t)vk.renderExtent.width);
+    pc.screenHeight = Min((int32_t)dst.height, (int32_t)vk.renderExtent.height);
+    pc.reflScale = 2;
+    // Shared with the à-trous edge stops on purpose: one tuning knob for "what counts
+    // as the same surface" across both reconstruction and filtering.
+    pc.sigmaPlane = idMath::ClampFloat(0.001f, 1.0f, r_rtReflAtrousSigmaPlane.GetFloat());
+    pc.normalPower = idMath::ClampFloat(0.0f, 64.0f, r_rtReflAtrousNormalPower.GetFloat());
+    // Must match the rgen's lobe: the Fresnel weight recomputed here has to be the
+    // same function of roughness the traced radiance was demodulated by.
+    pc.roughnessScale = idMath::ClampFloat(0.0f, 4.0f, r_rtReflRoughnessScale.GetFloat());
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.reflUpsamplePipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.reflUpsamplePipelineLayout, 0, 1,
+                            &chain->upsampleDescSets[frameIdx], 0, NULL);
+    vkCmdPushConstants(cmd, vkRT.reflUpsamplePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, REFL_UPSAMPLE_PC_SIZE, &pc);
+    vkCmdDispatch(cmd, (dst.width + 7) / 8, (dst.height + 7) / 8, 1);
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT Refl Upsample[%s]: %ux%u -> %ux%u slot=%d\n", chain->name, src.width, src.height,
+                       dst.width, dst.height, frameIdx);
+
+    // Compute write -> the temporal resolve's compute read, and the fragment consumers
+    // that sample the trace image directly when the denoiser is off.
+    VkMemoryBarrier mb = {};
+    mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &mb, 0,
+                         NULL, 0, NULL);
+}
+
 static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDef, vkReflChain_t *chain, int population,
                                     const VkRect2D &glassRect)
 {
@@ -1995,6 +2250,19 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
         rectH = glassRect.extent.height;
     }
 
+    // Stage 4c: the rgen writes the half image and refl_upsample.comp reconstructs rb
+    // from it. rectX/rectY are always (0,0) here — half res is REFL_POP_OPAQUE only,
+    // which never launches over the glass rect — but divide anyway so the mapping
+    // gcoord = coord * reflScale stays exact if that ever changes.
+    const bool halfRes = VK_RT_ReflHalfResActive(chain, frameIdx, population);
+    const int reflScale = halfRes ? 2 : 1;
+    const VkImageView storageView = halfRes ? chain->traceHalf[frameIdx].view : rb.view;
+
+    // The launch grid is the traced lattice; dispatchRect stays in FULL-res pixels
+    // below, because the temporal and à-trous passes run on rb, not on the half image.
+    const uint32_t launchW = halfRes ? (rectW + 1) / 2 : rectW;
+    const uint32_t launchH = halfRes ? (rectH + 1) / 2 : rectH;
+
     // --- Depth barrier: ATTACHMENT → READ_ONLY for rgen depth sampling ---
     VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
     if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
@@ -2037,8 +2305,9 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
     ubo.minWeight = idMath::ClampFloat(0.0f, 1.0f, r_rtReflectionMinWeight.GetFloat());
     ubo.roughLumExp = idMath::ClampFloat(0.0f, 8.0f, r_rtReflRoughLumExp.GetFloat());
 
-    ubo.rectOriginX = rectX;
-    ubo.rectOriginY = rectY;
+    ubo.rectOriginX = rectX / reflScale;
+    ubo.rectOriginY = rectY / reflScale;
+    ubo.reflScale = reflScale;
     ubo.population = population;
     // Only REFL_POP_OPAQUE reads these, to bound where its glass-suppression probe can
     // possibly hit. Zero extent means "no glass in view" and skips the probe outright.
@@ -2133,7 +2402,8 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
     const VkImageView froxelDirView = VK_RT_GetFroxelDirView();
 
     const bool reflResourceChanged =
-        (chain->lastTlas[frameIdx] != vkRT.tlas[frameIdx].handle) || (chain->lastStorageView[frameIdx] != rb.view) ||
+        (chain->lastTlas[frameIdx] != vkRT.tlas[frameIdx].handle) ||
+        (chain->lastStorageView[frameIdx] != storageView) ||
         (chain->lastDepthView[frameIdx] != vk.depthSampledView) || (chain->lastLightSsbo[frameIdx] != lightSsbo) ||
         (chain->lastGbufView[frameIdx] != gbufView) || (chain->lastGbufAlbedoView[frameIdx] != gbufAlbedoView) ||
         (chain->lastFroxelView[frameIdx] != froxelView) || (chain->lastFroxelDirView[frameIdx] != froxelDirView);
@@ -2142,7 +2412,7 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
     {
         common->Printf("VK RT Refl[%s]: forcing descriptor refresh due to in-frame resource change frame=%d slot=%d "
                        "tlas=%p reflView=%p depthView=%p gbufView=%p\n",
-                       chain->name, tr.frameCount, frameIdx, (void *)vkRT.tlas[frameIdx].handle, (void *)rb.view,
+                       chain->name, tr.frameCount, frameIdx, (void *)vkRT.tlas[frameIdx].handle, (void *)storageView,
                        (void *)vk.depthSampledView, (void *)gbufView);
     }
 
@@ -2157,7 +2427,7 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
         tlasWrite.pAccelerationStructures = &vkRT.tlas[frameIdx].handle;
 
         VkDescriptorImageInfo reflImgInfo = {};
-        reflImgInfo.imageView = rb.view;
+        reflImgInfo.imageView = storageView;
         reflImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
         VkDescriptorImageInfo depthInfo = {};
@@ -2281,7 +2551,7 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
         vkUpdateDescriptorSets(vk.device, 10, writes, 0, NULL);
         chain->traceDescSetLastUpdated[frameIdx] = tr.frameCount;
         chain->lastTlas[frameIdx] = vkRT.tlas[frameIdx].handle;
-        chain->lastStorageView[frameIdx] = rb.view;
+        chain->lastStorageView[frameIdx] = storageView;
         chain->lastDepthView[frameIdx] = vk.depthSampledView;
         chain->lastLightSsbo[frameIdx] = lightSsbo;
         chain->lastGbufView[frameIdx] = gbufView;
@@ -2302,16 +2572,16 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
         // glowTris is the separate population: additive translucent surfaces the BLAS drops,
         // which is the only way a beam or sprite reaches a reflection as geometry.  emitters
         // counts discs (projectiles, smoke) and says nothing about those.
-        common->Printf("VK RT Refl[%s]: dispatch %ux%u at (%d,%d) pop=%d mode=%d maxDist=%.1f emitters=%d glowTris=%d "
-                       "volSteps=%d\n",
-                       chain->name, rectW, rectH, rectX, rectY, population, ubo.reflMode, ubo.maxDist, ubo.emitterCount,
-                       ubo.glowTriCount, ubo.volSteps);
+        common->Printf("VK RT Refl[%s]: dispatch %ux%u at (%d,%d) pop=%d scale=%d mode=%d maxDist=%.1f emitters=%d "
+                       "glowTris=%d volSteps=%d\n",
+                       chain->name, launchW, launchH, rectX, rectY, population, reflScale, ubo.reflMode, ubo.maxDist,
+                       ubo.emitterCount, ubo.glowTriCount, ubo.volSteps);
 
     chain->dispatchRect[frameIdx] = VkRect2D{{rectX, rectY}, {rectW, rectH}};
     chain->dispatchRectFrame[frameIdx] = tr.frameCount;
 
-    vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion, rectW,
-                      rectH, 1);
+    vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion,
+                      launchW, launchH, 1);
 
     // --- Barrier: reflection write -> fragment shader read, and (Stage 1,
     // 20261013_reflection_roughness.md) -> VK_RT_DispatchReflTemporal's compute read ---
@@ -2324,6 +2594,12 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
                              &memBarrier, 0, NULL, 0, NULL);
     }
+
+    // Stage 4c: reconstruct the full-res image before anything downstream looks at it.
+    // Inside this function and inside the depth READ_ONLY window above, which the
+    // upsample's own plane reconstruction needs.
+    if (halfRes)
+        VK_RT_DispatchReflUpsample(cmd, viewDef, chain);
 
     // --- Depth barrier: restore ATTACHMENT_OPTIMAL for the upcoming render pass ---
     {

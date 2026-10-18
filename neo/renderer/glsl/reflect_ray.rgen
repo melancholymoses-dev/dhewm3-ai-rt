@@ -126,6 +126,9 @@ layout(set = 0, binding = 3) uniform ReflParams {
     int    glassRectY;
     int    glassRectW;    // 0 = no glass in view
     int    glassRectH;
+    int    reflScale;     // Stage 4c — 1 full res, 2 half res (opaque only). reflImage is
+                          // 1/reflScale the G-buffer's size; every full-res fetch below
+                          // scales coord up by it, imageStore does not.
 } params;
 
 // Must match the REFL_POP_* defines in vk_reflections.cpp.
@@ -310,17 +313,19 @@ vec3 ReflEmitterGlow(vec3 o, vec3 d, float hitT)
 // turn into bright mirrors at grazing angles.  Called twice per opaque pixel
 // (Stage 2b) — once on the coarse F0 to admit the ray, once on the fine one for
 // the weight that leaves in the alpha channel.
-float ReflFresnel(float f0, float perceptualRoughness, float NdotV)
-{
-    float fGrazing = max(1.0 - perceptualRoughness, f0);
-    return f0 + (fGrazing - f0) * pow(1.0 - NdotV, 5.0);
-}
+#include "refl_fresnel.glsl"
 
 void main()
 {
     // R6: glass-only launches only over the glass rect; full-screen modes pass (0,0).
     ivec2 coord = ivec2(gl_LaunchIDEXT.xy) + ivec2(params.rectOriginX, params.rectOriginY);
     ivec2 size  = params.screenSize;
+
+    // Stage 4c: coord indexes reflImage, gcoord the full-res depth/G-buffer. At
+    // reflScale 1 they are the same. At 2 this ray represents a 2x2 block and samples
+    // its top-left pixel; refl_upsample.comp reconstructs the other three from the
+    // full-res G-buffer, so the surface detail they carry is not lost with the rays.
+    ivec2 gcoord = coord * params.reflScale;
 
     // G-buffer normal/F0 (Stage 3.5) + debug modes (Step 9). Checked first, before
     // any ray tracing, so debug output stays cheap and reflects exactly what the
@@ -329,7 +334,7 @@ void main()
     // (gbufferSupported false) — texelFetch out of bounds is undefined without
     // robustImageAccess.
     ivec2 gbufSize = textureSize(gbufNormalSampler, 0);
-    vec4  gbuf = texelFetch(gbufNormalSampler, min(coord, gbufSize - 1), 0);
+    vec4  gbuf = texelFetch(gbufNormalSampler, min(gcoord, gbufSize - 1), 0);
     // Two F0s (Stage 2b): the fine, per-pixel one weights this pixel's reflection;
     // the coarse, fixed-mip one decides whether a ray is traced at all. Separating
     // them is what stops a scuffed texel from becoming a hole in the filters' input.
@@ -340,7 +345,7 @@ void main()
     // Stage 4's roughness ceiling can gate the opaque early-out before any ray tracing,
     // same reasoning as f0 being fetched up here instead of inside the opaque branch.
     ivec2 albedoSize = textureSize(gbufAlbedoSampler, 0);
-    float roughness  = GBuf_UnpackRoughness(texelFetch(gbufAlbedoSampler, min(coord, albedoSize - 1), 0).a);
+    float roughness  = GBuf_UnpackRoughness(texelFetch(gbufAlbedoSampler, min(gcoord, albedoSize - 1), 0).a);
 
     if (params.debugMode == 2)
     {
@@ -374,7 +379,7 @@ void main()
         return;
     }
 
-    float depth = texelFetch(depthSampler, coord, 0).r;
+    float depth = texelFetch(depthSampler, gcoord, 0).r;
 
     // Sky / no geometry — no surface to reflect from
     if (depth >= 1.0)
@@ -383,7 +388,7 @@ void main()
         return;
     }
 
-    vec3 worldPos = rt_ReconstructWorldPos(coord, size, params.invViewProj);
+    vec3 worldPos = rt_ReconstructWorldPos(gcoord, size, params.invViewProj);
 
     // Camera position
     vec4 camClip  = vec4(0.0, 0.0, -1.0, 1.0);
@@ -413,8 +418,8 @@ void main()
     if (params.population == REFL_POP_OPAQUE)
     {
         bool inGlassRect = params.glassRectW > 0 && params.glassRectH > 0 &&
-                           coord.x >= params.glassRectX && coord.x < params.glassRectX + params.glassRectW &&
-                           coord.y >= params.glassRectY && coord.y < params.glassRectY + params.glassRectH;
+                           gcoord.x >= params.glassRectX && gcoord.x < params.glassRectX + params.glassRectW &&
+                           gcoord.y >= params.glassRectY && gcoord.y < params.glassRectY + params.glassRectH;
         probeNeeded = probeNeeded && inGlassRect;
     }
 
@@ -511,7 +516,7 @@ void main()
         // No glass, no G-buffer data (gbufferSupported false at runtime, or sky/
         // translucent geometry the prepass doesn't write) — reconstruct from depth
         // gradients as before this feature existed.
-        reflNormal = rt_ReconstructNormal(coord, size, params.invViewProj, worldPos, -viewDir);
+        reflNormal = rt_ReconstructNormal(gcoord, size, params.invViewProj, worldPos, -viewDir);
         reflOrigin = worldPos;
     }
 

@@ -2506,6 +2506,7 @@ struct RTCVars
     idCVar *rtGuiTexInterval = nullptr;
     idCVar *rtGlassNormalMode = nullptr;
     idCVar *rtGlassCreaseRatio = nullptr;
+    idCVar *rtReflOpaqueHalfRes = nullptr;
     idCVar *rtReflDenoise = nullptr;
     idCVar *rtReflDenoiseAlpha = nullptr;
     idCVar *rtReflDenoiseAlphaGlass = nullptr;
@@ -2653,6 +2654,7 @@ static void InitRTOptionsMenu()
     rtCVars.rtGuiTexInterval = cvarSystem->Find("r_rtGuiTexInterval");
     rtCVars.rtGlassNormalMode = cvarSystem->Find("r_rtGlassNormalMode");
     rtCVars.rtGlassCreaseRatio = cvarSystem->Find("r_rtGlassCreaseRatio");
+    rtCVars.rtReflOpaqueHalfRes = cvarSystem->Find("r_rtReflOpaqueHalfRes");
     rtCVars.rtReflDenoise = cvarSystem->Find("r_rtReflDenoise");
     rtCVars.rtReflDenoiseAlpha = cvarSystem->Find("r_rtReflDenoiseAlpha");
     rtCVars.rtReflDenoiseAlphaGlass = cvarSystem->Find("r_rtReflDenoiseAlphaGlass");
@@ -2897,6 +2899,7 @@ static void DrawRTOptionsMenu()
         RTSliderFloat("Rough Highlight Damping", rtCVars.rtReflRoughLumExp, 0.0f, 8.0f, "%.1f");
         RTSliderInt("Reflection Shadow Picks (0 = all lights)", rtCVars.rtReflShadowPicks, 0, 2);
         RTCheckbox("Light Shafts in Reflections", rtCVars.rtReflVol);
+        RTCheckbox("Half-Res Opaque Trace (1/4 the rays)", rtCVars.rtReflOpaqueHalfRes);
         static const char *const reflDenoiseModes[] = {"Off", "Temporal", "Temporal + Spatial"};
         RTCombo("Reflection Denoise", rtCVars.rtReflDenoise, reflDenoiseModes, IM_ARRAYSIZE(reflDenoiseModes));
         ImGui::BeginDisabled(!(rtCVars.rtReflDenoise && rtCVars.rtReflDenoise->GetInteger() > 0));

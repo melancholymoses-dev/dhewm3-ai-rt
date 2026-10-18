@@ -1,0 +1,177 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — joint bilateral upsample of the half-res opaque reflection
+trace (Stage 4c, docs/plans/20261017_reflection_pipeline_refactor.md).
+
+Runs immediately after reflect_ray.rgen and BEFORE the temporal/spatial denoisers,
+so everything downstream keeps working at full resolution against exact per-pixel
+depth, normals and motion vectors. Denoising full-res reconstructed data beats
+denoising on the half-res grid and upsampling last: the temporal EMA's reprojection
+and the a-trous plane stops are the two things that most dislike a coarse grid.
+
+Two distinct jobs, which is why this is not a plain bilinear blit:
+
+  rgb — incident light, genuinely low-frequency, reconstructed from the 2x2 block's
+        four half-res taps weighted by plane distance and normal agreement against
+        THIS full-res pixel. Same edge stops as refl_atrous.comp so a reflection
+        never leaks across a silhouette.
+
+  a   — the per-pixel Fresnel weight, NOT interpolated. Recomputed here at full
+        resolution from gbufNormal.a and the packed roughness, which is the whole
+        point of Stage 2b's demodulation: the rays go to quarter rate but the
+        material detail that modulates them stays per-pixel. Interpolating alpha
+        instead would smear every specular trim edge into its neighbours.
+
+Untraced stays untraced: with no usable tap the pixel gets alpha 0, which every
+consumer already reads as "no reflection here" (refl_alpha.glsl).
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D reflHalf;              // half-res trace
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D reflFull;
+layout(set = 0, binding = 2) uniform sampler2D depthSampler;
+layout(set = 0, binding = 3) uniform sampler2D gbufNormalSampler;
+layout(set = 0, binding = 4) uniform sampler2D gbufAlbedoSampler;
+
+layout(push_constant) uniform Push {
+    mat4  invViewProj;     // current frame, GL convention
+    int   screenWidth;     // render extent — the depth/G-buffer grid
+    int   screenHeight;
+    int   reflScale;       // 2 for half res; 1 makes this pass a straight copy
+    float sigmaPlane;      // r_rtReflAtrousSigmaPlane — shared with the a-trous stops
+    float normalPower;     // r_rtReflAtrousNormalPower
+    float roughnessScale;  // r_rtReflRoughnessScale — must match the rgen's lobe
+} pc;
+
+// rt_ReconstructWorldPos takes the matrix as a parameter; the only thing this
+// include needs in scope is depthSampler, declared above.
+#include "rt_indirect.glsl"
+#include "rt_gbuf_normal_fmt.glsl"
+#include "gbuf_albedo_class.glsl"
+#include "refl_alpha.glsl"
+#include "refl_fresnel.glsl"
+
+vec3 UpsampleDecodeNormal(ivec2 coord)
+{
+    ivec2 sz = textureSize(gbufNormalSampler, 0);
+    vec4  g  = texelFetch(gbufNormalSampler, clamp(coord, ivec2(0), sz - 1), 0);
+    return GBuf_NormalValid(g) ? GBuf_DecodeNormal(g.rg) : vec3(0.0);
+}
+
+void main()
+{
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size  = ivec2(pc.screenWidth, pc.screenHeight);
+    ivec2 fullDims = imageSize(reflFull);
+    if (coord.x >= fullDims.x || coord.y >= fullDims.y)
+        return;
+
+    // Outside the rasterised sub-rect (the refl images are display-sized, depth is
+    // render-sized under FSR) there is no G-buffer to reconstruct against.
+    if (coord.x >= size.x || coord.y >= size.y)
+    {
+        imageStore(reflFull, coord, vec4(0.0));
+        return;
+    }
+
+    ivec2 halfDims = textureSize(reflHalf, 0);
+
+    vec4 gbuf = texelFetch(gbufNormalSampler, coord, 0);
+    float f0 = GBuf_CoarseF0(gbuf) > 0.0 ? gbuf.a : 0.0;
+
+    // --- Centre surface: the thing all four taps are judged against ---
+    vec4  camH   = pc.invViewProj * vec4(0.0, 0.0, -1.0, 1.0);
+    vec3  camPos = camH.xyz / camH.w;
+    vec3  pC     = rt_ReconstructWorldPos(coord, size, pc.invViewProj);
+    float viewDist = max(length(pC - camPos), 1.0);
+    vec3  toCam  = (camPos - pC) / viewDist;
+    vec3  nC     = UpsampleDecodeNormal(coord);
+    bool  haveN  = length(nC) > 0.5;
+    if (!haveN)
+        nC = toCam;
+
+    float roughness = GBuf_UnpackRoughness(texelFetch(gbufAlbedoSampler, coord, 0).a);
+    float perceptualRoughness = clamp(roughness * pc.roughnessScale, 0.0, 1.0);
+    float NdotV = clamp(dot(nC, toCam), 0.0, 1.0);
+    float fresnel = ReflFresnel(f0, perceptualRoughness, NdotV);
+
+    float invSigmaP2 = 1.0 / (pc.sigmaPlane * pc.sigmaPlane + 1e-8);
+
+    // --- Gather the 2x2 half-res block this pixel sits in ---
+    // Each half-res tap h represents the full-res pixel h*reflScale (the rgen's
+    // top-left convention), so its surface is read at that exact texel rather than
+    // at an interpolated position that belongs to no real surface.
+    ivec2 hBase = coord / pc.reflScale;
+
+    vec3  sum = vec3(0.0);
+    float wSum = 0.0;
+    vec3  fallback = vec3(0.0);
+    float fallbackW = 0.0;
+
+    for (int dy = 0; dy <= 1; dy++)
+    {
+        for (int dx = 0; dx <= 1; dx++)
+        {
+            ivec2 h = clamp(hBase + ivec2(dx, dy), ivec2(0), halfDims - 1);
+            vec4  t = texelFetch(reflHalf, h, 0);
+            if (!ReflAlpha_Traced(t.a))
+                continue;
+
+            ivec2 g = h * pc.reflScale;
+
+            // Nearest traced tap, used when every weight collapses — better than
+            // dropping the reflection outright at a one-pixel sliver.
+            float dist2 = dot(vec2(g - coord), vec2(g - coord));
+            if (fallbackW == 0.0 || dist2 < fallbackW)
+            {
+                fallback = t.rgb;
+                fallbackW = max(dist2, 1e-6);
+            }
+
+            // Plane distance, normalised by view distance so the stop means the same
+            // thing at 20 units and at 500 — identical rule to refl_atrous.comp.
+            vec3  pT = rt_ReconstructWorldPos(clamp(g, ivec2(0), size - 1), size, pc.invViewProj);
+            float dPlane = dot(pT - pC, nC) / viewDist;
+            float wPlane = exp(-dPlane * dPlane * invSigmaP2);
+
+            float wNormal = 1.0;
+            if (haveN)
+            {
+                vec3 nT = UpsampleDecodeNormal(g);
+                wNormal = (length(nT) > 0.5) ? pow(max(dot(nC, nT), 0.0), pc.normalPower) : 0.0;
+            }
+
+            // Bilinear-style spatial falloff so the four taps don't contribute equally
+            // and produce visible 2x2 plateaus on a flat wall.
+            vec2  fracOff = abs(vec2(g - coord)) / float(pc.reflScale);
+            float wSpace  = max(1.0 - fracOff.x, 0.0) * max(1.0 - fracOff.y, 0.0) + 1e-3;
+
+            float w = wPlane * wNormal * wSpace;
+            sum  += t.rgb * w;
+            wSum += w;
+        }
+    }
+
+    vec3 light = (wSum > 1e-5) ? (sum / wSum) : fallback;
+    bool traced = (wSum > 1e-5) || (fallbackW > 0.0);
+
+    // Deliberately no debug visualization mode here. This pass runs BEFORE the temporal
+    // EMA and the a-trous filter, so any overlay written into reflFull would be smeared
+    // by both before it reached the screen and would read as a gradient rather than the
+    // classification it is. The honest test for reconstruction quality is an A/B of
+    // r_rtReflOpaqueHalfRes 0 vs 1 on a converged frame.
+    imageStore(reflFull, coord, traced ? vec4(light, ReflAlpha_Opaque(fresnel)) : vec4(0.0));
+}

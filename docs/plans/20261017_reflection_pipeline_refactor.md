@@ -252,22 +252,37 @@ Three findings that shaped it:
 unchanged. Then `r_vkLogRT 1` in a glass-free room: one `[opaque] pop=2` line, no `[glass]`
 line at all. Trace ms should drop most in rooms with no glass.
 
-### 4c — Half res
+### 4c — Half res — code written 2026-10-18, unvalidated
+
+**Upsample early, not last.** The plan had the denoisers running on the half-res grid with
+the upsample at the end. Reversed: the upsample runs immediately after the trace, so the
+temporal EMA and à-trous keep working full-res against exact per-pixel depth, normals and
+motion. Reprojection and plane stops are the two things that most dislike a coarse grid,
+and the trace is what costs — the à-trous is 1-2 passes of a 3×3. Both existing denoisers
+are untouched, and only the rgen's write target moves.
 
 | File | Change |
 |---|---|
-| `vk_reflections.cpp` | Opaque chain images at half res. `r_rtReflOpaqueHalfRes` (0/1) |
-| `reflect_ray.rgen` | Opaque launch one ray per 2×2 block; sub-pixel rotates over 4 frames on a **per-slot counter**, not `tr.frameCount` (engine rule) |
-| `refl_temporal_resolve.comp`, `refl_atrous.comp` | Half-res grid; depth/normal/motion fetched at the traced sub-pixel |
-| `glsl/refl_upsample.comp` | **New.** Joint bilateral 2×2 → full res, reusing Stage 3's plane + normal stops |
-| `vk_backend.cpp`, `CMakeLists.txt` | Dispatch upsample after à-trous; composite reads its output. New shader |
+| `vk_reflections.cpp` | `r_rtReflOpaqueHalfRes` (default **1**). `vkReflChain_t::traceHalf[]` at ½×½, `halfResCapable` (opaque only). Upsample pipeline + dispatch, inside the trace's depth READ_ONLY window. `ReflParamsUBO` 304 (`reflScale`) |
+| `glsl/refl_upsample.comp` | **New.** rgb: 2×2 joint bilateral using à-trous's own plane + normal stops. **a: Fresnel recomputed at full res**, never interpolated |
+| `glsl/refl_fresnel.glsl` | **New.** `ReflFresnel` shared by the rgen and the upsample so the two can't drift |
+| `reflect_ray.rgen` | `gcoord = coord * reflScale` for every full-res fetch; `imageStore` stays on the refl grid |
+| `Dhewm3SettingsMenu.cpp`, `CMakeLists.txt` | Checkbox; new shader + include |
 
-**Check:** converged screenshots 0 vs 1 at the LED wall, a metal floor with wall wash, a rail
-over a floor. No 2×2 blockiness at edges, no crawl on a slow strafe. Trace ms ~¼. Debug 14
-still meaningful (classifies the half-res grid).
+**No sub-pixel rotation.** A rotating sub-pixel makes one half-res history pixel accumulate
+four *different* full-res positions, which straddle edges — the disocclusion test then
+rejects forever and the EMA never converges. Fixed top-left lattice instead; per-frame
+variety already comes from the GGX sample's `frameIndex`, and the upsample recovers origin
+detail from the full-res G-buffer. (This is also why the per-slot-counter engine rule never
+came up: there is no pixel-skipping pattern left to desynchronise.)
 
-Watch: `r_rtReflAtrousIterations` is 1 in the tuned config, so the upsample carries more of
-the spatial reconstruction than one à-trous pass alone would suggest.
+**No debug mode for the upsample.** It writes *before* the EMA and à-trous, so any overlay
+would be smeared by both and read as a gradient rather than a classification.
+
+**Check:** converged screenshots `r_rtReflOpaqueHalfRes` 0 vs 1 — the LED wall, a metal floor
+with a wall wash, a rail over a floor. Specular trim edges must stay sharp (that is the
+full-res alpha working); watch for 2×2 plateaus on flat walls and crawl on a slow strafe.
+`[opaque] scale=2` and an `Upsample[opaque]` line in the log. Trace ms ~¼.
 
 ---
 

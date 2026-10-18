@@ -101,6 +101,7 @@ Needs fixing if they stay in the menu: `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIR
 | `r_rtReflectionDistance` | Reflections | Max reflection ray distance | 2500 | A | = |
 | `r_rtReflectionBlend` | Reflections | Reflection blend factor | 6.0 | A | = |
 | `r_rtReflectionMinWeight` | Reflections | Skip reflection rays below this *coarse* (fixed-mip F0) Fresnel weight — panel-scale, not texel-scale | 0.04 | D | = |
+| `r_rtReflOpaqueHalfRes` | Reflections | Trace opaque reflections at half res (one ray per 2×2 block), reconstructed full res before denoising. The per-pixel Fresnel weight stays full res, so material detail is unaffected. Glass is never half res | 1 | D | = |
 | `r_rtReflectionDebugMode` | Reflections | Reflection debug view | 0 | D | = |
 | `r_rtGlassNormalMode` | Reflections | Glass reflection normal: 0 interpolated, 1 face, 2 crease-aware | 2 | D | = |
 | `r_rtGlassCreaseRatio` | Reflections | Mode 2 threshold: min/max vertex-normal tilt below which a glass triangle is flattened | 0.25 | D | = |

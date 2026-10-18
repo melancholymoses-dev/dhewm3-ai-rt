@@ -234,7 +234,13 @@ struct vkReflChain_t
     // that is what r_rtReflDenoiseAlphaGlass feeds.
     bool spatialFilter;
 
-    vkRTImage_t trace[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F, reflect_ray.rgen's imageStore target
+    vkRTImage_t trace[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F, full res, what the denoisers read
+
+    // Stage 4c: when half-res tracing is on for this chain, reflect_ray.rgen writes
+    // HERE instead and refl_upsample.comp reconstructs trace[] from it. Allocated only
+    // for a chain with halfResCapable; image NULL means "trace at full res this frame".
+    vkRTImage_t traceHalf[VK_MAX_FRAMES_IN_FLIGHT];
+    bool halfResCapable; // opaque only — glass must stay sharp and is already rect-bound
 
     // Temporal EMA state. Shared across frame slots (the recurrence is sequential
     // across frames), ping-ponged across frames because the resolve reprojects —
@@ -256,6 +262,8 @@ struct vkReflChain_t
 
     VkDescriptorSet traceDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int traceDescSetLastUpdated[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorSet upsampleDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int upsampleDescSetLastUpdated[VK_MAX_FRAMES_IN_FLIGHT];
     VkDescriptorSet temporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int temporalDescSetLastUpdated[VK_MAX_FRAMES_IN_FLIGHT];
     VkDescriptorSet atrousDescSets[VK_MAX_FRAMES_IN_FLIGHT][3];
@@ -516,6 +524,13 @@ struct vkRTState_t
     VkPipelineLayout reflTemporalPipelineLayout;
     VkDescriptorSetLayout reflTemporalDescLayout;
     VkDescriptorPool reflTemporalDescPool;
+
+    // Half-res reconstruction (Stage 4c, r_rtReflOpaqueHalfRes). Compute pipeline for
+    // refl_upsample.comp; runs between the trace and the temporal resolve.
+    VkPipeline reflUpsamplePipeline;
+    VkPipelineLayout reflUpsamplePipelineLayout;
+    VkDescriptorSetLayout reflUpsampleDescLayout;
+    VkDescriptorPool reflUpsampleDescPool;
 
     // Reflection spatial filter (r_rtReflDenoise 2), à-trous wavelet, roughness-gated
     // (20261013_reflection_roughness.md Stage 1 addendum). Runs on top of the temporal
