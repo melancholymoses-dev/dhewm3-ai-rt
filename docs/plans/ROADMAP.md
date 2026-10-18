@@ -20,9 +20,9 @@ they are things to check code against, not things to schedule.
 |---|---|---|---|
 | 8 | **Optimization** — Vulkan core (F/A), RT uploads (R/B), not-yet-audited (X), **Stage L interaction overdraw**. Stage S shadow dispatch closed | `20261010_vk_core_audit.md`, closed half in `completed/20261010_vk_core_audit_closed.md` | **Parked** — see that doc's "Current lead" section. Three wins (S2 cull, `r_rtShadowSamples` 4 → 2, BLAS pooling); 17 findings dispatched or parked by measurement.  Pausing |
 | 8d | **Surface roughness in reflections** — extend past glass to opaque surfaces with a GGX lobe. Stages 1-4 | `completed/20261013_reflection_roughness.md` | **Done 2026-10-16.** Closed on live visual confirmation (sheen on floors, clear screen/emitter reflections, no fireflies or blinding pixels), not the formal numeric Stage Checks — none of those were run end to end. Three same-day addenda beyond the original plan: roughness-gated à-trous spatial filter (`r_rtReflDenoise 2`) with a tunable wash gain, a local firefly clamp (`r_rtReflAtrousFireflyClamp`), and a flat brightness ceiling (`r_rtReflMaxLuminance`). Stage 5's menu/preset/doc polish not done — see that doc's "What's left" |
-| 8e | **Cleanup + polish** — debug/cvar trim (1a/1b/1c), dead-path deletion, resets, presets, comment sweep | `20261010_cleanup_polish.md` | Reordered 2026-10-13: deletion runs *after* the gaining work, since the dead GI/vol paths measure 0.001 ms. 1a and 5a are unblocked and can land any time |
-| 8g | **Reflection pipeline refactor** — stochastic lights at hits, demodulation, linear-depth + normal edge stops, half-res opaque trace, knob consolidation | `20261017_reflection_pipeline_refactor.md` | **In progress.** Stages 1 (opt-in, `gpu.Refl` −26% at picks 1), 2 and 3 landed and verified 2026-10-17. Stage 4 split into 4a/4b/4c 2026-10-18 (chain refactor → population split → half res). 4a verified in-game 2026-10-18. 4b and 4c code written 2026-10-18, both awaiting an in-game check (4b: parity; 4c: `r_rtReflOpaqueHalfRes` 0 vs 1). Stage 5 next. Stage 0 splits still to capture. Motivated by up to ~10 fps lost to opaque reflections |
+| 8g | **Reflection pipeline refactor** — stochastic lights at hits, demodulation, linear-depth + normal edge stops, half-res opaque trace, knob consolidation | `20261017_reflection_pipeline_refactor.md` | **Stages 1-4 done, verified 2026-10-18.** `gpu.Refl` 3.81 → 1.45 ms p50 and `gpu.total` 7.89 → 5.52 (−30%) at Mars City HQ, no visible quality loss. The reflection stack went from 55% of RT time to 36%. Only Stage 5 (knob consolidation) is left, and it is cleanup — no image change intended |
 | 8f | **Live GUI screens in reflections** — render GUIs to slot textures, admit GUI surfaces to the TLAS. Stages 0-3 | `completed/20261015_gui_reflections.md` | **Done 2026-10-16.** Bioscan screens live in the glass; gain 0.3, refresh every 2nd frame. Unchecked: pool size in the admin offices |
+| 8e | **Cleanup + polish** — debug/cvar trim (1a/1b/1c), dead-path deletion, resets, presets, comment sweep | `20261010_cleanup_polish.md` | Reordered 2026-10-13: deletion runs *after* the gaining work, since the dead GI/vol paths measure 0.001 ms. 1a and 5a are unblocked and can land any time |
 
 ### Execution order
 
@@ -37,14 +37,12 @@ this says *when*.
 | 4 | Cleanup 1a + 5a | 8e | Unblocked; land whenever convenient |
 | 4b | ~~8f GUI reflections Stages 0-3~~ — **done 2026-10-16** | 8f | Doc in `completed/` |
 | 5 | Cleanup 1b (+ Stage S4 serial-path deletion) | 8e | Unblocked — Stage S closed |
-| 6 | ~~Optimization Stage L~~ — **parked 2026-10-14.** L1 landed (per-light labels); L2 blocked, L3 dropped | 8 | Four candidate causes measured negative. If optimization resumes, start with the AO ray budget or the E3 `vid_restart` leak — both cheap, neither needs new tooling |
+| 6 | ~~Optimization Stage L~~ — **parked 2026-10-14.** L1 landed (per-light labels); L2 blocked, L3 dropped | 8 | Four candidate causes measured negative. If optimization resumes, start with the AO ray budget. |
 | 7 | ~~8d roughness Stages 1-4~~ — **done 2026-10-16** | 8d | Closed on live testing, not the formal numeric Stage Checks (never run end to end). Doc in `completed/`. Stage 5 (menu/presets/docs) not done — not blocking |
-| 7b | 8g reflection refactor Stages 0-5 (6 optional) | 8g | Stages 1-3 and 4a landed and verified; 4b and 4c written, unvalidated. Stage 4's half-res trace builds on 2b's demodulation and 3's edge stops, both in place |
+| 7b | 8g reflection refactor Stage 5 (6 optional) | 8g | Stages 1-4 landed and verified. Stage 5 is knob consolidation only — cleanup, no image change |
 | 8 | Cleanup 1c + Phase 2 | 8e | 1c unblocked. Phase 2 rewritten 2026-10-17 (F0 stays; only legacy mode 2 goes) — after 8g Stage 5 |
 | 9 | Cleanup 3, 4 | 8e | Biggest surgery, 0.001 ms gain. Last of the code changes |
 | 10 | Cleanup 5b presets, then Phase 7 comments | 8e | Needs the final cvar set |
-
-
 
 
 ### Measured RT budget

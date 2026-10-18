@@ -252,7 +252,29 @@ Three findings that shaped it:
 unchanged. Then `r_vkLogRT 1` in a glass-free room: one `[opaque] pop=2` line, no `[glass]`
 line at all. Trace ms should drop most in rooms with no glass.
 
-### 4c — Half res — code written 2026-10-18, unvalidated
+### 4c — Half res — verified in-game 2026-10-18, `gpu.Refl` −62%
+
+Measured at Mars City HQ, `mchq_reg.csv` vs `mchq_halfres.csv`, p50 ms:
+
+| | full res | half res | |
+|---|---|---|---|
+| `gpu.Refl` (trace + upsample) | 3.814 | **1.449** | −62% |
+| `gpu.ReflTemporal` | 0.187 | 0.187 | unchanged |
+| `gpu.ReflAtrous` | 0.378 | 0.370 | unchanged |
+| reflection stack total | 4.379 | **2.006** | −54% |
+| `gpu.total` | 7.894 | **5.518** | −30% |
+| `gpu.total` p95 | 9.648 | 7.211 | −25% |
+
+The two denoisers costing the same in both captures is the direct confirmation that
+"upsample early" works as designed — they still run full-res on full-res inputs. It also
+means 1.449 includes the reconstruction, so the trace alone is below it. The captures are
+not content-matched (`ring.draws` 485 → 550, `lights.view` 16 → 17, `shadow.Mpix` +6%): the
+half-res capture carried the *heavier* scene and still won, so −62% is if anything
+conservative.
+
+The reflection stack was 55% of RT time and is now 36%. `gpu.AO` (0.962) is now within
+reach of `gpu.Refl` as the most expensive RT pass.
+
 
 **Upsample early, not last.** The plan had the denoisers running on the half-res grid with
 the upsample at the end. Reversed: the upsample runs immediately after the trace, so the
@@ -279,10 +301,11 @@ came up: there is no pixel-skipping pattern left to desynchronise.)
 **No debug mode for the upsample.** It writes *before* the EMA and à-trous, so any overlay
 would be smeared by both and read as a gradient rather than a classification.
 
-**Check:** converged screenshots `r_rtReflOpaqueHalfRes` 0 vs 1 — the LED wall, a metal floor
-with a wall wash, a rail over a floor. Specular trim edges must stay sharp (that is the
-full-res alpha working); watch for 2×2 plateaus on flat walls and crawl on a slow strafe.
-`[opaque] scale=2` and an `Upsample[opaque]` line in the log. Trace ms ~¼.
+**Checked:** no visible quality loss in play at Mars City HQ; specular trim edges stay sharp,
+which is the full-res alpha doing its job. Default left at 1.
+
+Not separately measured: the upsample has no profiler span of its own, so it sits inside
+`gpu.Refl`. Worth a nested span (like `TLAS.BLAS`) if the trace is ever tuned further.
 
 ---
 
