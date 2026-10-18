@@ -8,9 +8,13 @@ Each phase ends in a runnable build with a check. Do not start a phase until the
 check passes. Cvar inventory and tiers: `../Dhewm3-AI-RT-Settings.md`.
 
 **Phases are ordered by what they block, not by number** — see "Order and exit". Phase 1 is
-split 1a/1b/1c because its three groups have different dependencies: deleting an instrument
+split 1a/1b/1c/1d because its groups have different dependencies: deleting an instrument
 before the work that needs it is the one mistake this arc can make cheaply and regret
 expensively.
+
+Scale as of 2026-10-18: **255 `r_rt*`/`r_vk*`/`r_fsr*` cvars, 116 menu widgets, 44 debug
+modes across 8 `*Debug*` cvars.** Phase 1 assigns every cvar one of three verdicts —
+**M** (menu), **C** (console, documented), **X** (deleted).
 
 **Rules for every phase**
 
@@ -43,34 +47,62 @@ recorded positions (`getviewpos`).
 
 ---
 
-## Phase 1 — Debug mode and cvar trim (three groups)
+## Phase 1 — Cvar trim (three verdicts, four groups)
+
+Rewritten 2026-10-18 after the reflection arcs (8d/8f/8g) landed. Every cvar gets one of
+three verdicts; `../Dhewm3-AI-RT-Settings.md` is the authority on which cvar is which.
+
+| Verdict | Means | Where |
+|---|---|---|
+| **M** | Menu widget. Player understands it and it changes the look or cost visibly | Dhewm3SettingsMenu |
+| **C** | Console only, kept and documented. Real knob, rarely touched | Settings doc §2 |
+| **X** | Deleted with its UBO field, shader branch, menu widget and CMake entry | nowhere |
 
 Principle (rules doc, pillar 6): one overlay per feature stays. Gain / slice / radius /
-dump / log-level cvars go. Split by dependency — a diagnostic is only dead once the work that would use it has
-shipped.
+dump / log-level cvars go **X**. Split by dependency — a diagnostic is only dead once the
+work that would use it has shipped.
 
 ### 1a — unblocked clutter (run any time)
 
-| Remove | Keep |
+| X | Keep as C |
 |---|---|
-| `r_rtAODebugGain`, `r_rtGIProbeDebugGain/Radius/Dump`, `r_rtVolDebugGain/Dump`, `r_rtVolFroxelDebugSlice/Gain/Dump`, `r_rtGILightDump`, `r_rtTlasDump`, `r_rtBloomDebug` | `r_rtAODebug`, `r_rtGIProbeDebug`, `r_rtVolDebugMode`, `r_rtVolFroxelDebug` (hardcode gains) |
-| `r_fsrDebug`, `r_vkRTReflDataDiag`, `r_vkRTInterLogN`, `r_vkRTLogCaptureReset`, `r_vkRTDebugLightTextures`, `r_vkRTLightLogN`, `r_vkRTDebugLightFilter`, `r_vkRTDebugSurface`, `r_vkRTDebugMaxLogsPerFrame` | `r_vkRTProfile`, `r_vkLogRT`, `r_vkLogSubmitInfo` |
+| `r_rtAODebugGain`, `r_rtGIProbeDebugGain/Radius/Dump`, `r_rtVolDebugGain/Dump`, `r_rtVolFroxelDebugSlice/Gain/Dump`, `r_rtGILightDump`, `r_rtTlasDump` | `r_rtAODebug`, `r_rtGIProbeDebug`, `r_rtVolFroxelDebug` (hardcode the gains) |
+| `r_vkRTReflDataDiag`, `r_vkRTInterLogN`, `r_vkRTLogCaptureReset`, `r_vkRTDebugLightTextures`, `r_vkRTLightLogN`, `r_vkRTDebugLightFilter`, `r_vkRTDebugSurface`, `r_vkRTDebugMaxLogsPerFrame` | `r_vkRTProfile*`, `r_vkLogRT`, `r_vkLogSubmitInfo`, `r_vkLogTLASSlow`, `r_vkBLASPoolCheck` |
 | `r_vkShadowFlipOps`, `r_vkShadowFullScissor`, `r_vkLightFullScissor`, `r_vkSplitSubmitMask/Verbose`, `r_vkLowPerturbationMode`, `r_vkLogShadowBranch/Geom`, `r_vkVcCheck` | `r_vkSerializeFrames` (cheap stability bisect) |
+
+`r_rtBloomDebug` moves to 1d (mode 1 is a general HDR-range overlay, not bloom-only).
 
 ### 1b — after optimization Stage S closes (closed 2026-10-13)
 
-| Remove | Because |
+| X | Because |
 |---|---|
 | ~~Serial shadow path: `VK_RT_DispatchShadowRaysForLight`, `VK_RT_SHADOW_SERIAL_LAYER`, `r_rtShadowBatch`; batch width 7 → 8~~ **done 2026-10-13** | Stage S4. Check: `grep ShadowRaysForLight` clean, `shadow.breaks` = ceil(casters/8)−1, `lights.batched` pins at 8 |
-| `r_rtShadowStablePattern`, `r_rtShadowVolumeCull`, `r_rtShadowMinSamples`, `r_rtShadowTemporalJitterMinSamples` | Diagnostic switches whose defaults are the shipped behaviour — but they are the knobs Stage S tunes against. S2 replaced `r_rtShadowDistanceCutoff` with `r_rtShadowVolumeCull` (A/B switch). `r_rtShadowDebugMode` stays |
+| `r_rtShadowStablePattern`, `r_rtShadowVolumeCull`, `r_rtShadowMinSamples`, `r_rtShadowTemporalJitterMinSamples`, `r_rtShadowTemporalJitter` | Diagnostic switches whose defaults are the shipped behaviour. S2 replaced `r_rtShadowDistanceCutoff` with `r_rtShadowVolumeCull` (A/B switch); `r_rtShadowBackfaceCull` is **already gone** — delete its Settings-doc row and shadow debug mode 12 reference |
 | `r_vkLogBufferGarbage` | Optimization E3 says use it before removing it |
 
-### 1c — after the reflection arc closes
+`r_rtShadowDebugMode` stays (**C**), trimmed to 2 modes in 1d.
 
-| Remove | Because |
+### 1c — reflection arc closed 2026-10-18 (unblocked)
+
+8d, 8f and 8g Stages 1-4 all landed, so the reflection diagnostics are now judged against a
+settled pipeline. 24 reflection/GUI cvars exist that predate the Settings doc — §2 of that
+doc now lists them with verdicts. Summary:
+
+| Verdict | Cvars |
 |---|---|
-| `r_rtReflectionDebugMode` | Modes 1/5/7/8/9/10 retired 2026-10-17. The rest exit with their 8g stage (refactor plan) |
-| F0 remap cvars | Kept — live for opaque reflections. See Phase 2 |
+| **M** | `r_rtReflectionBlend` (strength), `r_rtReflMaxLuminance` (ceiling), `r_rtSpecF0Scale`, `r_rtSpecF0Gamma`, `r_rtReflOpaqueHalfRes`, `r_rtGuiReflections` |
+| **C** | `r_rtReflDenoise(+Alpha/AlphaGlass)`, `r_rtReflRoughness{Scale,Floor,Max}`, `r_rtReflRoughLumExp`, `r_rtReflShadowPicks`, `r_rtReflectionDistance`, `r_rtReflectionMinWeight`, `r_rtReflVol(+Gain/Steps)`, `r_rtReflGlow*`, `r_rtReflFlashGlow*`, `r_rtGlassNormalMode`, `r_rtGuiReflGain`, `r_rtGuiTexInterval/Radius`, `r_rtReflectionDebugMode` |
+| **X** | `r_rtReflAtrousSigmaPlane`, `r_rtReflAtrousNormalPower`, `r_rtReflAmbientScale`, `r_rtGlassCreaseRatio`, `r_rtReflGlowScale`, `r_rtReflGlowSmokeCell`, plus whatever 8g Stage 5 folds together |
+
+**F0 stays and is now a menu knob** — `r_rtSpecF0Scale/Gamma` drive opaque reflections
+(the arc's main win). The old "remove F0" plan is dead; see Phase 2.
+
+8g Stage 5 (knob consolidation) still owns folding `r_rtReflAtrousIterations` +
+`r_rtReflAtrousRoughnessGain` into one wash scale. Do that before writing the presets.
+
+### 1d — debug mode trim
+
+44 live modes across 8 cvars; target 18. Own section: [Phase 1d](#phase-1d--debug-mode-trim).
 
 Check (each group): build, load Mars City, `cvarlist r_rt` and `r_vk` shrink; baseline
 screenshots identical (image diff). Also drops the matching `DebugMode` branches in
@@ -78,20 +110,52 @@ screenshots identical (image diff). Also drops the matching `DebugMode` branches
 
 ---
 
-## Phase 2 — Reflection legacy mode — **BLOCKED on 8g**
+## Phase 1d — Debug mode trim
 
-Rewritten 2026-10-17. The old plan (remove F0, reclaim its G-buffer alpha) assumed glass-only
-reflections. Opaque reflections are now default (`r_rtReflectionMode 3`): F0 drives the trace
-cull and the Fresnel weight, and 8g Stage 2 adds a coarse F0 to the G-buffer. **F0, its
-remap and `r_rtSpecF0Scale/Gamma` stay.** Only legacy mode 2 is dead.
+A debug mode earns its keep if it answers a question no other instrument answers **against
+the current pipeline**. Modes built to settle an arc go when the arc's conclusion lands in
+`../rt_engine_rules.md`. **Numbers stay stable** — retired modes become documented no-ops,
+as `r_rtReflectionDebugMode` already does, so plan docs and memories keep resolving.
 
-Run after 8g Stage 5 (knob consolidation), which owns `r_rtReflectionBlend` and
-`r_rtReflectionMinWeight`.
+| Cvar | Live now | Keep | Retire | Why those |
+|---|---|---|---|---|
+| `r_rtReflectionDebugMode` | 2,3,4,6,11,12,13,14,15 (9) | 2,3,11,12,13,15 | 4, 6, 14 | 4 = prepass coverage, settled. 6 = the B2/B3/B4 "dark subject vs weak interface" measurement, arc closed. 14 (à-trous branch) is subsumed by 15 (edge-stop weight) |
+| `r_rtShadowDebugMode` | 1,2,3,5,7,8,9,10,11 (9) | 9, 10 | 1,2,3,5,7,8,11 | 1/2/3/5 are bias-direction views from the A12 arc — settled. 7/8 (aniso cone) shipped. 9 is the bias-vs-depth-error budget, the recurring failure. 11 goes with `r_rtShadowVolumeCull` (1b) |
+| `r_rtGIProbeDebug` | 1-8 (8) | 1, 3, 4 | 2, 5, 6, 7, 8 | 1 = is there GI here, 3 = leak detector, 4 = probe classification. 2 is subsumed by 3/4. 6/7 existed to validate 4's verdict; 8 (G5b buckets) shipped. **Move mode 5's "impossible second moment" magenta into mode 4** before deleting 5 — that check is an earned rule |
+| `r_fsrDebug` | 1-7 (7) | 3, 7 | 1, 2, 4, 5, 6 | 3 = reactive/T&C mask overlay (both masks are live knobs), 7 = motion vectors (the recurring FSR bug class). 2 is verbose view logging → fold into `r_vkLogRT`. 1/4/5/6 are U0/U3 A-B switches from closed stages |
+| `r_rtVolFroxelDebug` | 1-4 (4) | 1, 2, 3 | 4 | 1 = slice, 2 = per-cell light count (cost attribution), 3 = grid-mapping error (the infinite-far-plane discriminator). 4 (blocked cone hits) is a one-off |
+| `r_rtAODebug` | 1-3 (3) | 1, 2, 3 | — | Three distinct views, all cheap, AO is still being tuned |
+| `r_rtVolDebugMode` | 1,2 (2) | — | both | Goes with the per-pixel march path in Phase 4 |
+| `r_rtBloomDebug` | 1,2 (2) | 1 | 2 | Mode 1 is an HDR-range band overlay useful well beyond bloom; rename it out of the bloom group. 2 (raw extract) is one-off |
+
+Totals: 44 → **18**, cvars 8 → 7 (`r_rtVolDebugMode` goes entirely).
 
 | Step | Detail |
 |---|---|
-| 2a. Remove mode 2 | `r_rtReflectionMode` range 1–3 → {1, 3}. Debug modes force `reflMode = 2` (`vk_reflections.cpp`, `ubo.reflMode`); force 3 instead — rough pixels going black in a debug view is acceptable. Drop mode 2 branches in `reflect_ray.rgen` and the cvar help text |
-| 2b. Keep | F0 in the G-buffer, `GLASS_F0`, glass Fresnel, glow/emitter cvars. (Reflection debug modes 1/5/7/8/9/10 already retired 2026-10-17) |
+| 1d-a | Shaders first: delete the retired branches in `reflect_ray.rgen`, `refl_atrous.comp`, `shadow_ray.rgen`, `gi_probe_resolve.comp`, `fsr_rcas.comp`, `vol_froxel_fill.comp`. Lower `REFL_DEBUG_MAX_MODE` only if 15 is ever retired — it is not |
+| 1d-b | C++ clamps and the dispatch guards that mention specific modes (`vk_reflections.cpp:3161`, `vk_backend.cpp:1943`, `vk_vol_froxel.cpp:565/1095`) |
+| 1d-c | Rewrite each cvar help string as a one-line-per-live-mode list, ending with "retired no-ops: N, N, N" |
+| 1d-d | Probe mode 5 → 4 magenta merge (do before deleting 5) |
+
+Check: each kept mode still renders its documented colours at Mars City; each retired number
+renders the normal image, not garbage; `cvarlist *Debug*` help text matches what the shaders do.
+
+---
+
+## Phase 2 — Reflection legacy mode
+
+Rewritten 2026-10-17, unblocked 2026-10-18 (8g Stages 1-4 landed). The old plan (remove F0,
+reclaim its G-buffer alpha) assumed glass-only reflections. **Opaque reflections are now
+default (`r_rtReflectionMode 3`) and F0 is the arc's win — it drives the trace cull, the
+Fresnel weight, and 8g Stage 2's coarse G-buffer channel. F0, its remap and
+`r_rtSpecF0Scale/Gamma` stay, and move into the menu.** Only legacy mode 2 is dead.
+
+Run after 8g Stage 5, which owns `r_rtReflectionBlend` and `r_rtReflectionMinWeight`.
+
+| Step | Detail |
+|---|---|
+| 2a. Remove mode 2 | `r_rtReflectionMode` range 1–3 → {1, 3}. Debug modes force `reflMode = 2` (`vk_reflections.cpp`, `ubo.reflMode`); force 3 instead — rough pixels going black in a debug view is acceptable. Drop mode 2 branches in `reflect_ray.rgen` and the cvar help text. `REFL_POP_BOTH` must survive: 8g 4b kept it precisely because every debug mode needs one image to land in |
+| 2b. Keep | F0 in the G-buffer (coarse in `gbufNormal.b`, fine in `.a`), `GLASS_F0`, glass Fresnel, glow/emitter cvars |
 
 Check: modes 1 and 3 screenshots identical; `grep -rn "reflMode == 2\|ReflectionMode 2" neo` empty.
 
@@ -148,7 +212,7 @@ faster / prettier", not `r_rtGIProbeHysteresis`.
 
 | Item | Detail |
 |---|---|
-| `r_rtQuality` (Low / Medium / High / Ultra / Custom) | Writes the cvars in `Dhewm3-AI-RT-Settings.md` §3 — re-derive **after** 1c, 2, 3 and 4, since the GI/vol screen cvars and the F0 group are gone by then. Editing any Advanced widget flips the combo to Custom |
+| `r_rtQuality` (Low / Medium / High / Custom) | Writes the cvars in `Dhewm3-AI-RT-Settings.md` §3 — re-derive **after** 1c, 2, 3 and 4, since the GI/vol screen cvars and the F0 group are gone by then. Editing any Advanced widget flips the combo to Custom |
 | Menu layout | Per `Dhewm3-AI-RT-Settings.md` §1 and §4; Advanced node collapsed |
 | Reflection modes | If `20261013_reflection_roughness.md` landed, mode 3 belongs on High/Ultra only (20-40% frame cost) |
 
@@ -157,7 +221,7 @@ Check: pick each preset, `cvarlist` shows expected values.
 
 ---
 
-## Phases 6a and 6 — moved out 2026-10-13
+## Phases 6a and 6 — moved out 2026-10-13 - Completed
 
 Both were optimization and now live in `20261010_vk_core_audit.md`:
 
@@ -166,8 +230,6 @@ Both were optimization and now live in `20261010_vk_core_audit.md`:
 | Phase 6a, RT shadow dispatch, steps S0-S7 | **Stage S**, closed 2026-10-13 — now in `completed/20261010_vk_core_audit_closed.md`. Code comments in `vk_raytracing.h:971` and `vk_shadows.cpp:1465` still say "Phase 6a"; both names mean Stage S |
 | Phase 6 E1-E5, Vulkan efficiency | The A/B stages owned the fixes already; E2/E3/E4 are regression guards in the audit doc. E3 is now the `vid_restart` leak hunt |
 
-Nothing was dropped. This section is a forwarding note; delete it once no reader is looking
-for the old numbers.
 
 ---
 
@@ -201,18 +263,20 @@ Reordered 2026-10-13. Two principles, both from measurement rather than taste:
 |---|---|---|---|
 | 0 Regression refs + FP on | none | — | Screenshots and FP default outstanding |
 | 1a Debug clutter trim | low | 0 | Blocks nothing. **Runs first in this arc** |
-| 1b Shadow diagnostics | low | optimization Stage S | |
+| 1b Shadow diagnostics | low | optimization Stage S | Unblocked — Stage S closed 2026-10-13 |
 | 5a Reset buttons | low | 0 | No cvar-set dependency; can land any time |
-| 1c Reflection debug + F0 | low | reflection arc | |
-| 2 Reflection F0 path | low-med | 1c | **Blocked** — see the phase note |
+| 1c Reflection cvar verdicts | low | reflection arc | **Unblocked 2026-10-18** — 8d/8f/8g 1-4 all landed |
+| 1d Debug mode trim | low | 1a, 1b, 1c | Shader branches, so it wants the cvar verdicts settled first |
+| 2 Reflection legacy mode 2 | low-med | 1c, 8g Stage 5 | Unblocked except for Stage 5's knob fold |
 | 3 Screen-space GI | med | 1a | Dead paths confirmed at 0.001 ms |
-| 4 Non-froxel vol | med | 1a | same |
-| 5b Presets | low | 1c, 2, 3, 4 (final cvar set) | |
+| 4 Non-froxel vol | med | 1a | same. Takes `r_rtVolDebugMode` with it |
+| 5b Presets | low | 1c, 1d, 2, 3, 4 (final cvar set) | |
 | 7 Comments | none | all of the above | Last by design; `git diff -w` must show no code change |
 
-Interleaving with other arcs is ROADMAP's job, not this table's. The two external gates are
-optimization Stage S (for 1b) and the reflection arc (for 1c and 2).
+Interleaving with other arcs is ROADMAP's job, not this table's. The one remaining external
+gate is 8g Stage 5 (for Phase 2 and for the presets' reflection rows).
 
-Exit: cvar count down ≥ 40%, `vk_gi.cpp` + `vk_vol.cpp` combined line count down ≥ 40%,
-GPU p50 **no worse** than the baseline on all three scenarios (this arc targets no gain),
-all baseline screenshots unchanged.
+Exit: cvar count down ≥ 40% (255 → ~150), debug modes 44 → 18, menu widgets 116 → ~30,
+`vk_gi.cpp` + `vk_vol.cpp` combined line count down ≥ 40%, GPU p50 **no worse** than the
+baseline on all three scenarios (this arc targets no gain), all baseline screenshots
+unchanged.

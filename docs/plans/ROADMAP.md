@@ -1,6 +1,6 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-10-17 · **Next action: 8g Stage 0 baseline (step 7b), or cleanup 1a + 5a (step 4).**
+**Status reviewed:** 2026-10-18 · **Next action: 8g Stage 5 knob consolidation (step 7b), or cleanup 1a + 5a (step 4).**
 Optimization Stage L (interaction overdraw) was characterized and **parked** — four candidate
 causes all measured negative, and the remaining one is blocked on light falloff being a
 texture. Details and dead ends: `20261010_vk_core_audit.md` → "Stage L — parked".
@@ -22,7 +22,7 @@ they are things to check code against, not things to schedule.
 | 8d | **Surface roughness in reflections** — extend past glass to opaque surfaces with a GGX lobe. Stages 1-4 | `completed/20261013_reflection_roughness.md` | **Done 2026-10-16.** Closed on live visual confirmation (sheen on floors, clear screen/emitter reflections, no fireflies or blinding pixels), not the formal numeric Stage Checks — none of those were run end to end. Three same-day addenda beyond the original plan: roughness-gated à-trous spatial filter (`r_rtReflDenoise 2`) with a tunable wash gain, a local firefly clamp (`r_rtReflAtrousFireflyClamp`), and a flat brightness ceiling (`r_rtReflMaxLuminance`). Stage 5's menu/preset/doc polish not done — see that doc's "What's left" |
 | 8g | **Reflection pipeline refactor** — stochastic lights at hits, demodulation, linear-depth + normal edge stops, half-res opaque trace, knob consolidation | `20261017_reflection_pipeline_refactor.md` | **Stages 1-4 done, verified 2026-10-18.** `gpu.Refl` 3.81 → 1.45 ms p50 and `gpu.total` 7.89 → 5.52 (−30%) at Mars City HQ, no visible quality loss. The reflection stack went from 55% of RT time to 36%. Only Stage 5 (knob consolidation) is left, and it is cleanup — no image change intended |
 | 8f | **Live GUI screens in reflections** — render GUIs to slot textures, admit GUI surfaces to the TLAS. Stages 0-3 | `completed/20261015_gui_reflections.md` | **Done 2026-10-16.** Bioscan screens live in the glass; gain 0.3, refresh every 2nd frame. Unchecked: pool size in the admin offices |
-| 8e | **Cleanup + polish** — debug/cvar trim (1a/1b/1c), dead-path deletion, resets, presets, comment sweep | `20261010_cleanup_polish.md` | Reordered 2026-10-13: deletion runs *after* the gaining work, since the dead GI/vol paths measure 0.001 ms. 1a and 5a are unblocked and can land any time |
+| 8e | **Cleanup + polish** — cvar trim (1a/1b/1c), debug mode trim (1d), dead-path deletion, resets, presets, comment sweep | `20261010_cleanup_polish.md` | Re-scoped 2026-10-18 after the reflection arcs closed. Measured scale: **255 cvars, 116 menu widgets, 44 debug modes**; Phase 1 now assigns every cvar M (menu) / C (console) / X (delete). New Phase 1d trims debug modes 44 → 18. 1a, 1b, 1c and 5a are all unblocked; only Phase 2 and the presets still wait on 8g Stage 5 |
 
 ### Execution order
 
@@ -40,8 +40,9 @@ this says *when*.
 | 6 | ~~Optimization Stage L~~ — **parked 2026-10-14.** L1 landed (per-light labels); L2 blocked, L3 dropped | 8 | Four candidate causes measured negative. If optimization resumes, start with the AO ray budget. |
 | 7 | ~~8d roughness Stages 1-4~~ — **done 2026-10-16** | 8d | Closed on live testing, not the formal numeric Stage Checks (never run end to end). Doc in `completed/`. Stage 5 (menu/presets/docs) not done — not blocking |
 | 7b | 8g reflection refactor Stage 5 (6 optional) | 8g | Stages 1-4 landed and verified. Stage 5 is knob consolidation only — cleanup, no image change |
-| 8 | Cleanup 1c + Phase 2 | 8e | 1c unblocked. Phase 2 rewritten 2026-10-17 (F0 stays; only legacy mode 2 goes) — after 8g Stage 5 |
-| 9 | Cleanup 3, 4 | 8e | Biggest surgery, 0.001 ms gain. Last of the code changes |
+| 8 | Cleanup 1c, then 1d | 8e | 1c unblocked 2026-10-18 — reflection cvars have M/C/X verdicts in the Settings doc. 1d (debug modes 44 → 18) wants 1a/1b/1c settled first since it edits shader branches |
+| 8b | Cleanup Phase 2 (legacy reflection mode 2) | 8e | Rewritten 2026-10-17: F0 stays and becomes a menu knob; only mode 2 goes. Needs 8g Stage 5's knob fold first |
+| 9 | Cleanup 3, 4 | 8e | Biggest surgery, 0.001 ms gain. Last of the code changes. Phase 4 takes `r_rtVolDebugMode` with it |
 | 10 | Cleanup 5b presets, then Phase 7 comments | 8e | Needs the final cvar set |
 
 

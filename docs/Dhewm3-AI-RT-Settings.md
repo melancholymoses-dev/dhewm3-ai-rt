@@ -1,35 +1,50 @@
 # Dhewm3-AI-RT Settings Inventory
 
-Cvars added for the Vulkan / ray-tracing renderer and the first-/third-person player model, with a proposed trim of the settings menu (`neo/framework/Dhewm3SettingsMenu.cpp`).
-Defaults are read from source as of branch `fix/tlas-vol-refl`. "Rec." is a proposal; none of the recommended changes have been profiled.
+Cvars added for the Vulkan / ray-tracing renderer and the first-/third-person player model, with the trim target for the settings menu (`neo/framework/Dhewm3SettingsMenu.cpp`).
 
-**Tier key**
+**Re-audited 2026-10-18** against `main` after the reflection arcs (8d roughness, 8f GUI
+reflections, 8g pipeline refactor Stages 1-4). Measured counts: **255 `r_rt*`/`r_vk*`/`r_fsr*`
+cvars, 116 menu widgets, 44 debug modes.** Execution plan: `plans/20261010_cleanup_polish.md`
+Phase 1.
 
-| Tier | Meaning | Menu |
+**Verdict key** (replaces the old P/A/D tiers — the old letters map M/C/C-or-X)
+
+| Verdict | Meaning | Where it lives |
 |---|---|---|
-| **P** | Player-facing. Players understand it and it changes the look or cost visibly. | Main RT menu |
-| **A** | Advanced tuning. Safe to change, rarely needed. | Collapsed "Advanced" node, or console only |
-| **D** | Debug / logging / diagnostic / A-B switch. | Console only; remove from menu |
+| **M** | Menu. Player understands it and it changes the look or cost visibly | Main RT page or the preset |
+| **C** | Console only, kept and documented. Real knob, rarely touched | this doc §2 |
+| **X** | Delete — with its UBO field, shader branch, menu widget and CMake entry | nowhere |
 
-Totals: ~25 **P**, ~65 **A**, ~120 **D** (about 210 cvars).
-The menu currently binds ~110 of them (`rtCVars.*`), so the cut is roughly 85 widgets.
+Target: **~30 M**, **~120 C**, **~105 X**. That is 116 menu widgets down to ~30.
 
-## 1. Proposed player menu (the ~25 **P** cvars)
+## 1. Player menu (the ~30 **M** cvars)
 
 | Menu section | Widget | Cvar |
 |---|---|---|
 | Ray Tracing | Enable RT | `r_useRayTracing` |
 | Features | Shadows / AO / Reflections / GI / Volumetric light | `r_rtShadows`, `r_rtAO`, `r_rtReflections`, `r_rtGI`, `r_rtVol` |
 | Features | Player shadow + reflection | `g_showPlayerShadow` |
-| Quality | **New** preset Low / Medium / High / Ultra (see §3) | writes the **A** sample/res cvars |
+| Quality | **New** preset Low / Medium / High / Ultra (see §3) | writes the **C** sample/res cvars |
 | Look | GI strength, Fog density | `r_rtGIStrength`, `r_rtVolExtinction` |
 | Look | Tonemap on, Exposure | `r_rtTonemap`, `r_rtTonemapExposure` |
 | Look | Bloom on, Bloom strength | `r_rtBloom`, `r_rtBloomStrength` |
+| **Reflections** | Reflection strength, Highlight ceiling | `r_rtReflectionBlend`, `r_rtReflMaxLuminance` |
+| **Reflections** | Reflectivity scale, Reflectivity contrast | `r_rtSpecF0Scale`, `r_rtSpecF0Gamma` |
+| **Reflections** | Half-res opaque trace, Live GUI screens | `r_rtReflOpaqueHalfRes`, `r_rtGuiReflections` |
 | Upscaling | FSR mode, Quality, Sharpness | `r_fsr`, `r_fsrQuality`, `r_fsrSharpness` |
 | Player model | Show own body, Third person, Third-person distance | `pm_showFirstPersonBody`, `pm_thirdPerson`, `pm_thirdPersonRange` |
 | Experimental | Auto-relight | `r_rtAutoRelight` |
 
-Needs fixing if they stay in the menu: `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIRadius`, `r_rtGISamples`, `r_rtAORadius`, `r_rtVolMaxDist` and `r_rtAOTemporalAlpha` have no `CVAR_ARCHIVE`, so a changed value is lost on restart (unless the menu saves them separately, which I did not check). `r_rtDenoise` is bound in the menu (`rtCVars.rtDenoise`, "Temporal Denoising") but I found no cvar with that name in the renderer, so the checkbox is probably dead.
+The Reflections group is new in this revision. F0 is the 8d/8g win — `r_rtSpecF0Scale/Gamma`
+are the two knobs that set how reflective the world reads, and both are already tuned
+(0.35 / 2.5, up from the audit's 0.2 / 3). `r_rtReflOpaqueHalfRes` is in the menu because it
+is worth 30% of GPU frame time at no visible cost, so it is a real perf choice, not a debug
+A/B.
+
+`CVAR_ARCHIVE` still missing on `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIRadius`,
+`r_rtGISamples`, `r_rtAORadius`, `r_rtVolMaxDist`, `r_rtAOTemporalAlpha` — Phase 5a fixes
+this. `r_rtDenoise` (the dead "Temporal Denoising" checkbox) is **resolved**: the menu now
+binds `r_rtReflDenoise`, and no `r_rtDenoise` exists in the renderer. §4's row is closed.
 
 ## 2. Full table
 
@@ -68,9 +83,8 @@ Needs fixing if they stay in the menu: `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIR
 | `r_rtShadowSoftRadiusMin` | Shadows | Min soft-shadow source radius | 0.0 | D | = |
 | `r_rtShadowSoftRadiusMax` | Shadows | Max soft-shadow source radius | 6.0 | D | = |
 | `r_rtShadowMinSamples` | Shadows | Floor on shadow rays/pixel | 1 | D | = |
-| `r_rtShadowVolumeCull` | Shadows | Skip shadow rays outside the light volume (debug mode 11 shows the cull) | 1 | D | = |
-| `r_rtShadowBackfaceCull` | Shadows | Skip shadow rays on surfaces facing away from the light (debug mode 12 shows the skip) | 1 | D | = |
-| `r_rtShadowTemporalJitter` | Shadows | Vary sample pattern per frame | 1 | D | = |
+| `r_rtShadowVolumeCull` | Shadows | Skip shadow rays outside the light volume (debug mode 11 shows the cull). Cleanup 1b deletes it — default is the shipped behaviour | 1 | **X** |
+| `r_rtShadowTemporalJitter` | Shadows | Vary sample pattern per frame | 1 | **X** |
 | `r_rtShadowTemporalJitterMinSamples` | Shadows | Min samples before temporal jitter applies | 4 | D | = |
 | `r_rtShadowStablePattern` | Shadows | Stable per-light jitter seed | 0 | D | = |
 | `r_rtShadowMaskProjected` | Shadows | Apply RT shadow mask to projected lights | 1 | D | = |
@@ -95,31 +109,54 @@ Needs fixing if they stay in the menu: `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIR
 
 ### Reflections and specular
 
-| Name | Group | Purpose | Default | Tier | Rec. |
-|---|---|---|---|---|---|
-| `r_rtReflectionMode` | Reflections | Reflection algorithm | 1 | D | = |
-| `r_rtReflectionDistance` | Reflections | Max reflection ray distance | 2500 | A | = |
-| `r_rtReflectionBlend` | Reflections | Reflection blend factor | 6.0 | A | = |
-| `r_rtReflectionMinWeight` | Reflections | Skip reflection rays below this *coarse* (fixed-mip F0) Fresnel weight — panel-scale, not texel-scale | 0.04 | D | = |
-| `r_rtReflOpaqueHalfRes` | Reflections | Trace opaque reflections at half res (one ray per 2×2 block), reconstructed full res before denoising. The per-pixel Fresnel weight stays full res, so material detail is unaffected. Glass is never half res | 1 | D | = |
-| `r_rtReflectionDebugMode` | Reflections | Reflection debug view | 0 | D | = |
-| `r_rtGlassNormalMode` | Reflections | Glass reflection normal: 0 interpolated, 1 face, 2 crease-aware | 2 | D | = |
-| `r_rtGlassCreaseRatio` | Reflections | Mode 2 threshold: min/max vertex-normal tilt below which a glass triangle is flattened | 0.25 | D | = |
-| `r_rtReflAmbientScale` | Reflections | Fraction of a shadowed light still added in reflections (nonzero leaks through walls) | 0 | D | = |
-| `r_rtReflGlow` | Reflections | Emissive glow in reflections | 1 | A | = |
-| `r_rtReflGlowGain` | Reflections | Glow gain | 1.0 | A | = |
-| `r_rtReflGlowScale` | Reflections | Glow scale | 1.0 | D | = |
-| `r_rtReflGlowDist` | Reflections | Glow reach | 1024 | D | = |
-| `r_rtReflGlowSmoke` | Reflections | Glow through smoke | 1 | A | = |
-| `r_rtReflGlowSmokeMinLum` | Reflections | Min luminance for smoke glow | 0.3 | D | = |
-| `r_rtReflGlowSmokeCell` | Reflections | Smoke glow grid cell size | 32 | D | = |
-| `r_rtSpecF0Scale` | Reflections | Fresnel F0 scale | 0.2 | A | = |
-| `r_rtSpecF0Gamma` | Reflections | Fresnel F0 gamma | 3 | A | = |
+Rewritten 2026-10-18. The 8d roughness, 8f GUI and 8g refactor arcs added 24 cvars this
+table had never listed, and moved six defaults. Defaults below are read from source.
+
+| Name | Group | Purpose | Default | Verdict |
+|---|---|---|---|---|
+| `r_rtReflectionMode` | Reflections | 1 = glass only, 3 = opaque + glass (default). Mode 2 is legacy, deleted in cleanup Phase 2 | **3** | C |
+| `r_rtReflectionDistance` | Reflections | Max reflection ray distance | **1000** | C |
+| `r_rtReflectionBlend` | Reflections | Reflection strength. The one brightness knob | 6.0 | **M** |
+| `r_rtReflMaxLuminance` | Reflections | Flat ceiling on incident reflected light — the single-sample GGX lobe's outlier guard. Rescaled in 8g 2b when the ceiling moved past the Fresnel multiply | **6.0** | **M** |
+| `r_rtSpecF0Scale` | Reflections | F0 remap scale: how reflective the world reads | **0.35** | **M** |
+| `r_rtSpecF0Gamma` | Reflections | F0 remap gamma: reflectivity contrast | **2.5** | **M** |
+| `r_rtReflOpaqueHalfRes` | Reflections | Trace opaque reflections at half res, upsampled before the denoisers. **Worth −30% `gpu.total`** at no visible cost, so it is a perf setting, not an A/B | 1 | **M** |
+| `r_rtGuiReflections` | Reflections | Live GUI screens (bioscan panels, monitors) in reflections | 1 | **M** |
+| `r_rtReflShadowPicks` | Reflections | Shadow rays per reflection hit: 0 = deterministic ≤8, 1-2 = stochastic. 1 is `gpu.Refl` −26% | 1 | C |
+| `r_rtReflRoughnessScale` | Reflections | GGX lobe width multiplier on the packed Toksvig roughness | **0.6** | C |
+| `r_rtReflRoughnessFloor` | Reflections | Minimum roughness — stops perfectly-smooth mirror behaviour on nominally flat panels | 0.25 | C |
+| `r_rtReflRoughnessMax` | Reflections | Above this roughness an opaque pixel hands off to GI instead of tracing (debug mode 13 shows the boundary) | 0.5 | C |
+| `r_rtReflRoughLumExp` | Reflections | Exponent tightening the luminance ceiling as roughness rises | — | C |
+| `r_rtReflDenoise` | Reflections | 0 off, 1 temporal only, 2 temporal + roughness-gated à-trous | 2 | C |
+| `r_rtReflDenoiseAlpha` | Reflections | Opaque temporal EMA alpha | 0.2 | C |
+| `r_rtReflDenoiseAlphaGlass` | Reflections | Glass temporal EMA alpha (glass skips the à-trous entirely) | 0.35 | C |
+| `r_rtReflAtrousIterations` | Reflections | À-trous passes | 3 | C → folded by 8g Stage 5 |
+| `r_rtReflAtrousRoughnessGain` | Reflections | How much roughness widens the blur ("wash" gain) | 3.0 | C → folded by 8g Stage 5 |
+| `r_rtReflAtrousFireflyClamp` | Reflections | Local firefly clamp before temporal and each à-trous pass | 2.5 | C |
+| `r_rtReflAtrousSigmaPlane` | Reflections | Plane-distance edge stop (8g Stage 3; replaced `…SigmaZ`) | 0.02 | **X** |
+| `r_rtReflAtrousNormalPower` | Reflections | Normal edge-stop exponent. Low (4) because bumps vary the shading normal | 4 | **X** |
+| `r_rtReflectionMinWeight` | Reflections | Skip rays below this **coarse** (mip-4 F0) Fresnel weight — panel-scale, not texel-scale. A value tuned against per-pixel F0 reads far stricter here (8g 2b) | 0.04 | C |
+| `r_rtReflVol` | Reflections | March the reflected segment through `froxelScatter` (arc 8c) | 1 | C |
+| `r_rtReflVolGain` / `r_rtReflVolSteps` | Reflections | Reflected-beam gain and march steps | 1.0 / 6 | C |
+| `r_rtReflGlow` / `…Gain` | Reflections | Emissive glow in reflections, and its gain | 1 / 1.0 | C |
+| `r_rtReflGlowDist` | Reflections | Glow reach | 1024 | C |
+| `r_rtReflGlowSmoke` / `…SmokeMinLum` | Reflections | Glow through smoke, min luminance | 1 / 0.3 | C |
+| `r_rtReflGlowScale`, `r_rtReflGlowSmokeCell` | Reflections | Redundant with Gain / an internal grid size | 1.0 / 32 | **X** |
+| `r_rtReflFlashGlow` / `…Gain` / `…Radius` / `…Offset` | Reflections | Flashlight lamp glow in reflections — the viewmodel can never reach a reflection ray, so the lamp is drawn analytically | 1 / 1.5 / 1.5 / 0.0 | C |
+| `r_rtGlassNormalMode` | Reflections | Glass normal: 0 interpolated, 1 face, 2 crease-aware (arc 8b) | 2 | C |
+| `r_rtGlassCreaseRatio` | Reflections | Mode 2 threshold. Tuned once and settled | 0.25 | **X** |
+| `r_rtReflAmbientScale` | Reflections | Fraction of a shadowed light still added in reflections. Nonzero leaks through walls — a wrong-by-design knob | 0 | **X** |
+| `r_rtGuiReflGain` | Reflections | GUI screen brightness in reflections | 0.3 | C |
+| `r_rtGuiTexInterval` / `r_rtGuiTexRadius` | Reflections | GUI slot-texture refresh period (frames) and admission radius | 2 / 256 | C |
+| `r_rtReflectionDebugMode` | Reflections | Reflection debug view — the one reflection overlay. 9 live modes, trimmed to 6 in cleanup Phase 1d | 0 | C |
 <!-- r_rtSpecGrazingMax/Gain retired, roughness plan Stage 3 (2026-10-16): real Schlick-GGX
-     replaced the grazing-angle hack they tuned. This inventory predates Stages 1-3 of
-     20261013_reflection_roughness.md (r_rtReflDenoise*, r_rtReflRoughness*) — it's a
-     point-in-time audit, not kept in lockstep with every cvar change. -->
-| `r_rtReflRoughnessScale` | Reflections | GGX lobe width multiplier on Stage 2's packed roughness | 1.0 | A | = |
+     replaced the grazing-angle hack they tuned. -->
+
+`r_rtReflMaxLuminance` reads **6.0** in source, not the 8.0 that `20261017_reflection_pipeline_refactor.md`
+Stage 2b says it left as the default — the eye-tuned Slow-machine value was committed. The
+other three knobs from that tuning session (`r_rtSpecF0Scale 0.332`, `Gamma 2.46`,
+`r_rtReflRoughLumExp 2.5`) were **not**, so a user `.cfg` carrying them will override the
+menu (see the read-user-cfg rule). Reconcile the four before writing the presets.
 
 ### Global illumination (screen-space bounce)
 
@@ -318,6 +355,25 @@ Needs fixing if they stay in the menu: `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIR
 | `pm_modelView` | FP/TP model | Camera from the player model's POV | 0 | D | = |
 | `g_showPlayerShadow` | FP/TP model | Player model casts shadow / appears in reflections | 1 | P | = |
 
+### Debug mode census (2026-10-18)
+
+44 live modes across 8 cvars, measured by grepping the shader `debugMode ==` branches rather
+than the help strings — the two had drifted (the shadow help documents no mode 12, and
+`r_rtShadowBackfaceCull`, which that mode visualized, no longer exists). Cleanup Phase 1d
+trims to 18. Retired numbers become documented no-ops so doc and memory references keep
+resolving.
+
+| Cvar | Live modes | Count | Keep after 1d |
+|---|---|---|---|
+| `r_rtReflectionDebugMode` | 2,3,4,6,11,12,13,14,15 (1,5,7,8,9,10 already no-ops) | 9 | 2,3,11,12,13,15 |
+| `r_rtShadowDebugMode` | 1,2,3,5,7,8,9,10,11 | 9 | 9, 10 |
+| `r_rtGIProbeDebug` | 1-8 | 8 | 1, 3, 4 |
+| `r_fsrDebug` | 1 FSR1-ran border, 2 view logging, 3 mask overlay, 4 point-magnify A/B, 5 FSR2 bleed, 6 EASU-only, 7 motion vectors | 7 | 3, 7 |
+| `r_rtVolFroxelDebug` | 1 slice, 2 light-count heatmap, 3 grid-mapping error, 4 blocked cone hits | 4 | 1, 2, 3 |
+| `r_rtAODebug` | 1 raw mask, 2 GI×AO, 3 GI without AO | 3 | 1, 2, 3 |
+| `r_rtVolDebugMode` | 1 transmittance, 2 raw scatter | 2 | none (goes with the march path, Phase 4) |
+| `r_rtBloomDebug` | 1 HDR range bands, 2 raw extract | 2 | 1 |
+
 ## 3. Recommended quality preset
 
 One new `r_rtQuality` cvar (menu combo) writes these; the individual cvars stay available in the console and Advanced node.
@@ -340,9 +396,10 @@ The numbers below are starting points, not measured.
 
 | Change | File | Check |
 |---|---|---|
-| Move **A** widgets under one `TreeNode("Advanced")`, collapsed by default | `Dhewm3SettingsMenu.cpp` ~2749-3060 | Main RT page shows ≤ 25 widgets |
-| Drop **D** widgets (Bloom debug, Lit-surface term, A-trous sigmas, probe bias, etc.) | same | `rtCVars.*` bindings reduced to the **P**/**A** rows |
+| Drop every **C** and **X** widget from the menu | `Dhewm3SettingsMenu.cpp` ~2749-3060 | `rtCVars.*` bindings 116 → ~30, all **M** rows from §1 |
+| Add the new Reflections group (6 widgets, §1) | same | Sliders move the image live; F0 scale/gamma visibly change how reflective the world reads |
 | Add `r_rtQuality` combo + apply function | menu + `RenderSystem_init.cpp` | Selecting a preset changes the §3 cvars in `cvarlist` |
-| Add `CVAR_ARCHIVE` to the **P**/**A** cvars that lack it (see §1) | Vulkan `.cpp` files | Value survives a restart |
-| Remove or define `r_rtDenoise` | menu / renderer | Checkbox either works or is gone |
+| Add `CVAR_ARCHIVE` to the **M** cvars that lack it (see §1) | Vulkan `.cpp` files | Value survives a restart |
+| Reconcile the four eye-tuned reflection defaults | `vk_reflections.cpp` | A fresh config and a tuned `.cfg` produce the same image |
+| ~~Remove or define `r_rtDenoise`~~ | — | **Done.** Menu binds `r_rtReflDenoise`; no `r_rtDenoise` exists |
 | Add `pm_showFirstPersonBody`, `pm_thirdPerson`, `pm_thirdPersonRange` | menu "Player model" group | Toggling in menu changes the in-game camera/body |
