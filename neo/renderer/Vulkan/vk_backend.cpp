@@ -1621,11 +1621,11 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     // Binding 9: reflection map (or 1x1 black fallback when off)
     VkDescriptorImageInfo reflMapInfo = {};
     if (r_useRayTracing.GetBool() && vk.rayTracingSupported && vkRT.isInitialized && r_rtReflections.GetBool() &&
-        vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE)
+        VK_RT_ReflReadReady(vk.currentFrame) && vkRT.reflSampler != VK_NULL_HANDLE)
     {
         reflMapInfo.sampler = vkRT.reflSampler;
-        // VK_RT_GetReflReadView: reflHistory when the Stage-1 temporal denoiser
-        // (r_rtReflDenoise) is on and has valid data, else reflBuffer unfiltered.
+        // VK_RT_GetReflReadView: the temporal history when the Stage-1 denoiser
+        // (r_rtReflDenoise) is on and has valid data, else the traced image unfiltered.
         reflMapInfo.imageView = VK_RT_GetReflReadView(vk.currentFrame);
         reflMapInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
@@ -2611,7 +2611,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         if (mat->GetSurfaceType() == SURFTYPE_GLASS && !reflDebugActive && r_useRayTracing.GetBool() &&
             r_rtReflections.GetBool() && vk.rayTracingSupported && vkRT.isInitialized &&
             vkPipes.glassReflPipeline != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE &&
-            vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE)
+            VK_RT_ReflReadReady(vk.currentFrame))
         {
             if (numPendingGlass < 256)
             {
@@ -2677,8 +2677,8 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
         VkDescriptorImageInfo ovReflInfo = {};
         ovReflInfo.sampler = vkRT.reflSampler;
-        // VK_RT_GetReflReadView: reflHistory when the Stage-1 temporal denoiser
-        // (r_rtReflDenoise) is on and has valid data, else reflBuffer unfiltered.
+        // VK_RT_GetReflReadView: the temporal history when the Stage-1 denoiser
+        // (r_rtReflDenoise) is on and has valid data, else the traced image unfiltered.
         ovReflInfo.imageView = VK_RT_GetReflReadView(vk.currentFrame);
         ovReflInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 

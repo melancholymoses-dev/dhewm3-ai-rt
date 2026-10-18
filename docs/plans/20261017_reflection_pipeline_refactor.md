@@ -205,19 +205,25 @@ sharp, the two populations are told apart solely by alpha sign in that buffer, a
 opaque pass would need a per-pixel glass probe to know where not to write, which spends
 the rays it just saved.
 
-### 4a — One chain struct, one instance (no image change)
+### 4a — One chain struct, one instance (no image change) — code written 2026-10-18, unvalidated
 
-All reflection denoiser state is local to `vk_reflections.cpp` (only two `reflBuffer`
-null-checks leak, both in `vk_backend.cpp` beside a `VK_RT_GetReflReadView` call), so the
-refactor is contained.
+All reflection denoiser state was local to `vk_reflections.cpp` (only two `reflBuffer`
+null-checks leaked, both in `vk_backend.cpp` beside a `VK_RT_GetReflReadView` call), so the
+refactor stayed contained.
 
 | File | Change |
 |---|---|
-| `vk_raytracing.h` | `vkReflChain_t`: trace image, `history[2]`, `moments[2]`, `atrousA/B`, `atrousReadView`, `pingPong`, `historyValid`, `prevCamPos/Fwd`, temporal + à-trous desc sets and their `lastUpdated` counters, `dispatchRect`/`Frame`, the three per-slot duplicate-dispatch guards |
-| `vk_reflections.cpp` | The three dispatch bodies and `VK_RT_GetReflReadView` take a `vkReflChain_t *`. Image create/destroy/resize parameterised. One instance, wired exactly as today |
+| `vk_raytracing.h` | `vkReflChain_t`: `trace[]`, `history[2]`, `moments[2]`, `atrousA/B`, `atrousReadView`, `pingPong`, `historyValid`, `prevCamPos/Fwd`, trace + temporal + à-trous desc sets and their `lastUpdated` counters, `dispatchRect`/`Frame`, the three duplicate-dispatch guards, the 8 cached bound views. `VK_REFL_CHAIN_COUNT` sizes the pools. New `VK_RT_ReflReadReady()` |
+| `vk_reflections.cpp` | `VK_RT_Dispatch{Refl,ReflTemporal,ReflAtrous}Chain` + `VK_RT_ReflChainReadView` take a `vkReflChain_t *`; the public entry points are one-line wrappers over `VK_RT_ReflChain()`. Image create/destroy/resize and all three desc-set allocations loop over chains. `VK_RT_InitReflChainState` seeds the guards to -1 (vkRT is zero-init and frame 0 is real) |
+| `vk_backend.cpp`, `vk_accelstruct.cpp` | Two `reflBuffer` null-checks → `VK_RT_ReflReadReady`; the level-load desc-counter reset loops over chains |
+
+Two deviations from the sketch above, both deliberate: the **trace** desc sets moved into
+the chain as well (4b's chains bind different storage images, so splitting them later
+would be a second pass over the same code), and `VK_RT_ResizeReflections` now clears
+`dispatchRectFrame` — a rect recorded against images it just freed is never valid.
 
 **Check:** screenshot parity — the image must not change at all. Glass mirrors, debug 11,
-14, 15 all as before.
+14, 15 all as before. Log lines now carry a `[opaque]` chain tag.
 
 ### 4b — Split the populations
 
