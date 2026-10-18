@@ -205,7 +205,7 @@ sharp, the two populations are told apart solely by alpha sign in that buffer, a
 opaque pass would need a per-pixel glass probe to know where not to write, which spends
 the rays it just saved.
 
-### 4a — One chain struct, one instance (no image change) — code written 2026-10-18, unvalidated
+### 4a — One chain struct, one instance (no image change) — verified in-game 2026-10-18
 
 All reflection denoiser state was local to `vk_reflections.cpp` (only two `reflBuffer`
 null-checks leaked, both in `vk_backend.cpp` beside a `VK_RT_GetReflReadView` call), so the
@@ -225,24 +225,32 @@ would be a second pass over the same code), and `VK_RT_ResizeReflections` now cl
 **Check:** screenshot parity — the image must not change at all. Glass mirrors, debug 11,
 14, 15 all as before. Log lines now carry a `[opaque]` chain tag.
 
-### 4b — Split the populations
+### 4b — Split the populations — code written 2026-10-18, unvalidated
 
 | File | Change |
 |---|---|
-| `vk_reflections.cpp` | Second chain instance. Two rgen dispatches: glass over `VK_RT_GlassScreenRect`, opaque full-screen. Temporal + à-trous run per chain |
-| `reflect_ray.rgen` | `params.population`: glass pass writes only glass pixels, opaque pass only opaque. Removes the shared-buffer alpha-sign negotiation |
-| `refl_composite.frag`, `glass_refl_overlay.frag` | Composite reads the opaque chain (no glass sentinel test left), overlay reads the glass chain. Both get simpler |
+| `vk_raytracing.h` | `VK_REFL_CHAIN_COUNT` 2. `vkReflChain_t::spatialFilter` (false for glass). New `VK_RT_GetReflGlassReadView` |
+| `vk_reflections.cpp` | `REFL_POP_*`. `VK_RT_DispatchReflections` resolves the glass rect once, then routes: mode 1 → glass only, mode 2 and every debug mode → one `BOTH` dispatch into the opaque chain, mode 3 → glass over the rect + opaque full-screen. Temporal runs per chain; à-trous skips glass. `ReflParamsUBO` 288 → 304 |
+| `reflect_ray.rgen` | `params.population` + `params.glassRect*`. `GLASS` keeps only glass pixels, `OPAQUE` zeroes them, `BOTH` is unchanged |
+| `vk_backend.cpp` | Glass overlay binds `VK_RT_GetReflGlassReadView` |
 
-Free ray saving: `VK_RT_GlassScreenRect` exists but only gates mode 1 today, so **mode 3
-fires a full-res glass probe ray at every pixel on screen**, including in rooms with no
-glass. Restricting the glass dispatch to its rect is only valid once the populations split.
+Three findings that shaped it:
 
-Debug modes: full-screen visualizations (2, 3, 4, 6, 12, 13) ride the **opaque** chain and
-force that dispatch full-screen, as they force mode 2/3 today. 11, 14 and 15 are per-chain
-state and show the opaque chain's; glass versions are not worth a cvar.
+- **The probe, not the rect, was the cost.** Mode 3 fired a glass probe at every screen
+  pixel. The opaque pass still needs one to know where glass owns the pixel, but only
+  *inside* the glass rect — outside, a probe can only miss. A glass-free view now spends
+  none. This keeps parity, where simply dropping the probe would have composited the
+  behind-glass surface's reflection under the pane's.
+- **`refl_atrous.comp` already excluded glass** from both the centre test and the 3×3 taps,
+  so a glass à-trous pass is a copy. Skipped, and its scratch images left unallocated.
+  The temporal EMA does run on glass — that is what `r_rtReflDenoiseAlphaGlass` feeds.
+- **`REFL_POP_BOTH` had to stay.** Mode 2 means "one pass, glass by alpha sign", and every
+  debug mode needs one image to land in. Keeping the old path for both left
+  `refl_composite.frag`'s glass test in place — the plan expected to delete it.
 
-**Check:** parity again — splitting where a pixel's radiance is stored must not change it.
-Then `ring.draws`-matched captures: glass-free rooms lose the glass probe entirely.
+**Check:** parity on glass mirrors (Mars City windows) and on a metal floor; debug 11/14/15
+unchanged. Then `r_vkLogRT 1` in a glass-free room: one `[opaque] pop=2` line, no `[glass]`
+line at all. Trace ms should drop most in rooms with no glass.
 
 ### 4c — Half res
 

@@ -262,7 +262,12 @@ idCVar r_rtReflectionDebugMode(
 //                                               took the last pad float; block still ends at
 //                                               272, already a multiple of 16, no new padding)
 //   int    shadowPicks    offset 272 size  4  (r_rtReflShadowPicks, refl-refactor Stage 1)
-//   total: 288 bytes — std140 rounds the block up to a multiple of
+//   int    population     offset 276 size  4  (Stage 4b — spent the old _pad0[3] plus 8 more)
+//   int    glassRectX     offset 280 size  4
+//   int    glassRectY     offset 284 size  4
+//   int    glassRectW     offset 288 size  4
+//   int    glassRectH     offset 292 size  4
+//   total: 304 bytes — std140 rounds the block up to a multiple of
 //   16, and uboInfo.range is sizeof(ReflParamsUBO), which must not be smaller.
 // ---------------------------------------------------------------------------
 
@@ -308,9 +313,29 @@ struct ReflParamsUBO
     float maxLuminance;      // r_rtReflMaxLuminance (2026-10-16 addendum) — took the last pad
                              // float; block still lands on exactly 272, no new padding needed
     int32_t shadowPicks;     // r_rtReflShadowPicks — 0 deterministic, 1-2 stochastic (opaque only)
-    int32_t _pad0[3];        // std140 block size rounds to 16
+
+    // Stage 4b: which population this dispatch owns. See REFL_POP_* below.
+    int32_t population;
+    // Union of the SURFTYPE_GLASS scissors, in the same pixels as the launch grid.
+    // REFL_POP_OPAQUE fires its glass-suppression probe only inside this rect —
+    // outside it no glass can exist, so the probe can only miss. Extent 0 = no glass.
+    int32_t glassRectX;
+    int32_t glassRectY;
+    int32_t glassRectW;
+    int32_t glassRectH;
+    int32_t _pad0[2]; // std140 block size rounds to 16
 };
-static_assert(sizeof(ReflParamsUBO) == 288, "ReflParamsUBO size mismatch");
+
+// Which surfaces a reflect_ray.rgen dispatch is responsible for (ubo.population).
+// BOTH is the pre-Stage-4b single-dispatch path: still used by r_rtReflectionMode 2
+// and by every debug mode, so those keep one code path and one image.
+#define REFL_POP_BOTH 0
+#define REFL_POP_GLASS 1
+#define REFL_POP_OPAQUE 2
+static_assert(sizeof(ReflParamsUBO) == 304, "ReflParamsUBO size mismatch");
+// This UBO comes from the shared per-frame ring, whose stride is INTERACTION_UBO_SIZE
+// (384, vk_backend.cpp). Outgrowing a slot would silently scribble over the next one.
+static_assert(sizeof(ReflParamsUBO) <= 384, "ReflParamsUBO exceeds the UBO ring stride");
 
 // ---------------------------------------------------------------------------
 // UBO layout matching refl_temporal_resolve.comp's ReflTemporalParams block.
@@ -567,10 +592,22 @@ static void VK_RT_DestroyNullGbufNormal(void)
 // beside it and routes each dispatch to the chain for its population; until then
 // there is exactly one, wired as before the refactor.
 // ---------------------------------------------------------------------------
+// Chain 0 owns opaque surfaces and is what every full-screen consumer reads
+// (composite, interaction binding 9, all debug modes). Chain 1 owns glass.
 static vkReflChain_t *VK_RT_ReflChain(void)
 {
     return &vkRT.reflChain[0];
 }
+
+static vkReflChain_t *VK_RT_ReflGlassChain(void)
+{
+    return &vkRT.reflChain[VK_REFL_CHAIN_COUNT > 1 ? 1 : 0];
+}
+
+// Set by VK_RT_DispatchReflections: true when glass was traced into its own chain this
+// slot, false when one REFL_POP_BOTH dispatch put both populations in chain 0. The glass
+// overlay has to read whichever image actually holds the pane's radiance.
+static bool s_reflSplitActive[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
 // ---------------------------------------------------------------------------
 // VK_RT_CreateReflImages
@@ -904,6 +941,11 @@ static void VK_RT_DestroyReflDenoiseImages(vkReflChain_t *chain)
 // passes of a single frame's dispatch, unlike history's cross-frame ping-pong.
 static void VK_RT_CreateReflAtrousImages(vkReflChain_t *chain, uint32_t width, uint32_t height)
 {
+    // A chain that never runs the filter has no use for the scratch — two full-screen
+    // RGBA16F images per frame slot is real memory to leave unallocated.
+    if (!chain->spatialFilter)
+        return;
+
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         if (!VK_RT_AllocReflAuxImage(chain->atrousA[i], width, height,
@@ -1614,12 +1656,14 @@ static void VK_RT_InitReflAtrousPipeline(void)
 // a real frame, so -1 is the only safe initial value.
 static void VK_RT_InitReflChainState(void)
 {
-    static const char *chainNames[VK_REFL_CHAIN_COUNT] = {"opaque"};
+    static const char *chainNames[VK_REFL_CHAIN_COUNT] = {"opaque", "glass"};
+    static const bool chainSpatial[VK_REFL_CHAIN_COUNT] = {true, false};
 
     for (int c = 0; c < VK_REFL_CHAIN_COUNT; c++)
     {
         vkReflChain_t *chain = &vkRT.reflChain[c];
         chain->name = chainNames[c];
+        chain->spatialFilter = chainSpatial[c];
         for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         {
             chain->dispatchRectFrame[i] = -1;
@@ -1883,7 +1927,8 @@ static bool VK_RT_GlassScreenRect(const viewDef_t *viewDef, uint32_t bufW, uint3
 // two filters blend exactly the pixels reflect_ray.rgen wrote and nothing stale
 // outside that rect — the rect is debug-mode and glass-rect dependent.
 
-static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDef, vkReflChain_t *chain)
+static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDef, vkReflChain_t *chain, int population,
+                                    const VkRect2D &glassRect)
 {
     if (!vkRT.isInitialized)
         return;
@@ -1925,16 +1970,29 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
     // R6: resolve the launch rect before anything else — a glass-free view must not pay
     // the depth transitions, UBO upload or descriptor churn either. Safe to return here
     // because the depth barrier pair below is symmetric (ATTACHMENT on entry and exit).
+    //
+    // Stage 4b: the glass population launches over the glass rect; opaque and the
+    // legacy BOTH path launch full-screen. The rect itself is resolved once per frame
+    // by the caller so both dispatches agree on it.
     const int reflDebugMode = r_rtReflectionDebugMode.GetInteger();
     const bool reflDebugActive = (reflDebugMode >= 2 && reflDebugMode <= REFL_DEBUG_MAX_MODE);
     const bool glassOnly = (r_rtReflectionMode.GetInteger() == 1) && !reflDebugActive;
+    const bool launchOverGlassRect = (population == REFL_POP_GLASS) || (population == REFL_POP_BOTH && glassOnly);
+
     int32_t rectX = 0, rectY = 0;
     uint32_t rectW = rb.width, rectH = rb.height;
-    if (glassOnly && !VK_RT_GlassScreenRect(viewDef, rb.width, rb.height, &rectX, &rectY, &rectW, &rectH))
+    if (launchOverGlassRect)
     {
-        if (r_vkLogRT.GetInteger() >= 1)
-            common->Printf("VK RT Refl[%s]: no glass in view — dispatch skipped entirely\n", chain->name);
-        return;
+        if (glassRect.extent.width == 0 || glassRect.extent.height == 0)
+        {
+            if (r_vkLogRT.GetInteger() >= 1)
+                common->Printf("VK RT Refl[%s]: no glass in view — dispatch skipped entirely\n", chain->name);
+            return;
+        }
+        rectX = glassRect.offset.x;
+        rectY = glassRect.offset.y;
+        rectW = glassRect.extent.width;
+        rectH = glassRect.extent.height;
     }
 
     // --- Depth barrier: ATTACHMENT → READ_ONLY for rgen depth sampling ---
@@ -1981,6 +2039,13 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
 
     ubo.rectOriginX = rectX;
     ubo.rectOriginY = rectY;
+    ubo.population = population;
+    // Only REFL_POP_OPAQUE reads these, to bound where its glass-suppression probe can
+    // possibly hit. Zero extent means "no glass in view" and skips the probe outright.
+    ubo.glassRectX = glassRect.offset.x;
+    ubo.glassRectY = glassRect.offset.y;
+    ubo.glassRectW = (int32_t)glassRect.extent.width;
+    ubo.glassRectH = (int32_t)glassRect.extent.height;
     // Debug modes other than 13 want the full, uncensored per-pixel data (never gated
     // by mode 1's glass-only rect or mode 3's roughness ceiling) — mode 13 is the one
     // exception, since it exists specifically to visualize that ceiling, so it forces
@@ -2237,10 +2302,10 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
         // glowTris is the separate population: additive translucent surfaces the BLAS drops,
         // which is the only way a beam or sprite reaches a reflection as geometry.  emitters
         // counts discs (projectiles, smoke) and says nothing about those.
-        common->Printf(
-            "VK RT Refl[%s]: dispatch %ux%u at (%d,%d) mode=%d maxDist=%.1f emitters=%d glowTris=%d volSteps=%d\n",
-            chain->name, rectW, rectH, rectX, rectY, ubo.reflMode, ubo.maxDist, ubo.emitterCount, ubo.glowTriCount,
-            ubo.volSteps);
+        common->Printf("VK RT Refl[%s]: dispatch %ux%u at (%d,%d) pop=%d mode=%d maxDist=%.1f emitters=%d glowTris=%d "
+                       "volSteps=%d\n",
+                       chain->name, rectW, rectH, rectX, rectY, population, ubo.reflMode, ubo.maxDist, ubo.emitterCount,
+                       ubo.glowTriCount, ubo.volSteps);
 
     chain->dispatchRect[frameIdx] = VkRect2D{{rectX, rectY}, {rectW, rectH}};
     chain->dispatchRectFrame[frameIdx] = tr.frameCount;
@@ -2281,7 +2346,39 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
 
 void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
-    VK_RT_DispatchReflChain(cmd, viewDef, VK_RT_ReflChain());
+    const int frameIdx = vk.currentFrame;
+    const int debugMode = r_rtReflectionDebugMode.GetInteger();
+    const bool debugActive = (debugMode >= 2 && debugMode <= REFL_DEBUG_MAX_MODE);
+    const int mode = idMath::ClampInt(1, 3, r_rtReflectionMode.GetInteger());
+
+    // Resolve the glass rect once: the glass dispatch launches over it and the opaque
+    // dispatch bounds its suppression probe by it, so they must not disagree.
+    VkRect2D glassRect = {{0, 0}, {0, 0}};
+    {
+        const vkRTImage_t &rb = VK_RT_ReflChain()->trace[frameIdx];
+        int32_t gx = 0, gy = 0;
+        uint32_t gw = 0, gh = 0;
+        if (rb.image != VK_NULL_HANDLE && VK_RT_GlassScreenRect(viewDef, rb.width, rb.height, &gx, &gy, &gw, &gh))
+            glassRect = VkRect2D{{gx, gy}, {gw, gh}};
+    }
+
+    // Every debug mode, and the legacy full-screen mode 2, keep the single REFL_POP_BOTH
+    // dispatch into the opaque chain — one image for the visualization to land in, and
+    // mode 2's semantics ("one pass, glass by alpha sign") preserved exactly.
+    const bool split = (mode != 2) && !debugActive;
+    s_reflSplitActive[frameIdx] = split;
+
+    if (!split)
+    {
+        VK_RT_DispatchReflChain(cmd, viewDef, VK_RT_ReflChain(), REFL_POP_BOTH, glassRect);
+        return;
+    }
+
+    // Glass first so its log line reads before opaque's; the two write disjoint images,
+    // so no barrier is needed between them.
+    VK_RT_DispatchReflChain(cmd, viewDef, VK_RT_ReflGlassChain(), REFL_POP_GLASS, glassRect);
+    if (mode == 3)
+        VK_RT_DispatchReflChain(cmd, viewDef, VK_RT_ReflChain(), REFL_POP_OPAQUE, glassRect);
 }
 
 // ---------------------------------------------------------------------------
@@ -2534,9 +2631,12 @@ static void VK_RT_DispatchReflTemporalChain(VkCommandBuffer cmd, const viewDef_t
     }
 }
 
+// Every chain's own dispatchRectFrame guard makes an untraced chain a no-op, so this
+// needs no knowledge of which populations ran this frame.
 void VK_RT_DispatchReflTemporal(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
-    VK_RT_DispatchReflTemporalChain(cmd, viewDef, VK_RT_ReflChain());
+    for (int c = 0; c < VK_REFL_CHAIN_COUNT; c++)
+        VK_RT_DispatchReflTemporalChain(cmd, viewDef, &vkRT.reflChain[c]);
 }
 
 // ---------------------------------------------------------------------------
@@ -2565,6 +2665,9 @@ static void VK_RT_DispatchReflAtrousChain(VkCommandBuffer cmd, const viewDef_t *
     // Stale from a previous frame (denoise toggled down, or an early return below)
     // must never leak forward — VK_RT_GetReflReadView checks this every frame.
     chain->atrousReadView[frameIdx] = VK_NULL_HANDLE;
+
+    if (!chain->spatialFilter)
+        return; // see vkReflChain_t::spatialFilter — every pass would be a copy
 
     if (!vkRT.isInitialized)
         return;
@@ -2766,7 +2869,8 @@ static void VK_RT_DispatchReflAtrousChain(VkCommandBuffer cmd, const viewDef_t *
 
 void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
-    VK_RT_DispatchReflAtrousChain(cmd, viewDef, VK_RT_ReflChain());
+    for (int c = 0; c < VK_REFL_CHAIN_COUNT; c++)
+        VK_RT_DispatchReflAtrousChain(cmd, viewDef, &vkRT.reflChain[c]);
 }
 
 // View for any downstream reflection consumer. See the header comment.
@@ -2798,9 +2902,19 @@ VkImageView VK_RT_GetReflReadView(int frameIdx)
     return VK_RT_ReflChainReadView(VK_RT_ReflChain(), frameIdx);
 }
 
+VkImageView VK_RT_GetReflGlassReadView(int frameIdx)
+{
+    // When the populations weren't split this frame (mode 2, or any debug mode), the
+    // pane's radiance is in the opaque chain behind the negative-alpha sentinel — the
+    // overlay shader handles either, but it has to be pointed at the right image.
+    vkReflChain_t *chain = s_reflSplitActive[frameIdx] ? VK_RT_ReflGlassChain() : VK_RT_ReflChain();
+    return VK_RT_ReflChainReadView(chain, frameIdx);
+}
+
 bool VK_RT_ReflReadReady(int frameIdx)
 {
-    return VK_RT_ReflChain()->trace[frameIdx].image != VK_NULL_HANDLE;
+    return VK_RT_ReflChain()->trace[frameIdx].image != VK_NULL_HANDLE &&
+           VK_RT_ReflGlassChain()->trace[frameIdx].image != VK_NULL_HANDLE;
 }
 
 // ---------------------------------------------------------------------------

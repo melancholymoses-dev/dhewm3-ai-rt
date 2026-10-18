@@ -228,6 +228,12 @@ struct vkReflChain_t
 {
     const char *name; // appears in this chain's log lines
 
+    // Whether the à-trous filter runs on this chain. False for glass: refl_atrous.comp
+    // excludes negative-alpha pixels from both the centre test and the 3x3 taps, so
+    // every pass over a glass image is a copy. The temporal EMA does run on glass —
+    // that is what r_rtReflDenoiseAlphaGlass feeds.
+    bool spatialFilter;
+
     vkRTImage_t trace[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F, reflect_ray.rgen's imageStore target
 
     // Temporal EMA state. Shared across frame slots (the recurrence is sequential
@@ -278,9 +284,9 @@ struct vkReflChain_t
     VkImageView lastFroxelDirView[VK_MAX_FRAMES_IN_FLIGHT];
 };
 
-// Number of chains allocated. 1 until Stage 4b splits glass from opaque; the
-// descriptor pools are sized by this so the split is a one-line change.
-#define VK_REFL_CHAIN_COUNT 1
+// Chain 0 = opaque, chain 1 = glass (Stage 4b). The descriptor pools are sized by
+// this, so adding a population is a matter of the count plus its dispatch routing.
+#define VK_REFL_CHAIN_COUNT 2
 
 // Global RT state
 struct vkRTState_t
@@ -925,6 +931,11 @@ void VK_RT_CompositeReflections(VkCommandBuffer cmd);
 // ran this frame, else the temporal history when the denoiser is active and valid
 // for this slot, else the traced image directly.
 VkImageView VK_RT_GetReflReadView(int frameIdx);
+
+// Same, for glass_refl_overlay.frag's per-pane draw (Stage 4b). Returns the glass
+// chain when the populations were split this frame, else the opaque chain — where the
+// pane's radiance sits behind the negative-alpha sentinel, as before the split.
+VkImageView VK_RT_GetReflGlassReadView(int frameIdx);
 
 // Whether VK_RT_GetReflReadView has a real image to hand out for this slot. Callers
 // binding the reflection map must check this rather than reaching into the chain's

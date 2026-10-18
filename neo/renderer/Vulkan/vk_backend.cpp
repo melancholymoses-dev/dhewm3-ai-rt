@@ -2677,9 +2677,10 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
         VkDescriptorImageInfo ovReflInfo = {};
         ovReflInfo.sampler = vkRT.reflSampler;
-        // VK_RT_GetReflReadView: the temporal history when the Stage-1 denoiser
-        // (r_rtReflDenoise) is on and has valid data, else the traced image unfiltered.
-        ovReflInfo.imageView = VK_RT_GetReflReadView(vk.currentFrame);
+        // Stage 4b: the glass chain's view when the populations were split this frame,
+        // else the opaque chain's (glass behind the negative-alpha sentinel, as before).
+        // Either way: the denoised history/à-trous output when r_rtReflDenoise is on.
+        ovReflInfo.imageView = VK_RT_GetReflGlassReadView(vk.currentFrame);
         ovReflInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
         VkWriteDescriptorSet ovWrites[2] = {};
