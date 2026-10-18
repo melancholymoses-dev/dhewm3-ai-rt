@@ -5107,7 +5107,8 @@ void VK_RB_DrawView(const void *data)
         }
 
         // Begin render pass (one pass for the entire EndFrame; all views composite into it)
-        // clearValues[2] (gbufNormal, Stage 3.5) = {0.5, 0.5, 0.5, 0.0}: null normal, F0 0 —
+        // clearValues[2] (gbufNormal, Stage 3.5) = {0.5, 0.5, 1.0, 0.0}: B == 1.0 is the
+        // "prepass never wrote this pixel" sentinel (rt_gbuf_normal_fmt.glsl), F0 0 —
         // only consumed when vk.gbufferSupported, but harmless to fill in unconditionally.
         // clearValues[3] (gbufAlbedo, gi_albedo_target.md) = {1,1,1,1}: WHITE, so a pixel
         // the prepass never writes modulates GI by 1.0 (legacy behavior), not by 0.
@@ -5116,7 +5117,7 @@ void VK_RB_DrawView(const void *data)
         VkClearValue clearValues[5] = {};
         clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
         clearValues[1].depthStencil = {1.0f, 128};
-        clearValues[2].color = {{0.5f, 0.5f, 0.5f, 0.0f}};
+        clearValues[2].color = {{0.5f, 0.5f, 1.0f, 0.0f}};
         clearValues[3].color = {{1.0f, 1.0f, 1.0f, 1.0f}};
         clearValues[4].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
 

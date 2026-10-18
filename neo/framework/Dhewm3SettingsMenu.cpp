@@ -2885,7 +2885,9 @@ static void DrawRTOptionsMenu()
         RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 5.0f, "%.2f");
         RTSliderFloat("Reflection Roughness Floor", rtCVars.rtReflRoughnessFloor, 0.0f, 1.0f, "%.2f");
         RTSliderFloat("Reflection Roughness Scale", rtCVars.rtReflRoughnessScale, 0.0f, 4.0f, "%.2f");
-        RTSliderFloat("Reflection Max Luminance", rtCVars.rtReflMaxLuminance, 0.0f, 2.0f, "%.1f");
+        // Range widened with Stage 2b: the ceiling now bounds incident light, not
+        // post-Fresnel radiance, so the useful values are ~10x larger.
+        RTSliderFloat("Reflection Max Luminance", rtCVars.rtReflMaxLuminance, 0.0f, 24.0f, "%.1f");
         RTSliderFloat("Rough Highlight Damping", rtCVars.rtReflRoughLumExp, 0.0f, 8.0f, "%.1f");
         RTSliderInt("Reflection Shadow Picks (0 = all lights)", rtCVars.rtReflShadowPicks, 0, 2);
         RTCheckbox("Light Shafts in Reflections", rtCVars.rtReflVol);

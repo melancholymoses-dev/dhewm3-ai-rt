@@ -58,10 +58,10 @@ of the original Doom 3 GPL Source Code release.
 layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = 1, rgba16f) uniform image2D reflImage;
 layout(set = 0, binding = 2) uniform sampler2D depthSampler;
-// G-buffer normal/F0 (Stage 3.5): rgb = world normal * 0.5 + 0.5, a = F0.
+// G-buffer normal/F0 (Stage 3.5); layout in rt_gbuf_normal_fmt.glsl.
 // a == 0 means "no usable normal" (gbufferSupported false, sky/translucent
 // geometry, or a surface whose specular map remaps to F0 == 0) — fall back to
-// rt_ReconstructNormal; rgb at the 0.5 clear sentinel means the prepass never
+// rt_ReconstructNormal; !GBuf_NormalValid means the prepass never
 // wrote the pixel at all (debug mode 4 tests this). Sampled with texelFetch, so the bound
 // sampler's filter/wrap state is irrelevant; always valid (real image when
 // vk.gbufferSupported, a 1x1 null image with a=0 otherwise — see VK_RT_DispatchReflections).
@@ -117,6 +117,8 @@ layout(set = 0, binding = 3) uniform ReflParams {
 #include "vol_froxel_sample.glsl"
 #include "rt_phase.glsl"
 #include "gbuf_albedo_class.glsl"
+#include "rt_gbuf_normal_fmt.glsl"
+#include "refl_alpha.glsl"
 #include "rt_ggx.glsl"
 
 // binding 7: the scatter grid itself. rgb = in-scatter per unit length and, since
@@ -283,6 +285,16 @@ vec3 ReflEmitterGlow(vec3 o, vec3 d, float hitT)
     return sum * params.glowGain;
 }
 
+// Roughness-aware Schlick (split-sum IBL form): the grazing limit is
+// max(1 - roughness, f0) instead of 1, so rough painted metal and grates don't
+// turn into bright mirrors at grazing angles.  Called twice per opaque pixel
+// (Stage 2b) — once on the coarse F0 to admit the ray, once on the fine one for
+// the weight that leaves in the alpha channel.
+float ReflFresnel(float f0, float perceptualRoughness, float NdotV)
+{
+    float fGrazing = max(1.0 - perceptualRoughness, f0);
+    return f0 + (fGrazing - f0) * pow(1.0 - NdotV, 5.0);
+}
 
 void main()
 {
@@ -298,7 +310,11 @@ void main()
     // robustImageAccess.
     ivec2 gbufSize = textureSize(gbufNormalSampler, 0);
     vec4  gbuf = texelFetch(gbufNormalSampler, min(coord, gbufSize - 1), 0);
-    float f0   = gbuf.a;
+    // Two F0s (Stage 2b): the fine, per-pixel one weights this pixel's reflection;
+    // the coarse, fixed-mip one decides whether a ray is traced at all. Separating
+    // them is what stops a scuffed texel from becoming a hole in the filters' input.
+    float f0Fine   = gbuf.a;
+    float f0Coarse = GBuf_CoarseF0(gbuf);
 
     // Stage 2 packed roughness. Fetched this early (not just for mode 12 below) so
     // Stage 4's roughness ceiling can gate the opaque early-out before any ray tracing,
@@ -308,26 +324,26 @@ void main()
 
     if (params.debugMode == 2)
     {
-        // Raw world normal as RGB — a grate floor must look bumpy/detailed, not
+        // Decoded world normal as RGB — a grate floor must look bumpy/detailed, not
         // flat single-colour; silhouette edges must match geometry.
-        imageStore(reflImage, coord, vec4(gbuf.rgb, 1.0));
+        vec3 nDbg = GBuf_NormalValid(gbuf) ? (GBuf_DecodeNormal(gbuf.rg) * 0.5 + 0.5) : vec3(0.5);
+        imageStore(reflImage, coord, vec4(nDbg, 1.0));
         return;
     }
     if (params.debugMode == 3)
     {
-        // F0 (alpha) greyscale — most of the scene near-black, metal/wet trim
+        // Fine F0 (alpha) greyscale — most of the scene near-black, metal/wet trim
         // grey, nothing solid white.
-        imageStore(reflImage, coord, vec4(vec3(f0), 1.0));
+        imageStore(reflImage, coord, vec4(vec3(f0Fine), 1.0));
         return;
     }
     if (params.debugMode == 4)
     {
-        // Prepass-coverage check: pixels the prepass never wrote (rgb still at the
-        // 0.5/0.5/0.5 clear sentinel — no unit normal encodes there) tinted magenta;
-        // should be only sky/translucents once the prepass covers the scene. Can't
-        // test f0 here: black/absent specular maps legitimately write f0 == 0.
-        bool noData = all(lessThanEqual(abs(gbuf.rgb - vec3(0.5)), vec3(1.0 / 255.0)));
-        imageStore(reflImage, coord, noData ? vec4(1.0, 0.0, 1.0, 1.0) : vec4(0.0));
+        // Prepass-coverage check: pixels the prepass never wrote (B still at the 1.0
+        // clear sentinel) tinted magenta; should be only sky/translucents once the
+        // prepass covers the scene. Can't test f0 here: black/absent specular maps
+        // legitimately write f0 == 0.
+        imageStore(reflImage, coord, GBuf_NormalValid(gbuf) ? vec4(0.0) : vec4(1.0, 0.0, 1.0, 1.0));
         return;
     }
     if (params.debugMode == 12)
@@ -406,7 +422,7 @@ void main()
         vec3 tint;
         if (glassProbe.hitT > 0.01)
             tint = vec3(1.0, 1.0, 1.0);                  // white: glass, always reflects
-        else if (f0 < 1.0 / 255.0 || tooRoughForMode3)
+        else if (f0Coarse < 1.0 / 255.0 || tooRoughForMode3)
             tint = vec3(0.0, 1.0, 0.0);                  // green: GI only
         else
             tint = vec3(0.0, 0.3, 1.0);                  // blue: reflection + GI (both)
@@ -419,7 +435,7 @@ void main()
     // win the G-buffer exists for. Placed after the glass probe: glass reflections
     // don't depend on surface F0 or roughness, so a glass hit must still fall through
     // to the trace loop below regardless of either.
-    if (glassProbe.hitT <= 0.01 && (f0 < 1.0 / 255.0 || tooRoughForMode3))
+    if (glassProbe.hitT <= 0.01 && (f0Coarse < 1.0 / 255.0 || tooRoughForMode3))
     {
         imageStore(reflImage, coord, vec4(0.0));
         return;
@@ -441,7 +457,7 @@ void main()
         // Bump-mapped shading normal from the depth prepass — fixes flat-polygon
         // surfaces (e.g. grate floors) that rt_ReconstructNormal's depth-gradient
         // fallback reflects incorrectly (see docs/plans/gbuffer_normal_pass.md).
-        reflNormal = normalize(gbuf.rgb * 2.0 - 1.0);
+        reflNormal = GBuf_DecodeNormal(gbuf.rg);
         reflOrigin = worldPos;
     }
     else
@@ -460,8 +476,9 @@ void main()
     // that replacement never changes glass's own path, only the branch glass skips.
     vec3 reflDir  = reflect(viewDir, reflNormal);
 
-    // R1: the weight depends only on f0/normal/viewDir — all known pre-trace — so cull
+    // R1: the weight depends only on F0/normal/viewDir — all known pre-trace — so cull
     // on it here. Glass is exempt; its weight comes from the interface, not surface F0.
+    // Stage 2b: the cull reads the COARSE F0, the stored weight the fine one.
     float fresnel = 0.0;
     float lumCeiling = params.maxLuminance;
     uint  lightSeed  = 0u;
@@ -481,17 +498,18 @@ void main()
         if (params.roughLumExp > 0.0 && params.maxLuminance > 0.0)
             lumCeiling = max(lumCeiling * pow(max(1.0 - perceptualRoughness, 0.0), params.roughLumExp), 1e-4);
 
-        // Roughness-aware Schlick (split-sum IBL form): the grazing limit is
-        // max(1 - roughness, f0) instead of 1, so rough painted metal and grates
-        // don't turn into bright mirrors at grazing angles.
-        float fGrazing = max(1.0 - perceptualRoughness, f0);
-        fresnel = f0 + (fGrazing - f0) * pow(1.0 - NdotV, 5.0);
-
-        if (fresnel * params.reflBlend < params.minWeight)
+        // Admission on the coarse F0: whether a ray exists is a panel-scale question.
+        // Culling per-pixel left the filters with holes they cannot blur across.
+        if (ReflFresnel(f0Coarse, perceptualRoughness, NdotV) * params.reflBlend < params.minWeight)
         {
             imageStore(reflImage, coord, vec4(0.0));
             return;
         }
+
+        // The stored weight is per-pixel, demodulated out of rgb and reapplied by
+        // refl_composite.frag — so scuff detail survives without patterning the
+        // signal the denoisers see.
+        fresnel = ReflFresnel(f0Fine, perceptualRoughness, NdotV);
 
         // GGX VNDF lobe (Stage 3): single sample per pixel, same world-anchored-seed
         // strategy as gi_ray.rgen so the noise is stable under a static camera and
@@ -610,9 +628,10 @@ void main()
         return;
     }
 
-    // Opaque: reusing R1's pre-trace `fresnel` is what makes that cull exact.
-    // refl_composite.frag adds this straight through (no further Fresnel math there);
-    // alpha carries F0 for potential future consumers (non-negative — "not glass").
-    vec3 reflRadiance = ReflClampLuminance(accum * params.reflBlend * fresnel, lumCeiling);
-    imageStore(reflImage, coord, vec4(reflRadiance, f0));
+    // Opaque, demodulated (Stage 2b): rgb is incident light, alpha the Fresnel weight
+    // refl_composite.frag multiplies back in. The ceiling therefore bounds incident
+    // light rather than final radiance — one meaning for every pixel instead of
+    // "ceiling / this pixel's F0", which is why r_rtReflMaxLuminance was rescaled.
+    vec3 reflLight = ReflClampLuminance(accum * params.reflBlend, lumCeiling);
+    imageStore(reflImage, coord, vec4(reflLight, ReflAlpha_Opaque(fresnel)));
 }

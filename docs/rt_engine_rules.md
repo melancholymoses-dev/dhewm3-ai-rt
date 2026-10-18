@@ -51,6 +51,7 @@ Each cost a debugging session. They apply to any new RT code.
 | A mapped buffer or descriptor set the CPU **writes** while recording needs one copy per frame slot, indexed by `vk.currentFrame` | The previous frame is still on the GPU. `r_vkSerializeFrames 1` is the check; the failure is GPU-dependent and can hide on one vendor |
 | Use the vertex normal, not `gl_HitKindEXT` | Doom 3 winds front faces opposite to GL/Vulkan, so every visible surface reports back-facing |
 | A pixel-skipping pattern keys off a per-slot counter, never `tr.frameCount` | Frames in flight desynchronise the pattern from the resource it writes |
+| Admit rays at the scale the denoiser filters at, and keep the per-pixel weight out of the filtered signal | A cull on a per-pixel quantity leaves holes no filter can blur across, and the surviving pixels carry that quantity's pattern into the blur. Coarse mask to admit, fine weight in alpha, multiply at composite |
 | Shared GLSL that compute shaders include stays pipeline-agnostic — no ray payload, no `traceRayEXT`, no TLAS | `rt_light_struct.glsl` is that home; `rt_light_eval.glsl` is not. An RT-only built-in in a compute shader fails silently |
 | Validate bindless descriptors against `backendData`; reset append-only slot tables on level load | An `idImage*` survives a purge but its `VkImageView` does not |
 | Per-object GPU buffers come from a `vk_buffer_pool`, never their own `vkAllocateMemory` | ~0.3 ms per call on Windows regardless of size; per-surface allocation made a 35-BLAS first-sight frame cost 133 ms |

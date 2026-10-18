@@ -28,7 +28,7 @@ run had AO at 2 samples, `r_rtShadowSamples 3` and bloom off, which accounts for
 | # | Stage | Problem |
 |---|---|---|
 | 1 | G-buffer: F0 from full-res specular map | F0 is pixel-scale scuff detail |
-| 2 | rgen cull: `fresnel × blend < minWeight` → store 0 | F0 decides which pixels exist: culled scuffs become holes the filters can't cross |
+| 2 | rgen cull: `fresnel × blend < minWeight` → store 0 | F0 decides which pixels exist: culled scuffs become holes the filters can't cross (fixed, 2b) |
 | 3 | One GGX ray per pixel, full render res | Every opaque pixel pays a ray, then gets blurred anyway |
 | 4 | rchit: up to 8 shadow rays per hit (`REFL_MAX_SHADOW_LIGHTS`) | Most of the cost. Lights past the budget are added unshadowed (leak) |
 | 5 | `× blend × fresnel`, then ceiling | Filters blur an F0-patterned signal |
@@ -104,6 +104,8 @@ wall and a multi-light room. `REFLECTIONS` ms drops. No new light leaking throug
 
 ### 2a — Octahedral normal frees a channel (no image change)
 
+Implemented 2026-10-17, not yet verified in-game.
+
 `gbufNormal` (RGBA8) stores a 2-DoF unit normal in 3 channels. Octahedral encoding fits it
 in RG (~1° worst case, comparable to today). No spare bit exists elsewhere: `gbufAlbedo`
 alpha is full (class + roughness), `motionVectors` is RG16F.
@@ -119,26 +121,44 @@ value and null image become (0.5, 0.5, 1.0, 0.0). Self-contained, no new binding
 
 | File | Change |
 |---|---|
-| `rt_gbuf_normal.glsl` | Owns the format: `GBuf_EncodeNormal`, `GBuf_DecodeNormal`, `GBuf_NormalValid`. Oct math moves here from `gi_probe_common.glsl` (`gip_Oct*` call it) |
+| `rt_gbuf_normal_fmt.glsl` | **New.** Owns the format: `GBuf_EncodeNormal`, `GBuf_DecodeNormal`, `GBuf_NormalValid`, `rt_Oct*`. No includer contract (the sampler-based `rt_GbufNormalAt` stays in `rt_gbuf_normal.glsl`, which includes this), so `gi_probe_common.glsl` can share the oct math — `gip_Oct*` are now one-line wrappers |
 | `gbuffer.frag`, `gbuffer_clip.frag` | Write via the helper; B = 0 until 2b |
-| `reflect_ray.rgen` (decode + debug 4), `refl_temporal_resolve.comp`, `refl_atrous.comp` | Inline decodes → helper |
+| `reflect_ray.rgen` (decode + debug 2/4), `refl_temporal_resolve.comp`, `refl_atrous.comp`, `rt_gbuf_normal.glsl` | Inline decodes → helper. Debug 2 now decodes before display |
 | `vk_backend.cpp` clear value, `vk_reflections.cpp` null image | New sentinel |
+| `CMakeLists.txt` | New include |
 
 **Check:** debug 2 (normals) and 4 (coverage) look as before; AO/GI/reflection screenshots
-unchanged; `grep -rn "rgb \* 2.0 - 1.0" neo/renderer/glsl` finds no G-buffer decode.
+unchanged; `grep -rn "rgb \* 2.0 - 1.0" neo/renderer/glsl` finds only bump-map samples
+in the two `gbuffer*.frag`.
 
 ### 2b — Coarse F0 and demodulation
 
+Implemented 2026-10-17, not yet verified in-game.
+
 | File | Change |
 |---|---|
-| `gbuffer.frag`, `gbuffer_clip.frag` | B = F0 from the specular map at a fixed `textureLod` mip (as the roughness estimate) |
-| `reflect_ray.rgen` | Opaque cull uses coarse F0. Store `light × blend` (no Fresnel); alpha = per-pixel Fresnel weight from fine F0. Ceiling applied to the demodulated value (retune) |
-| `refl_temporal_resolve.comp`, `refl_atrous.comp` | Validity = alpha > 0 as today; they now filter incident light only |
-| `refl_composite.frag` | `rgb × alpha`, then add |
-| `glass_refl_overlay.frag` | Unchanged — glass keeps its negative-alpha path |
+| `refl_alpha.glsl` | **New.** Owns the alpha convention: glass sentinel, traced test, and the floor below. Replaces `VALID_ALPHA_THRESHOLD` duplicated in both filters |
+| `gbuffer.frag`, `gbuffer_clip.frag` | B = the same F0 remap on a fixed mip 4 specular sample, clamped to 254/255 |
+| `rt_gbuf_normal_fmt.glsl` | `GBuf_CoarseF0` — returns 0 at the sentinel, which would otherwise read as a mirror |
+| `reflect_ray.rgen` | Both culls (`f0 < 1/255` early-out and the `minWeight` test) and debug 13 read coarse F0. `ReflFresnel` helper, called on coarse to admit and on fine for the weight. Stores `light × blend`, alpha = fine Fresnel. Ceiling now bounds incident light |
+| `refl_temporal_resolve.comp`, `refl_atrous.comp` | Validity/glass tests → `refl_alpha.glsl` helpers; they now filter incident light only. Moment luminance capped at 128 (fp16 `lum²`, newly reachable) |
+| `refl_composite.frag` | `rgb × alpha`, then add. Debug modes all store alpha 1.0, so they pass through |
+| `glass_refl_overlay.frag` | Unchanged — already `rgb × abs(alpha)` |
+| `vk_reflections.cpp`, `Dhewm3SettingsMenu.cpp` | `r_rtReflMaxLuminance` 0.75 → **8.0**, slider max 2 → 24 |
+
+A traced pixel's alpha is floored at 2/255 so a scuff with fine F0 ≈ 0 still reads as
+traced — otherwise the filters see a hole and the demodulation buys nothing.
+
+`r_rtReflMaxLuminance` was rescaled because the ceiling moved to the far side of the
+Fresnel multiply: it used to mean "0.75 / this pixel's F0" of incident light and now
+means one number for every pixel. 8.0 reproduces the old bound at a typical remapped
+F0 (~0.1); it is tighter than before on bright-F0 metal and looser on dark surfaces,
+where the final contribution is scaled down anyway.
 
 **Check:** debug 14 on the scuffed wall: no dark-blue blotches inside a panel. Scuff detail
 still visible in the final composite (comes back from fine F0). Debug 3 unchanged.
+Overall reflection brightness unchanged vs. Stage 2a — if highlights clip or dim, the
+`r_rtReflMaxLuminance` rescale is the suspect, not the demodulation.
 
 ---
 

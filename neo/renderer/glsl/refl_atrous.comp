@@ -15,14 +15,16 @@ above that reach a full wash sooner than roughness alone would. This is what
 keeps a polished-metal reflection crisp while washing out the grain on a rough
 painted panel next to it.
 
-Glass pixels (negative alpha sentinel, see reflect_ray.rgen) are passed through
-untouched and never contribute as a neighbour sample: glass is hardcoded to
-roughness 0 structurally (Stage 3) and belongs to a different surface than the
-opaque geometry this filter reasons about. Untraced/non-reflective pixels
-(alpha <= 1/255, the same threshold reflect_ray.rgen's own F0 early-out uses)
-are excluded the same way — both as centres (nothing to denoise) and as
-neighbour samples (blending one in would paint a reflection onto a surface
-that was deliberately culled for having no F0).
+Since Stage 2b the colour here is incident light with the per-pixel Fresnel
+weight demodulated out (refl_alpha.glsl), so the blur crosses a scuffed texel
+instead of stopping at it; refl_composite.frag reapplies the weight afterwards.
+
+Glass pixels are passed through untouched and never contribute as a neighbour
+sample: glass is hardcoded to roughness 0 structurally (Stage 3) and belongs to
+a different surface than the opaque geometry this filter reasons about. Pixels
+that never traced are excluded the same way — both as centres (nothing to
+denoise) and as neighbour samples (blending one in would paint a reflection
+onto a surface that was deliberately culled).
 
 A local firefly clamp (r_rtReflAtrousFireflyClamp) runs before the blend: a single
 GGX sample with no light importance sampling occasionally points straight at
@@ -42,7 +44,7 @@ Inputs (set 0):
   binding 1 (rgba16f, storage, GENERAL)        — output reflection buffer for this pass
   binding 2 (combined image sampler)           — scene depth buffer
   binding 3 (combined image sampler)           — gbufAlbedo (alpha = packed class + roughness)
-  binding 4 (combined image sampler)           — gbufNormal (rgb = shading normal)
+  binding 4 (combined image sampler)           — gbufNormal (rt_gbuf_normal_fmt.glsl)
 
 Push constants: 112 bytes, see PC below.
 
@@ -67,6 +69,8 @@ layout(set = 0, binding = 3) uniform sampler2D gbufAlbedoSampler;
 layout(set = 0, binding = 4) uniform sampler2D gbufNormalSampler;
 
 #include "gbuf_albedo_class.glsl"
+#include "rt_gbuf_normal_fmt.glsl"
+#include "refl_alpha.glsl"
 // rt_ReconstructWorldPos / wang_hash; contract is satisfied by depthSampler above.
 #include "rt_indirect.glsl"
 
@@ -97,21 +101,12 @@ float luminance(vec3 c)
     return dot(c, vec3(0.2126, 0.7152, 0.0722));
 }
 
-// Same threshold reflect_ray.rgen's own F0 early-out uses: anything at or below
-// this never traced a reflection ray (glass's own negative sentinel also fails
-// this test, same comparison direction).
-const float VALID_ALPHA_THRESHOLD = 1.0 / 255.0;
-
 // G-buffer shading normal, or vec3(0) at the unwritten-pixel sentinel.
 vec3 DecodeNormal(ivec2 coord)
 {
     ivec2 sz = textureSize(gbufNormalSampler, 0);
     vec4  g  = texelFetch(gbufNormalSampler, clamp(coord, ivec2(0), sz - 1), 0);
-    if (all(lessThanEqual(abs(g.rgb - vec3(0.5)), vec3(1.0 / 255.0))))
-        return vec3(0.0);
-    vec3  n   = g.rgb * 2.0 - 1.0;
-    float len = length(n);
-    return (len < 0.5) ? vec3(0.0) : (n / len);
+    return GBuf_NormalValid(g) ? GBuf_DecodeNormal(g.rg) : vec3(0.0);
 }
 
 // Geometric normal from depth, one-sided at silhouettes. The shading normal would put
@@ -166,9 +161,9 @@ void main()
     if (pc.debugMode == 14)
     {
         vec3 vis;
-        if (cFull.a < 0.0)
+        if (ReflAlpha_IsGlass(cFull.a))
             vis = vec3(0.25);
-        else if (cFull.a <= VALID_ALPHA_THRESHOLD)
+        else if (!ReflAlpha_Traced(cFull.a))
             vis = vec3(0.0, 0.0, 0.3);
         else
         {
@@ -181,7 +176,7 @@ void main()
                     if (dx == 0 && dy == 0)
                         continue;
                     ivec2 s = clamp(coord + ivec2(dx, dy), ivec2(0), size - 1);
-                    if (texelFetch(reflSrc, s, 0).a > VALID_ALPHA_THRESHOLD)
+                    if (ReflAlpha_Traced(texelFetch(reflSrc, s, 0).a))
                         n++;
                 }
             if (r <= 0.0)
@@ -197,10 +192,10 @@ void main()
 
     // Glass, sky, or a pixel that never traced (F0 too low) — nothing to denoise,
     // and (for glass) nothing this filter is allowed to touch. Pass through exactly.
-    if (cFull.a <= VALID_ALPHA_THRESHOLD)
+    if (!ReflAlpha_Traced(cFull.a))
     {
         if (debugEdge)
-            cFull = (cFull.a < 0.0) ? vec4(vec3(0.25), 1.0) : vec4(0.0, 0.0, 0.3, 1.0);
+            cFull = ReflAlpha_IsGlass(cFull.a) ? vec4(vec3(0.25), 1.0) : vec4(0.0, 0.0, 0.3, 1.0);
         imageStore(reflDst, coord, cFull);
         return;
     }
@@ -246,7 +241,7 @@ void main()
             // Same exclusion as the centre test above: skip glass and untraced
             // neighbours rather than let them pull the average toward a value
             // that belongs to a different surface or isn't a reflection at all.
-            tapValid[idx]  = sFull.a > VALID_ALPHA_THRESHOLD;
+            tapValid[idx]  = ReflAlpha_Traced(sFull.a);
             tapColour[idx] = sFull.rgb;
 
             vec3  pT    = rt_ReconstructWorldPos(sCoord, size, pc.invViewProj);

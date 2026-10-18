@@ -825,6 +825,8 @@ set(GLSL_INCLUDES
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_light_eval.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_phase.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_gbuf_normal.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_gbuf_normal_fmt.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/refl_alpha.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/gbuf_albedo_class.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_ggx.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_player_exclude.glsl"

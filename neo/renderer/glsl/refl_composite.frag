@@ -11,17 +11,25 @@ block accumulated N times for N lights touching a pixel; this pass runs once.
 Deliberately as simple as gi_composite.frag: reflect_ray.rgen already computes
 the Schlick Fresnel term (using the G-buffer normal and depth, both legitimately
 sampled there while depth is in a shader-readable layout outside any render
-pass) and bakes it into reflBuffer.rgb, and also handles r_rtReflectionDebugMode
+pass) and leaves it in reflBuffer's alpha, and also handles r_rtReflectionDebugMode
 by writing the debug visualization directly into reflBuffer. This pass
 cannot do that work itself: it runs INSIDE the resumed render pass (same slot
 as VK_RT_CompositeGI), where depth is bound as that render pass's read-write
 attachment (subview depth prepasses can still write it later in the same
 render pass instance) and so cannot simultaneously be sampled here.
 
+Stage 2b (20261017_reflection_pipeline_refactor.md): rgb holds incident light and
+alpha the Fresnel weight, so the multiply happens here — after the denoisers,
+which therefore filter a signal with no F0 pattern in it. glass_refl_overlay.frag
+already worked this way; see refl_alpha.glsl for the channel convention.
+
 Negative alpha is a sentinel meaning "glass pixel — skip, composited
 separately by glass_refl_overlay.frag": the depth/G-buffer at a glass-covered
 pixel belongs to the unrelated opaque surface behind the glass, so this pass
 must not also apply that surface's data to the glass ray's radiance.
+
+Debug visualizations all store alpha 1.0, so they pass through the multiply
+unchanged.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -37,6 +45,8 @@ Code release.
 
 layout(set = 0, binding = 0) uniform sampler2D u_ReflMap;
 
+#include "refl_alpha.glsl"
+
 layout(location = 0) out vec4 fragColor;
 
 void main()
@@ -45,5 +55,5 @@ void main()
     vec4  s     = texelFetch(u_ReflMap, coord, 0);
 
     // Negative alpha: glass pixel, handled by glass_refl_overlay.frag instead.
-    fragColor = (s.a < 0.0) ? vec4(0.0) : vec4(s.rgb, 1.0);
+    fragColor = ReflAlpha_IsGlass(s.a) ? vec4(0.0) : vec4(s.rgb * s.a, 1.0);
 }

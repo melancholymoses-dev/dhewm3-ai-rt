@@ -81,24 +81,35 @@ idCVar r_rtReflRoughnessMax("r_rtReflRoughnessMax", "0.5", CVAR_RENDERER | CVAR_
                             "boundary (blue = reflection + GI, green = GI only, white = glass).",
                             0.0f, 1.0f);
 
+// Stage 2b: the admission test reads the COARSE (fixed-mip) F0 from gbufNormal.b, not
+// the per-pixel one, so this threshold decides which PANELS reflect, not which texels.
+// A scuff inside a reflective panel now traces and gets its (near-zero) weight applied
+// at composite time instead of becoming a hole the denoisers can't blur across.
 idCVar r_rtReflectionMinWeight(
     "r_rtReflectionMinWeight", "0.04", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-    "Skip the reflection ray and its shadow rays when the pixel's final Fresnel weight is below\n"
-    "this. Only affects legacy mode 2; glass always traces. 0.004 = pre-R1 behaviour.");
+    "Skip the reflection ray and its shadow rays when the pixel's COARSE Fresnel weight\n"
+    "(fixed-mip specular F0) is below this. Panel-scale, not texel-scale. Glass always\n"
+    "traces. 0.004 = pre-R1 behaviour.");
 
 // 2026-10-16 addendum (20261013_reflection_roughness.md). A flat ceiling on every opaque
-// pixel's final radiance, applied in reflect_ray.rgen after reflBlend/Fresnel. Distinct
-// from r_rtReflAtrousFireflyClamp (vk_reflections.cpp's à-trous pass), which is LOCAL —
-// it only pulls down a texel that disagrees with its own neighbours, so a uniformly
-// bright reflection (a real screen, a sunlit wall) sails through untouched. This cvar is
-// a direct, absolute "how bright can any reflection pixel get" knob, for tuning overall
-// reflection brightness down regardless of whether a pixel is a sampling outlier.
+// pixel, applied in reflect_ray.rgen. Distinct from r_rtReflAtrousFireflyClamp
+// (vk_reflections.cpp's à-trous pass), which is LOCAL — it only pulls down a texel that
+// disagrees with its own neighbours, so a uniformly bright reflection (a real screen, a
+// sunlit wall) sails through untouched. This cvar is a direct, absolute "how bright can
+// any reflection pixel get" knob, for tuning overall reflection brightness down
+// regardless of whether a pixel is a sampling outlier.
 // 0 disables (unbounded, pre-existing behaviour). Glass is untouched — see reflect_ray.rgen.
-idCVar r_rtReflMaxLuminance("r_rtReflMaxLuminance", "0.75", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                            "Hard luminance ceiling on opaque reflection radiance (after reflBlend and\n"
-                            "Fresnel), independent of r_rtReflAtrousFireflyClamp's per-pixel outlier test.\n"
-                            "Scaled down by roughness via r_rtReflRoughLumExp. 0 = unbounded. Glass is unaffected.",
-                            0.0f, 16.0f);
+//
+// Stage 2b rescaled the default. The ceiling now bounds INCIDENT light (Fresnel is
+// demodulated out and reapplied at composite time), so it means the same thing on every
+// pixel instead of "0.75 / this pixel's Fresnel". 0.75 at a typical remapped F0 (~0.1
+// with r_rtSpecF0Scale 0.25 / Gamma 2.5) admitted ~7.5 of incident light, hence 8.0.
+idCVar r_rtReflMaxLuminance("r_rtReflMaxLuminance", "8.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                            "Hard luminance ceiling on the incident light an opaque reflection ray returns\n"
+                            "(after reflBlend, before Fresnel), independent of r_rtReflAtrousFireflyClamp's\n"
+                            "per-pixel outlier test. Scaled down by roughness via r_rtReflRoughLumExp.\n"
+                            "0 = unbounded. Glass is unaffected.",
+                            0.0f, 64.0f);
 static idCVar r_rtReflRoughLumExp(
     "r_rtReflRoughLumExp", "3", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
     "Opaque reflection ceiling = r_rtReflMaxLuminance * (1 - roughness)^this. Stops a\n"
@@ -460,7 +471,8 @@ static void VK_RT_DestroyNullLightSsbo()
 
 // ---------------------------------------------------------------------------
 // Null G-buffer normal/F0 image (Stage 3.5, see docs/plans/gbuffer_normal_pass.md).
-// 1x1 image cleared to (0.5, 0.5, 0.5, 0.0), bound to gbufNormalSampler
+// 1x1 image cleared to (0.5, 0.5, 1.0, 0.0) — B == 1.0 is the "never written"
+// sentinel, see rt_gbuf_normal_fmt.glsl — bound to gbufNormalSampler
 // whenever the real per-frame gbufNormal image doesn't exist
 // (vk.gbufferSupported false). Alpha 0 is the same "no data" sentinel the real
 // image uses, so the consuming rgen falls back to rt_ReconstructNormal exactly
@@ -540,7 +552,7 @@ static void VK_RT_CreateNullGbufNormal(void)
         VkClearColorValue clearVal = {};
         clearVal.float32[0] = 0.5f;
         clearVal.float32[1] = 0.5f;
-        clearVal.float32[2] = 0.5f;
+        clearVal.float32[2] = 1.0f;
         clearVal.float32[3] = 0.0f;
         vkCmdClearColorImage(tmpCmd, s_nullGbufImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearVal, 1, &subRange);
 
