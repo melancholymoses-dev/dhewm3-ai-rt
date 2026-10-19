@@ -2495,27 +2495,12 @@ struct RTCVars
     idCVar *rtSpecF0Scale = nullptr;
     idCVar *rtSpecF0Gamma = nullptr;
     idCVar *rtReflGlow = nullptr;
-    idCVar *rtReflGlowGain = nullptr;
     idCVar *rtReflVol = nullptr;
-    idCVar *rtReflVolSteps = nullptr;
-    idCVar *rtReflGlowSmoke = nullptr;
     idCVar *rtGuiReflections = nullptr;
-    idCVar *rtGuiReflGain = nullptr;
-    idCVar *rtGuiTexInterval = nullptr;
-    idCVar *rtGlassNormalMode = nullptr;
-    idCVar *rtGlassCreaseRatio = nullptr;
     idCVar *rtReflOpaqueHalfRes = nullptr;
-    idCVar *rtReflDenoise = nullptr;
-    idCVar *rtReflDenoiseAlpha = nullptr;
-    idCVar *rtReflDenoiseAlphaGlass = nullptr;
-    idCVar *rtReflAtrousIterations = nullptr;
-    idCVar *rtReflAtrousRoughnessGain = nullptr;
     idCVar *rtReflAtrousFireflyClamp = nullptr;
-    idCVar *rtReflRoughnessFloor = nullptr;
-    idCVar *rtReflRoughnessScale = nullptr;
     idCVar *rtReflMaxLuminance = nullptr;
     idCVar *rtReflRoughLumExp = nullptr;
-    idCVar *rtReflShadowPicks = nullptr;
 
     // GI fine-tuning
     idCVar *rtGITemporal = nullptr;
@@ -2574,16 +2559,12 @@ struct RTCVars
     idCVar *rtTonemapLinStart = nullptr;
     idCVar *rtTonemapLinLen = nullptr;
 
-    // Bloom (docs/plans/20260906_bloom_plan.md) — sits under tonemapping because the
-    // filmic toe is what decides how much of the glow survives.
+    // Bloom
     idCVar *rtBloom = nullptr;
     idCVar *rtBloomStrength = nullptr;
-    idCVar *rtBloomEmissiveThreshold = nullptr;
     idCVar *rtBloomThreshold = nullptr;
-    idCVar *rtBloomKnee = nullptr;
     idCVar *rtBloomLitWeight = nullptr;
     idCVar *rtBloomMips = nullptr;
-    idCVar *rtBloomDebug = nullptr;
 
     // Froxel and GI Probe Toggles
     idCVar *rtVolFroxel = nullptr;
@@ -2641,27 +2622,12 @@ static void InitRTOptionsMenu()
     rtCVars.rtSpecF0Scale = cvarSystem->Find("r_rtSpecF0Scale");
     rtCVars.rtSpecF0Gamma = cvarSystem->Find("r_rtSpecF0Gamma");
     rtCVars.rtReflGlow = cvarSystem->Find("r_rtReflGlow");
-    rtCVars.rtReflGlowGain = cvarSystem->Find("r_rtReflGlowGain");
     rtCVars.rtReflVol = cvarSystem->Find("r_rtReflVol");
-    rtCVars.rtReflVolSteps = cvarSystem->Find("r_rtReflVolSteps");
-    rtCVars.rtReflGlowSmoke = cvarSystem->Find("r_rtReflGlowSmoke");
     rtCVars.rtGuiReflections = cvarSystem->Find("r_rtGuiReflections");
-    rtCVars.rtGuiReflGain = cvarSystem->Find("r_rtGuiReflGain");
-    rtCVars.rtGuiTexInterval = cvarSystem->Find("r_rtGuiTexInterval");
-    rtCVars.rtGlassNormalMode = cvarSystem->Find("r_rtGlassNormalMode");
-    rtCVars.rtGlassCreaseRatio = cvarSystem->Find("r_rtGlassCreaseRatio");
     rtCVars.rtReflOpaqueHalfRes = cvarSystem->Find("r_rtReflOpaqueHalfRes");
-    rtCVars.rtReflDenoise = cvarSystem->Find("r_rtReflDenoise");
-    rtCVars.rtReflDenoiseAlpha = cvarSystem->Find("r_rtReflDenoiseAlpha");
-    rtCVars.rtReflDenoiseAlphaGlass = cvarSystem->Find("r_rtReflDenoiseAlphaGlass");
-    rtCVars.rtReflAtrousIterations = cvarSystem->Find("r_rtReflAtrousIterations");
-    rtCVars.rtReflAtrousRoughnessGain = cvarSystem->Find("r_rtReflAtrousRoughnessGain");
     rtCVars.rtReflAtrousFireflyClamp = cvarSystem->Find("r_rtReflAtrousFireflyClamp");
-    rtCVars.rtReflRoughnessFloor = cvarSystem->Find("r_rtReflRoughnessFloor");
-    rtCVars.rtReflRoughnessScale = cvarSystem->Find("r_rtReflRoughnessScale");
     rtCVars.rtReflMaxLuminance = cvarSystem->Find("r_rtReflMaxLuminance");
     rtCVars.rtReflRoughLumExp = cvarSystem->Find("r_rtReflRoughLumExp");
-    rtCVars.rtReflShadowPicks = cvarSystem->Find("r_rtReflShadowPicks");
     rtCVars.rtGITemporal = cvarSystem->Find("r_rtGITemporal");
     rtCVars.rtGITemporalAlpha = cvarSystem->Find("r_rtGITemporalAlpha");
     rtCVars.rtGISamples = cvarSystem->Find("r_rtGISamples");
@@ -2708,12 +2674,9 @@ static void InitRTOptionsMenu()
 
     rtCVars.rtBloom = cvarSystem->Find("r_rtBloom");
     rtCVars.rtBloomStrength = cvarSystem->Find("r_rtBloomStrength");
-    rtCVars.rtBloomEmissiveThreshold = cvarSystem->Find("r_rtBloomEmissiveThreshold");
     rtCVars.rtBloomThreshold = cvarSystem->Find("r_rtBloomThreshold");
-    rtCVars.rtBloomKnee = cvarSystem->Find("r_rtBloomKnee");
     rtCVars.rtBloomLitWeight = cvarSystem->Find("r_rtBloomLitWeight");
     rtCVars.rtBloomMips = cvarSystem->Find("r_rtBloomMips");
-    rtCVars.rtBloomDebug = cvarSystem->Find("r_rtBloomDebug");
     rtCVars.rtVolFroxel = cvarSystem->Find("r_rtVolFroxel");
     rtCVars.rtGIProbes = cvarSystem->Find("r_rtGIProbes");
     rtCVars.rtGIProbeHysteresis = cvarSystem->Find("r_rtGIProbeHysteresis");
@@ -2869,45 +2832,14 @@ static void DrawRTOptionsMenu()
         RTSliderFloat("Max Reflection Distance", rtCVars.rtReflectionDistance, 100.0f, 5000.0f, "%.0f");
         RTSliderFloat("Reflection Blend", rtCVars.rtReflectionBlend, 0.0f, 10.0f);
         RTCheckbox("Projectiles in Reflections", rtCVars.rtReflGlow);
-        ImGui::BeginDisabled(!(rtCVars.rtReflGlow && rtCVars.rtReflGlow->GetBool()));
-        RTSliderFloat("Projectile Glow Gain", rtCVars.rtReflGlowGain, 0.0f, 4.0f, "%.2f");
-        RTCheckbox("Include Smoke Particles (flames, trails)", rtCVars.rtReflGlowSmoke);
-        ImGui::EndDisabled();
         RTCheckbox("Screens in Reflections", rtCVars.rtGuiReflections);
-        ImGui::BeginDisabled(!(rtCVars.rtGuiReflections && rtCVars.rtGuiReflections->GetBool()));
-        RTSliderFloat("Screen Reflection Brightness", rtCVars.rtGuiReflGain, 0.0f, 2.0f, "%.2f");
-        RTSliderInt("Screen Refresh Interval (frames)", rtCVars.rtGuiTexInterval, 1, 4);
-        ImGui::EndDisabled();
-        ImGui::BeginDisabled(!(rtCVars.rtReflVol && rtCVars.rtReflVol->GetBool()));
-        RTSliderInt("Shaft Samples per Ray", rtCVars.rtReflVolSteps, 1, 32);
-        ImGui::EndDisabled();
-        static const char *const glassNormalModes[] = {"Smooth (interpolated)", "Flat (face normal)", "Crease-aware"};
-        RTCombo("Glass Reflection Normal", rtCVars.rtGlassNormalMode, glassNormalModes, IM_ARRAYSIZE(glassNormalModes));
-        ImGui::BeginDisabled(!(rtCVars.rtGlassNormalMode && rtCVars.rtGlassNormalMode->GetInteger() == 2));
-        RTSliderFloat("Glass Crease Ratio", rtCVars.rtGlassCreaseRatio, 0.0f, 1.0f, "%.2f");
-        ImGui::EndDisabled();
         ImGui::TableNextColumn();
         RTSliderFloat("Specular F0 Scale (Fresnel intensity)", rtCVars.rtSpecF0Scale, 0.0f, 1.0f);
         RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 5.0f, "%.2f");
-        RTSliderFloat("Reflection Roughness Floor", rtCVars.rtReflRoughnessFloor, 0.0f, 1.0f, "%.2f");
-        RTSliderFloat("Reflection Roughness Scale", rtCVars.rtReflRoughnessScale, 0.0f, 4.0f, "%.2f");
         RTSliderFloat("Reflection Max Luminance", rtCVars.rtReflMaxLuminance, 0.0f, 24.0f, "%.1f");
         RTSliderFloat("Rough Highlight Damping", rtCVars.rtReflRoughLumExp, 0.0f, 8.0f, "%.1f");
-        RTSliderInt("Reflection Shadow Picks (0 = all lights)", rtCVars.rtReflShadowPicks, 0, 2);
         RTCheckbox("Light Shafts in Reflections", rtCVars.rtReflVol);
         RTCheckbox("Half-Res Opaque Trace (1/4 the rays)", rtCVars.rtReflOpaqueHalfRes);
-        static const char *const reflDenoiseModes[] = {"Off", "Temporal", "Temporal + Spatial"};
-        RTCombo("Reflection Denoise", rtCVars.rtReflDenoise, reflDenoiseModes, IM_ARRAYSIZE(reflDenoiseModes));
-        ImGui::BeginDisabled(!(rtCVars.rtReflDenoise && rtCVars.rtReflDenoise->GetInteger() > 0));
-        RTSliderFloat("Firefly Clamp", rtCVars.rtReflAtrousFireflyClamp, 0.0f, 8.0f, "%.1f");
-        RTSliderFloat("Denoise Alpha", rtCVars.rtReflDenoiseAlpha, 0.0f, 1.0f, "%.2f");
-        RTSliderFloat("Glass Denoise Alpha Floor", rtCVars.rtReflDenoiseAlphaGlass, 0.0f, 1.0f, "%.2f");
-        ImGui::EndDisabled();
-        ImGui::BeginDisabled(!(rtCVars.rtReflDenoise && rtCVars.rtReflDenoise->GetInteger() >= 2));
-        RTSliderInt("Spatial Filter Passes", rtCVars.rtReflAtrousIterations, 0, 8);
-        RTSliderFloat("Spatial Filter Wash", rtCVars.rtReflAtrousRoughnessGain, 0.5f, 8.0f, "%.1f");
-        ImGui::EndDisabled();
-
         ImGui::EndTable();
     }
     ImGui::EndDisabled(); // !reflOn
@@ -3004,15 +2936,6 @@ static void DrawRTOptionsMenu()
     RTSliderFloat("Linear Length", rtCVars.rtTonemapLinLen, 0.0f, 1.0f, "%.3f");
     ImGui::EndDisabled(); // !tonemapOn
 
-    // ---- Bloom (docs/plans/20260906_bloom_plan.md) ---------------------------
-    // Under tonemapping on purpose: the glow is additive in linear HDR and the toe
-    // decides how much of it survives, so the two are tuned together.
-    //
-    // The !rtEnabled disable is lifted across this block and restored after it. Bloom
-    // traces nothing — it diffs hdrScene, which is the colour attachment whether or not
-    // r_useRayTracing is on — so greying it out with RT off would be wrong. (The
-    // tonemap sliders above are RT-independent for the same reason and are still gated;
-    // left alone rather than changed as a side effect.)
     ImGui::EndDisabled(); // lift !rtEnabled
     ImGui::Spacing();
     ImGui::SeparatorText("Bloom");
@@ -3026,8 +2949,6 @@ static void DrawRTOptionsMenu()
     // strength below ~1 is swallowed by the curve in exactly the dark surroundings
     // where the glow should read.
     RTSliderFloat("Strength", rtCVars.rtBloomStrength, 0.0f, 4.0f, "%.2f");
-    RTSliderFloat("Emissive Threshold (raise to keep smoke out)", rtCVars.rtBloomEmissiveThreshold, 0.0f, 2.0f, "%.2f");
-    RTSliderFloat("Knee (0 = hard cutoff)", rtCVars.rtBloomKnee, 0.0f, 1.0f, "%.2f");
     RTSliderInt("Radius (blur levels)", rtCVars.rtBloomMips, 2, 6);
     ImGui::TextDisabled("Radius changes spread only — brightness stays with Strength.");
 
@@ -3043,18 +2964,6 @@ static void DrawRTOptionsMenu()
         ImGui::TreePop();
     }
     ImGui::EndDisabled(); // !bloomOn
-
-    // Outside the !bloomOn guard: mode 1 reads the frame's brightness bands and is what
-    // tells you where to put the thresholds, so it has to work before bloom is switched on.
-    static const char *const bloomDebugModes[] = {"Off", "1: Brightness bands of the frame",
-                                                  "2: Bloom source (bloomMip[0])"};
-    RTCombo("Debug Mode", rtCVars.rtBloomDebug, bloomDebugModes, IM_ARRAYSIZE(bloomDebugModes));
-    if (rtCVars.rtBloomDebug && rtCVars.rtBloomDebug->GetInteger() == 1)
-        ImGui::TextDisabled("max(r,g,b), pre-exposure: <0.5 black, 0.5-1 blue, 1-2 green, 2-4 yellow, >4 red.\n"
-                            "Same units as the thresholds below.");
-    else if (rtCVars.rtBloomDebug && rtCVars.rtBloomDebug->GetInteger() == 2)
-        ImGui::TextDisabled("Gain x4, pre-tonemap. Judge black vs not-black, not magnitude.\n"
-                            "Suspends the blur and composite so this is the raw extract.");
 
     ImGui::BeginDisabled(!rtEnabled); // restore for Auto-Relight below
 

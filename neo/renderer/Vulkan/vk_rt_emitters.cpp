@@ -37,8 +37,6 @@ idCVar r_rtReflGlow("r_rtReflGlow", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIV
                     "Show in-flight projectiles (plasma, fireballs, ...) as glows in RT glass reflections.");
 idCVar r_rtReflGlowGain("r_rtReflGlowGain", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                         "Brightness multiplier for projectile glows in reflections (r_rtReflGlow).", 0.0f, 8.0f);
-static idCVar r_rtReflGlowScale("r_rtReflGlowScale", "1.0", CVAR_RENDERER | CVAR_FLOAT,
-                                "Radius multiplier for projectile glows in reflections.", 0.1f, 8.0f);
 static idCVar r_rtReflGlowDist("r_rtReflGlowDist", "1024", CVAR_RENDERER | CVAR_FLOAT,
                                "Max distance from the camera for a projectile to glow in reflections.");
 idCVar r_rtReflGlowSmoke("r_rtReflGlowSmoke", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
@@ -48,9 +46,6 @@ static idCVar r_rtReflGlowSmokeMinLum("r_rtReflGlowSmokeMinLum", "0.3", CVAR_REN
                                       "Smoke particles dimmer than this (vertex colour x stage rgb) don't glow.\n"
                                       "Raise if dim additive smoke hazes the glass.",
                                       0.0f, 4.0f);
-static idCVar r_rtReflGlowSmokeCell("r_rtReflGlowSmokeCell", "32", CVAR_RENDERER | CVAR_FLOAT,
-                                    "Grid size (world units) for merging smoke particles into one glow disc.", 4.0f,
-                                    256.0f);
 
 // idSmokeParticles' shared render entity (game/SmokeParticles.cpp smokeParticle_SnapshotName).
 static const char *SMOKE_MODEL_NAME = "_SmokeParticle_Snapshot_";
@@ -333,7 +328,7 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
     out.e.pos[0] = pos.x;
     out.e.pos[1] = pos.y;
     out.e.pos[2] = pos.z;
-    out.e.radius = radius * r_rtReflGlowScale.GetFloat();
+    out.e.radius = radius;
     out.e.rgb[0] = rgb.x;
     out.e.rgb[1] = rgb.y;
     out.e.rgb[2] = rgb.z;
@@ -473,7 +468,7 @@ static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_
         c.e.pos[0] = pos.x;
         c.e.pos[1] = pos.y;
         c.e.pos[2] = pos.z;
-        c.e.radius = radius * r_rtReflGlowScale.GetFloat();
+        c.e.radius = radius;
         c.e.rgb[0] = r * gain;
         c.e.rgb[1] = g * gain;
         c.e.rgb[2] = b * gain;
@@ -532,7 +527,7 @@ static void CollectSmokeEmitters(const idRenderEntityLocal *ent, const viewDef_t
     const idRenderModel *model = ent->parms.hModel;
     const idVec3 &viewOrg = viewDef->renderView.vieworg;
     const float minLum = r_rtReflGlowSmokeMinLum.GetFloat();
-    const float cell = Max(4.0f, r_rtReflGlowSmokeCell.GetFloat());
+    const float cell = 32;
     const float nearSq = SMOKE_NEAR_SKIP * SMOKE_NEAR_SKIP;
 
     for (int s = 0; s < model->NumSurfaces(); s++)
@@ -639,7 +634,7 @@ static void CollectSmokeEmitters(const idRenderEntityLocal *ent, const viewDef_t
         cand.e.pos[0] = pos.x;
         cand.e.pos[1] = pos.y;
         cand.e.pos[2] = pos.z;
-        cand.e.radius = radius * r_rtReflGlowScale.GetFloat();
+        cand.e.radius = radius;
         cand.e.rgb[0] = rgb.x;
         cand.e.rgb[1] = rgb.y;
         cand.e.rgb[2] = rgb.z;
