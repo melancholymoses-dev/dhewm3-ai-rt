@@ -42,10 +42,7 @@ idCVar r_rtAODirectStrength("r_rtAODirectStrength", "0.0", CVAR_RENDERER | CVAR_
                             "How strongly AO darkens direct diffuse light while GI is on, 0-1. "
                             "With GI off, AO always applies fully to direct light.");
 idCVar r_rtAODebug("r_rtAODebug", "0", CVAR_RENDERER | CVAR_INTEGER,
-                   "AO/GI debug view: 0 off, 1 raw AO mask, 2 GI x AO, 3 GI without AO (2/3 scaled by "
-                   "r_rtAODebugGain)");
-idCVar r_rtAODebugGain("r_rtAODebugGain", "4.0", CVAR_RENDERER | CVAR_FLOAT,
-                       "Brightness multiplier for r_rtAODebug 2/3");
+                   "AO/GI debug view: 0 off, 1 raw AO mask, 2 GI x AO, 3 GI without AO");
 
 // Distance fade — depth-reconstruction error (2e-8*d^2) exceeds AO's 0.5 origin bias
 // past d=5000, sinking the origin below the surface (black speckle).
@@ -929,8 +926,8 @@ bool VK_RT_GetAODescriptor(VkDescriptorImageInfo *out)
     extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
 
     const int f = vk.currentFrame;
-    const bool valid = r_useRayTracing.GetBool() && vk.rayTracingSupported && vkRT.isInitialized &&
-                       r_rtAO.GetBool() && vkRT.aoMask[f].image != VK_NULL_HANDLE && vkRT.aoValid[f];
+    const bool valid = r_useRayTracing.GetBool() && vk.rayTracingSupported && vkRT.isInitialized && r_rtAO.GetBool() &&
+                       vkRT.aoMask[f].image != VK_NULL_HANDLE && vkRT.aoValid[f];
     if (!valid)
     {
         VK_Image_GetFallbackDescriptorInfo(out);

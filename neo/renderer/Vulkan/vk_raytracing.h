@@ -575,7 +575,7 @@ struct vkRTState_t
     VkDescriptorSetLayout matDescLayout; // set=2: mat SSBO + vtx/idx addr + bindless textures
     VkDescriptorPool matDescPool;
     VkDescriptorSet matDescSet[VK_MAX_FRAMES_IN_FLIGHT]; // bind matDescSet[vk.currentFrame]
-    VkSampler matSampler;                                 // bilinear-clamp, used for all bindless slots
+    VkSampler matSampler;                                // bilinear-clamp, used for all bindless slots
 
     bool matTableInitialized;
 
@@ -1490,9 +1490,6 @@ VkImageView VK_RT_GetFroxelDirView(void);
 // Trilinear + clamp, shared with the resolve pass.
 VkSampler VK_RT_GetFroxelSampler(void);
 
-// r_rtVolFroxelDebug, but 0 unless the froxel path and its resolve pipeline are
-// actually usable.  vk_vol.cpp reads this to switch the volumetric composite to
-// its replace (non-additive) pipeline while an overlay is up.
 int VK_RT_VolFroxelDebugMode(void);
 
 // ---------------------------------------------------------------------------

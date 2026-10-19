@@ -12,10 +12,6 @@ nothing about the grid.
            matching vol_march.comp's output convention exactly so the composite
            cannot tell the two paths apart.
 
-  mode 1 — one Z slice of the scatter grid, masked to where that slice is in
-           front of the surface.  The mapping check against vol_march.comp:
-           pick a slice, note its distance from r_rtVolFroxelDump, and compare
-           the structure against r_rtVolDebugMode 2 at the same spot.
   mode 2 — light count, colour-ramped: the MAX over the column of cells in
            front of the surface, i.e. how many lights survive the cull and the
            occlusion ray anywhere along this view ray.  Black = no light reaches
@@ -153,39 +149,12 @@ void main()
         outValue = texture(froxelIntegrated, vec3(uv, texW));
         outValue.rgb = max(outValue.rgb, vec3(0.0));
     }
-    else if (mode == 1)
-    {
-        int   z        = clamp(fp.misc.w, 0, dims.z - 1);
-        float zDist    = vf_SliceToDist(float(z) + 0.5);
-        vec4  cellData = imageLoad(froxelScatter, ivec3(cellXY, z));
-
-        // Masked to where the slice is actually visible. Unmasked, a slice at
-        // 200 units seen through a wall at 50 shows the room beyond and reads as
-        // a mismatch against the march, which stops at the surface.
-        //
-        // Stage 5: this is the UNPHASED scatter now — still exactly "what is in the
-        // grid", but ~25x brighter than it used to read for a flashlight cell, so
-        // r_rtVolFroxelDebugGain wants dropping well below its 20.0 default here.
-        if (zDist <= surfDist)
-            outValue.rgb = cellData.rgb * fp.anisos.w;
-    }
     else if (mode == 2 || mode == 4)
     {
         // Mode 4 reads the same column max; the fill puts the occluded projected-light
         // count in alpha instead of the lit count.
         // MAX over the visible column, not the single cell at the pixel's own
-        // depth. Probing that one cell produced a screen-wide checkerboard on
-        // first run (2026-09-13): the cell containing the surface straddles it,
-        // the per-cell jitter puts the sample behind the wall about half the
-        // time, and every light is then occluded -> count 0 next to a neighbour
-        // reading 4. Worse with distance, because the exponential slice curve
-        // makes the far cells ~150 units deep.
-        //
-        // That straddle is a real effect, not an overlay artifact — F2's resolve
-        // has to weight the final partial cell by the fraction of it in front of
-        // the surface. But it makes a single-cell probe unreadable, and a column
-        // max is the better statistic for this overlay's actual job anyway: a
-        // cluster-cull regression (F3) anywhere in the column shows up in it.
+        // depth. 
         int   zEnd = clamp(int(floor(vf_DistToSlice(min(surfDist, dFar)))), 0, dims.z);
         float best = 0.0;
         for (int z = 0; z < zEnd; z++)
@@ -203,10 +172,7 @@ void main()
         }
         else if (surfDist > dFar)
         {
-            // Legitimately outside the grid — blue, not an error. Bright enough to
-            // survive the tonemap's toe: at 0.25 this crushed to visually the same
-            // black as the sky case, which is the ambiguity the green pass colour
-            // exists to avoid.
+            // Legitimately outside the grid — blue, not an error. 
             outValue.rgb = vec3(0.0, 0.35, 1.0);
         }
         else

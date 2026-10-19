@@ -32,7 +32,6 @@ layout(push_constant) uniform CompositePC {
     int   useAO;      // 0 when AO was not written this frame
     float aoStrength; // r_rtAOIndirectStrength
     int   debugMode;  // r_rtAODebug; non-zero only on the replace-blend debug pipeline
-    float debugGain;  // r_rtAODebugGain
 } pc;
 
 layout(location = 0) out vec4 fragColor;
@@ -54,12 +53,12 @@ void main()
     }
     if (pc.debugMode == 2)
     {
-        fragColor = vec4(gi * aoTerm * pc.debugGain, 1.0);
+        fragColor = vec4(gi * aoTerm, 1.0);
         return;
     }
     if (pc.debugMode == 3)
     {
-        fragColor = vec4(gi * pc.debugGain, 1.0);
+        fragColor = vec4(gi, 1.0);
         return;
     }
 

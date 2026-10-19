@@ -142,18 +142,6 @@ static idCVar r_rtGIProbeDebug("r_rtGIProbeDebug", "0", CVAR_RENDERER | CVAR_INT
                                "highest-importance one is bucketed, so red is what G5b is still leaving "
                                "EMA-smeared — dark red across a level says one bucket covers it.");
 
-static idCVar r_rtGIProbeDebugGain("r_rtGIProbeDebugGain", "4.0", CVAR_RENDERER | CVAR_FLOAT,
-                                   "Mode-1-only gain, so stored irradiance survives the Uchimura toe "
-                                   "instead of reading as black. Mirrors r_rtVolFroxelDebugGain.");
-
-static idCVar r_rtGIProbeDebugRadius("r_rtGIProbeDebugRadius", "4.0", CVAR_RENDERER | CVAR_FLOAT,
-                                     "Radius of the debug probe spheres, world units. Must stay below "
-                                     "half r_rtGIProbeSpacing or the overlay's ray stepping can skip one.");
-
-static idCVar r_rtGIProbeDump("r_rtGIProbeDump", "0", CVAR_RENDERER | CVAR_BOOL,
-                              "One-shot dump: grid origin/dims, memory, atlas geometry, traced vs "
-                              "never-traced counts, update schedule. Self-clears after one frame.");
-
 // ---------------------------------------------------------------------------
 // Forward declarations from other vk_*.cpp modules
 // ---------------------------------------------------------------------------
@@ -1010,12 +998,12 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
         }
     }
 
-    ubo.debug[0] = Max(0.0f, r_rtGIProbeDebugGain.GetFloat());
+    ubo.debug[0] = 0;
     // Clamped below half spacing: the overlay's ray stepping is spacing/2, and a
     // sphere larger than that could be stepped past and vanish at some angles —
     // which would read as "probes are missing", the exact failure mode this
     // overlay exists to rule out.
-    ubo.debug[1] = idMath::ClampFloat(0.25f, s_spacing * 0.49f, r_rtGIProbeDebugRadius.GetFloat());
+    ubo.debug[1] = idMath::ClampFloat(0.25f, s_spacing * 0.49f, 1);
     ubo.debug[2] = Max(1.0f, r_rtGIProbeDistSharpness.GetFloat());
 
     ubo.tune2[0] = idMath::ClampFloat(0.0f, 1.0f, r_rtGIContrast.GetFloat());
@@ -1633,98 +1621,6 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
                        tr.frameCount, frameIdx, s_baseCell[0], s_baseCell[1], s_baseCell[2], s_updateBase, s_probeRays,
                        s_probeUpdates, outUbo.misc[0]);
 
-    // --- r_rtGIProbeDump ---
-    if (r_rtGIProbeDump.GetBool())
-    {
-        r_rtGIProbeDump.SetBool(false);
-
-        int traced = 0;
-        int inside = 0;
-        int outside = 0;
-        double bfSum = 0.0;
-        double msSum = 0.0;
-        float bfMax = 0.0f;
-        float msMax = 0.0f;
-        for (int i = 0; i < s_probeStateCount; i++)
-        {
-            if (s_probeState[i].flags & GIPROBE_FLAG_TRACED)
-                traced++;
-            if (s_probeState[i].flags & GIPROBE_FLAG_INSIDE)
-                inside++;
-            if (s_probeState[i].flags & GIPROBE_FLAG_OUTSIDE)
-                outside++;
-            bfSum += s_probeStats[i].backface;
-            msSum += s_probeStats[i].miss;
-            bfMax = Max(bfMax, s_probeStats[i].backface);
-            msMax = Max(msMax, s_probeStats[i].miss);
-        }
-
-        const idVec3 camPos = viewDef->renderView.vieworg;
-        const double irrMiB =
-            (double)vkRT.giProbeIrradiance.width * vkRT.giProbeIrradiance.height * 8.0 / (1024.0 * 1024.0);
-        const double distMiB =
-            (double)vkRT.giProbeDistance.width * vkRT.giProbeDistance.height * 4.0 / (1024.0 * 1024.0);
-        const double scratchMiB = (double)vkRT.giProbeScratch[frameIdx].width * vkRT.giProbeScratch[frameIdx].height *
-                                  8.0 / (1024.0 * 1024.0);
-        const double stateMiB = (double)s_probeStateCount * sizeof(GIProbeStateEntry) / (1024.0 * 1024.0);
-        const double statsMiB = (double)s_probeStateCount * sizeof(GIProbeStatsEntry) / (1024.0 * 1024.0);
-
-        common->Printf("=== [r_rtGIProbeDump] frame=%d slot=%d ===\n", tr.frameCount, frameIdx);
-        common->Printf("  grid=%dx%dx%d (%d probes)  spacing=%.1f  coverage=%.0fx%.0fx%.0f units\n", s_probeDim[0],
-                       s_probeDim[1], s_probeDim[2], s_probeStateCount, s_spacing, s_probeDim[0] * s_spacing,
-                       s_probeDim[1] * s_spacing, s_probeDim[2] * s_spacing);
-        common->Printf("  camera=(%.0f %.0f %.0f)  baseCell=(%d %d %d)  origin=(%.0f %.0f %.0f)\n", camPos.x, camPos.y,
-                       camPos.z, s_baseCell[0], s_baseCell[1], s_baseCell[2], outUbo.gridOrigin[0],
-                       outUbo.gridOrigin[1], outUbo.gridOrigin[2]);
-        common->Printf("  atlas tiles=%dx%d/bucket  irradiance %ux%u side=%d (%.1f MiB)  distance %ux%u side=%d "
-                       "(%.1f MiB)\n",
-                       s_tilesX, s_tilesY, vkRT.giProbeIrradiance.width, vkRT.giProbeIrradiance.height, s_irrSide,
-                       irrMiB, vkRT.giProbeDistance.width, vkRT.giProbeDistance.height, s_distSide, distMiB);
-        common->Printf("  scratch %ux%u (%.2f MiB/slot x2: primary + G5b fast)  state %.2f MiB/slot  stats %.2f MiB "
-                       "shared  total ~%.1f MiB\n",
-                       vkRT.giProbeScratch[frameIdx].width, vkRT.giProbeScratch[frameIdx].height, scratchMiB, stateMiB,
-                       statsMiB, irrMiB + distMiB + statsMiB + (scratchMiB * 2.0 + stateMiB) * VK_MAX_FRAMES_IN_FLIGHT);
-        // G5b. A gain pinned at 1.000 with a nonzero fast count means every fast
-        // light happens to be at its peak this instant; a gain of 0.000 with a
-        // count of 0 is the no-flickering-light-in-range case and the fast atlas
-        // is correctly contributing nothing.
-        common->Printf("  G5b: fastBuckets=%d (requested %d)  fastLights=%d  gain[0]=%.3f  irradiance atlas is "
-                       "%dx its single-bucket size\n",
-                       s_probeFastBuckets, VK_RT_GIFastBucketCount(), VK_RT_GIFastLightCount(),
-                       VK_RT_GIFastBucketGain(0), 1 + s_probeFastBuckets);
-        const int usable = traced - inside - outside;
-        common->Printf("  traced=%d/%d  never traced=%d  stats readback=%s\n", traced, s_probeStateCount,
-                       s_probeStateCount - traced, s_statsReadbackCached ? "HOST_CACHED" : "UNCACHED (slow)");
-        common->Printf("  usable=%d (%.1f%%)  insideGeometry=%d (%.1f%%)  outsideLevel=%d (%.1f%%)\n", usable,
-                       100.0 * usable / Max(1, s_probeStateCount), inside, 100.0 * inside / Max(1, s_probeStateCount),
-                       outside, 100.0 * outside / Max(1, s_probeStateCount));
-        // A near-zero mean with a max near 1.0 means the statistic is cleanly
-        // BIMODAL — a crisp classifier. A mean near the threshold means probes
-        // are strewn across it and the verdict is a coin flip.
-        common->Printf("  backface: mean=%.3f max=%.3f  threshold=%.2f on / %.2f off\n",
-                       bfSum / Max(1, s_probeStateCount), bfMax, Max(0.0f, r_rtGIProbeInsideThreshold.GetFloat()),
-                       Max(0.0f, r_rtGIProbeInsideThreshold.GetFloat()) * 0.75f);
-        common->Printf("  miss:     mean=%.3f max=%.3f  threshold=%.2f on / %.2f off\n",
-                       msSum / Max(1, s_probeStateCount), msMax, Max(0.0f, r_rtGIProbeOutsideThreshold.GetFloat()),
-                       Max(0.0f, r_rtGIProbeOutsideThreshold.GetFloat()) * 0.75f);
-        common->Printf("  schedule: base=%d  %d probes/frame -> full refresh every %.1f frames  %d rays each "
-                       "(%d rays/frame)\n",
-                       s_updateBase, s_probeUpdates, (double)s_probeStateCount / (double)Max(1, s_probeUpdates),
-                       s_probeRays, s_probeRays * s_probeUpdates);
-        common->Printf("  maxRayDist=%.1f  hysteresis=%.3f  normalBias=%.1f  distSharpness=%.1f\n", outUbo.tune[3],
-                       outUbo.tune[0], outUbo.tune[1], outUbo.debug[2]);
-        common->Printf("  maintain=%d  probeResolveActive=%d  debugMode=%d\n", VK_RT_GIProbeMaintain() ? 1 : 0,
-                       VK_RT_GIProbeActive() ? 1 : 0, outUbo.misc[0]);
-        common->Printf("  sizeof(GIProbeParamsUBO)=%d (GLSL std140 block expects 256)\n",
-                       (int)sizeof(GIProbeParamsUBO));
-        common->Printf("  resolve: giStrength=%.3f giContrast=%.3f (mode 0 owns giBuffer=%d)\n", outUbo.tune[2],
-                       outUbo.tune2[0], (VK_RT_GIProbeActive() && outUbo.misc[0] == 0) ? 1 : 0);
-        common->Printf("  leak control: chebyshev=%s normalBias=%.1f viewBias=%.1f (spacing %.0f, so %.2f/%.2f "
-                       "cells)\n",
-                       outUbo.misc[2] ? "ON" : "OFF", outUbo.tune[1], outUbo.tune2[1], s_spacing,
-                       outUbo.tune[1] / Max(1.0f, s_spacing), outUbo.tune2[1] / Max(1.0f, s_spacing));
-    }
-
     return true;
 }
 
@@ -1798,8 +1694,8 @@ void VK_RT_DispatchGIProbeTrace(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 0, 1,
                             &vkRT.giDescSets[frameIdx], 1, &giParamsOffset);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 1, 1, &vkRT.matDescSet[vk.currentFrame],
-                            0, NULL);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 1, 1,
+                            &vkRT.matDescSet[vk.currentFrame], 0, NULL);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 2, 1,
                             &vkRT.giProbeDescSets[frameIdx], 0, NULL);
 

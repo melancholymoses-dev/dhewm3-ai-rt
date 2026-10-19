@@ -132,22 +132,6 @@ idCVar r_rtVolIsotropicMix("r_rtVolIsotropicMix", "0.45", CVAR_RENDERER | CVAR_A
                            "Henyey-Greenstein forward lobe (0 = pure HG, 1 = fully isotropic).  Raises "
                            "side-on/high-angle shaft visibility without lowering r_rtVol*Anisotropy.");
 
-static idCVar r_rtVolDebugMode("r_rtVolDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
-                               "0=off, 1=path transmittance as greyscale (white=clear air, black=fully "
-                               "extinguished before reaching the surface), 2=raw scatter colour "
-                               "(post self-attenuation, unscaled by density/strength).");
-
-static idCVar r_rtVolDebugGain("r_rtVolDebugGain", "20.0", CVAR_RENDERER | CVAR_FLOAT,
-                               "Mode-2-only pre-tonemap gain so tiny raw scatter values survive "
-                               "the Uchimura toe curve instead of reading as pitch black.");
-
-idCVar r_rtVolDump("r_rtVolDump", "0", CVAR_RENDERER | CVAR_BOOL,
-                   "One-shot dump of the volumetric params UBO and the vol light SSBO exactly as "
-                   "uploaded (origin/extents/colour/intensity/type per light). Self-clears after "
-                   "one frame. Use when on-screen brightness disagrees with the shader's model.");
-
-bool vkRT_volDumpPending = false;
-
 // Scene directed/spot lights (lightType 1) — separate from the player's flashlight.
 idCVar r_rtVolDirectedGain("r_rtVolDirectedGain", "70.0", CVAR_RENDERER | CVAR_FLOAT,
                            "Radiance gain for scene directed/spot in-scatter.  Brightness only.");
@@ -806,6 +790,7 @@ static void VK_RT_InitVolCompositePipeline(void)
     // --- Debug variant: blend disabled (replace), so r_rtVolDebugMode's
     // transmittance/scatter visualization isn't muddied by additive blending onto
     // the already-lit scene. Mirrors reflCompositeDebugPipeline in vk_reflections.cpp. ---
+    // TODO: Remove?  do we need this blend any more for debug?
     VkPipelineColorBlendAttachmentState replaceBlend = {};
     replaceBlend.blendEnable = VK_FALSE;
     replaceBlend.colorWriteMask =
@@ -2066,8 +2051,8 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
                             &vkRT.volMarchDescSets[frameIdx], 1, &uboOff);
     // set=1: material table (MatTable SSBO, VtxAddrTable, IdxAddrTable, bindless
     // textures) — Stage 3 (rt_projected_light_cookies.md) light-cookie sampling.
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volMarchPipelineLayout, 1, 1, &vkRT.matDescSet[vk.currentFrame], 0,
-                            NULL);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volMarchPipelineLayout, 1, 1,
+                            &vkRT.matDescSet[vk.currentFrame], 0, NULL);
 
     uint32_t groupsX = ((uint32_t)ubo.scissorExtentX + 7) / 8;
     uint32_t groupsY = ((uint32_t)ubo.scissorExtentY + 7) / 8;
@@ -2104,29 +2089,6 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
         common->Printf("VK RT Vol: dispatch complete groups=%ux%u march=%dx%d scale=%d sigma_t=%.6f samples=%d\n",
                        groupsX, groupsY, ubo.marchWidth, ubo.marchHeight, ubo.marchScale, ubo.extinction,
                        ubo.numSamples);
-
-    // r_rtVolDump (see the cvar's comment): the params half, armed by vk_gi.cpp after
-    // it printed the light half. The cvars are re-read and clamped into `ubo` every
-    // frame, so what prints here is post-clamp — r_rtVolAnisotropy is clamped to 0.99,
-    // which is why a slider parked at 1.0 never actually reaches g=1 (and the HG peak
-    // is non-monotonic in g: it maxes near 0.9, not 1.0).
-    if (vkRT_volDumpPending)
-    {
-        vkRT_volDumpPending = false;
-        common->Printf("=== [r_rtVolDump] VolParamsUBO as uploaded (frameIdx=%d) ===\n", frameIdx);
-        common->Printf("  camera=(%.0f %.0f %.0f)  frameIndex=%u\n", ubo.cameraPosX, ubo.cameraPosY, ubo.cameraPosZ,
-                       ubo.frameIndex);
-        common->Printf("  numSamples=%d  maxLights=%d  maxDist=%.1f  whiteNoiseMix=%.4f\n", ubo.numSamples,
-                       ubo.maxLights, ubo.maxDist, ubo.whiteNoiseMix);
-        VK_RT_VolPrintMedium(ubo.extinction, ubo.albedo, ubo.scatterPoint, ubo.scatterDirected, ubo.scatterFlash);
-        common->Printf("  anisotropy: point=%.4f directed=%.4f flashlight=%.4f  isotropicMix=%.3f\n", ubo.anisotropy,
-                       ubo.directedAnisotropy, ubo.flashlightAnisotropy, ubo.isotropicMix);
-        common->Printf("  attenuateBackground=%d\n", (int)VK_RT_VolCompositeAfterSurfaces());
-        common->Printf("  screen=%dx%d  march=%dx%d scale=%d  scissor=(%d,%d %dx%d)\n", ubo.screenWidth,
-                       ubo.screenHeight, ubo.marchWidth, ubo.marchHeight, ubo.marchScale, ubo.scissorOffsetX,
-                       ubo.scissorOffsetY, ubo.scissorExtentX, ubo.scissorExtentY);
-        common->Printf("  sizeof(VolParamsUBO)=%d (GLSL std140 block expects 176)\n", (int)sizeof(VolParamsUBO));
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2193,23 +2155,15 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
     {
         float invScreen[2];
         int32_t debugMode;
-        float debugGain;
-    } pc = {
-        {1.0f / Max(1.0f, (float)vk.swapchainExtent.width), 1.0f / Max(1.0f, (float)vk.swapchainExtent.height)},
-        r_rtVolDebugMode.GetInteger(),
-        Max(0.0f, r_rtVolDebugGain.GetFloat()),
-    };
+    } pc = {{1.0f / Max(1.0f, (float)vk.swapchainExtent.width), 1.0f / Max(1.0f, (float)vk.swapchainExtent.height)}, 0};
 
-    // Froxel overlays (20260906_froxel_probe_gi.md F1) arrive already composed in
+    // Froxel overlays arrive already composed in
     // volBuffer.rgb, so the fragment shader's mode 2 — "show rgb as-is under the
-    // replace pipeline" — is exactly the right display path. Gain is 1.0 because
-    // the resolve has already applied r_rtVolFroxelDebugGain where it matters
-    // (mode 1); modes 2 and 3 output normalised ramps that must not be scaled.
+    // replace pipeline" — is exactly the right display path.
     const int froxelDebug = VK_RT_VolFroxelDebugMode();
     if (froxelDebug != 0)
     {
         pc.debugMode = 2;
-        pc.debugGain = 1.0f;
     }
 
     // Debug modes still win over F6's attenuating pipeline: both visualizations

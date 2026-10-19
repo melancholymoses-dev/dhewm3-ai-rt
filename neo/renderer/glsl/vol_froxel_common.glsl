@@ -57,7 +57,7 @@ layout(set = 0, binding = 2, std140) uniform VolFroxelParams {
     // slot now carries the two-lobe phase blend (rt_PhaseFunction, rt_phase.glsl).
     vec4  strengths;    // 160  xyz=sigma_s*gain per class  w=isotropicMix
     vec4  anisos;       // 176  x=point y=directed z=flashlight w=unused
-    ivec4 misc;         // 192  x=frameIndex y=maxLights z=debugMode w=debugSlice
+    ivec4 misc;         // 192  x=frameIndex y=maxLights z=debugMode w=unused
     ivec4 screen;       // 208  x=screenW y=screenH z=outW w=outH  (resolve target)
     ivec4 rect;         // 224  resolve dispatch rect, resolve-target space
     mat4  prevViewProj; // 240  F4 reprojection; identity until then

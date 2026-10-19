@@ -226,12 +226,9 @@ void main()
     // well-distributed in aggregate. A per-frame golden-ratio rotation (same
     // idiom as shadow_ray.rgen's phiOffset, Fix 2) varies the pattern frame to
     // frame so the temporal EMA keeps converging instead of locking onto one
-    // static dither. Confirmed >6 samples improves shaft quality noticeably,
-    // 64 did little — consistent with decorrelation (not step count) having
-    // been the limiter.
+    // static dither. 
     //
-    // IGN's regularity is a double-edged sword: it fixed the "beams read as
-    // noise" problem, but the same fixed diagonal grid is visible as striping/
+    // IGN's regularity is a double-edged sword: the same fixed diagonal grid is visible as striping/
     // fringing along march edges once the eye locks onto the pattern. Blend in
     // a little decorrelated white noise (wang_hash, same per-pixel/per-frame
     // seed idiom as the RT bounce shaders) to soften the grid without fully
@@ -271,14 +268,7 @@ void main()
         // Self-attenuation fix (2026-08-23 — reported as a general volumetric
         // brightness "lift"): light scattered at this step still has to travel
         // back through every step of medium between here and the camera before
-        // it reaches the eye. Every step below was previously added at full
-        // strength regardless of how much medium sat between it and the
-        // camera — `transmittance` was computed and used only for the
-        // early-exit check above, never applied to the accumulated contribution.
-        // That's a straight energy-conservation bug: a beam through N steps of
-        // fog summed N un-attenuated contributions instead of a properly
-        // decaying series, which reads as a flat brightness lift rather than a
-        // shaped beam. Geometric mean of before/after transmittance
+        // it reaches the eye.Geometric mean of before/after transmittance
         // approximates the transmittance AT stepPos (the step's midpoint,
         // matching stepT above) rather than at either endpoint.
         float stepTransmittance = sqrt(transBefore * transmittance);
@@ -343,12 +333,6 @@ void main()
                 atten = rt_LightBoxAtten(maxNorm, giLightBuf.falloffMode, giLightBuf.falloffReach);
 
                 // Fade to zero at the emitter to prevent a singularity glow blob.
-                // `dist` is measured from emitPos, which is where the singularity
-                // actually is — the innermost 15% of the sphere radius is where the
-                // march step gets close enough that phase/direction noise amplifies
-                // into a visible bright sphere. Before lightCenter was honoured this
-                // blob sat at the volume centre, i.e. in the wrong place for any light
-                // whose mapper offset the emitter.
                 float coreFade = smoothstep(0.0, sphereRad * 0.15, dist);
                 atten *= coreFade;
             }
@@ -426,6 +410,7 @@ void main()
     // Transmittance above used sigma_t, so the two halves now share a medium: the
     // per-class scale divided by sigma_t is that class's effective albedo, and
     // r_rtVolDump prints it so a value above 1 (energy creation) is visible.
+    // TODO: Remove?
     vec3 result = max(
         scatter_point    * params.scatterPoint    +
         scatter_directed * params.scatterDirected +
@@ -437,9 +422,6 @@ void main()
 
     // Alpha carries the total path transmittance (camera -> tMax): 1.0 = clear
     // air, near-0.0 = the view ray is fully extinguished by the medium before
-    // it reaches the surface. Consumed by the composite under
-    // r_rtVolAttenuateBackground (F6), which also moves the composite after the
-    // interaction pass so ALL scene radiance behind the fog is attenuated, not
-    // just the GI/reflection base. Inspect it directly with r_rtVolDebugMode 1.
+    // it reaches the surface. 
     imageStore(volBuf, coord, vec4(result, transmittance));
 }

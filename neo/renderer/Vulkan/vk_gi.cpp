@@ -657,13 +657,11 @@ extern VkImageView VK_RT_GetNullGbufNormalView(void);
 
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
-extern idCVar r_rtGbufNormals;   // P9 — defined in vk_gbuffer.cpp
+extern idCVar r_rtGbufNormals;                // P9 — defined in vk_gbuffer.cpp
 extern float VK_RT_PlayerExcludeRadius(void); // vk_shadows.cpp — 0 unless the fp body is drawn
-extern idCVar r_rtVolMaxLights;  // defined in vk_vol.cpp — cap for the vol-only selection built below
-float g_vkVolMaxLightReach = 0.0f; // consumed by VK_RT_Pass2CullRadius (vk_accelstruct.cpp)
-extern idCVar r_rtVolMaxDist;    // defined in vk_vol.cpp — vol march reach, used to filter that selection
-extern idCVar r_rtVolDump;       // defined in vk_vol.cpp — one-shot verbatim dump of the vol upload
-extern bool vkRT_volDumpPending; // defined in vk_vol.cpp — handoff so the params half prints too
+extern idCVar r_rtVolMaxLights;               // defined in vk_vol.cpp — cap for the vol-only selection built below
+float g_vkVolMaxLightReach = 0.0f;            // consumed by VK_RT_Pass2CullRadius (vk_accelstruct.cpp)
+extern idCVar r_rtVolMaxDist;                 // defined in vk_vol.cpp — vol march reach, used to filter that selection
 
 // ---------------------------------------------------------------------------
 // VK_RT_CreateGILightSsbos / VK_RT_DestroyGILightSsbos
@@ -1275,9 +1273,8 @@ struct giCompositePC_t
 
 extern idCVar r_rtAOIndirectStrength; // vk_ao.cpp
 extern idCVar r_rtAODebug;
-extern idCVar r_rtAODebugGain;
 
-static bool s_giCompositeAOValid = false;   // AO bound by this frame's VK_RT_CompositeGI
+static bool s_giCompositeAOValid = false;  // AO bound by this frame's VK_RT_CompositeGI
 static int s_giCompositeWrittenFrame = -1; // tr.frameCount of the last descriptor write
 
 static void VK_RT_DrawGIComposite(VkCommandBuffer cmd, VkPipeline pipeline, int debugMode)
@@ -1286,7 +1283,6 @@ static void VK_RT_DrawGIComposite(VkCommandBuffer cmd, VkPipeline pipeline, int 
     pc.useAO = s_giCompositeAOValid ? 1 : 0;
     pc.aoStrength = idMath::ClampFloat(0.0f, 1.0f, r_rtAOIndirectStrength.GetFloat());
     pc.debugMode = debugMode;
-    pc.debugGain = Max(0.0f, r_rtAODebugGain.GetFloat());
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.giCompositeLayout, 0, 1,
@@ -1434,8 +1430,8 @@ static void VK_RT_InitGICompositePipeline(void)
 
     // Debug variant (r_rtAODebug): blend off, so the view replaces the frame instead of adding to it.
     blendAttachments[0].blendEnable = VK_FALSE;
-    VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL,
-                                       &vkRT.giCompositeDebugPipeline));
+    VK_CHECK(
+        vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.giCompositeDebugPipeline));
 
     vkDestroyShaderModule(vk.device, vertMod, NULL);
     vkDestroyShaderModule(vk.device, fragMod, NULL);
@@ -2577,47 +2573,6 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         volLb->lights[idx] = s_volSelected[i]->entry;
         volLb->cookies[idx] = s_volSelected[i]->cookie;
     }
-
-    // r_rtVolDump: read the entries back out of the MAPPED pointer, not out of
-    // s_volSelected — the whole point is to show the bytes the march shader will
-    // actually read, so a bad copy/stride/aliasing bug shows up here rather than
-    // being masked by re-printing the source we copied from.
-    //
-    // posRadius.xyz is the light entity's origin, which uniquely identifies it in
-    // the .map (the [vol selection] dump above can only print the *material* name,
-    // and a map reuses one light material across dozens of entities).
-    if (r_rtVolDump.GetBool())
-    {
-        r_rtVolDump.SetBool(false); // one-shot: this site always runs, so it owns the clear
-        vkRT_volDumpPending = true; // hand off to VK_RT_DispatchVolumetrics for the params half
-        common->Printf("=== [r_rtVolDump] vol light SSBO as uploaded (frameIdx=%d) ===\n", frameIdx);
-        common->Printf("  numLights=%d  bounceScale=%.4f  giRadius=%.1f  emissiveScale=%.4f  falloff=%d/%.2f\n",
-                       volLb->numLights, volLb->bounceScale, volLb->giRadius, volLb->emissiveScale, volLb->falloffMode,
-                       volLb->falloffReach);
-        common->Printf("  (GI upload for comparison: numLights=%d;  numSelected=%d, numVolSelected=%d, "
-                       "numCandidates=%d)\n",
-                       lb->numLights, numSelected, numVolSelected, numCandidates);
-        for (int i = 0; i < volLb->numLights; i++)
-        {
-            const GILightEntry &e = volLb->lights[i];
-            const int li = (i < numVolSelected) ? s_volSelected[i]->lightIdx : -1;
-            const idRenderLightLocal *ld = (li >= 0 && li < numLightDefs) ? world->lightDefs[li] : NULL;
-            common->Printf(
-                "  #%-3d type=%u flags=0x%x origin=(%.0f %.0f %.0f) sphereR=%.1f\n"
-                "        emitPos=(%.0f %.0f %.0f) lightCenterOffset=%.1f\n"
-                "        color=(%.3f %.3f %.3f) intensity=%.3f\n"
-                "        boxExtents=(%.1f %.1f %.1f) reach=%.1f  coneDir=(%.3f %.3f %.3f) "
-                "cosHalf=%.3f\n"
-                "        shader=%s\n",
-                i, e.lightType, e.flags, e.posRadius[0], e.posRadius[1], e.posRadius[2], e.posRadius[3], e.emitPos[0],
-                e.emitPos[1], e.emitPos[2],
-                idVec3(e.emitPos[0] - e.posRadius[0], e.emitPos[1] - e.posRadius[1], e.emitPos[2] - e.posRadius[2])
-                    .Length(),
-                e.colorIntensity[0], e.colorIntensity[1], e.colorIntensity[2], e.colorIntensity[3], e.boxExtents[0],
-                e.boxExtents[1], e.boxExtents[2], e.boxExtents[3], e.coneDir[0], e.coneDir[1], e.coneDir[2],
-                e.coneDir[3], (ld && ld->lightShader) ? ld->lightShader->GetName() : "<?>");
-        }
-    }
 }
 
 // Convert viewDef->scissor (GL Y-up) to VkRect2D (VK Y-down).
@@ -2885,13 +2840,12 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // Independent validity check — the two images are created together, but the rgen's
     // playerClassValid must describe the one it actually samples.
     static VkImageView s_lastGIClassView[VK_MAX_FRAMES_IN_FLIGHT] = {};
-    VkImageView classView =
-        haveClass ? vkRT.gbufAlbedo[frameIdx].view : VK_RT_GetNullGbufNormalView();
+    VkImageView classView = haveClass ? vkRT.gbufAlbedo[frameIdx].view : VK_RT_GetNullGbufNormalView();
 
-    const bool resourceChanged =
-        (s_lastGITlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) || (s_lastGIStorageView[frameIdx] != gb.view) ||
-        (s_lastGIDepthView[frameIdx] != vk.depthSampledView) || (s_lastGIGbufView[frameIdx] != gbufView) ||
-        (s_lastGIClassView[frameIdx] != classView);
+    const bool resourceChanged = (s_lastGITlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
+                                 (s_lastGIStorageView[frameIdx] != gb.view) ||
+                                 (s_lastGIDepthView[frameIdx] != vk.depthSampledView) ||
+                                 (s_lastGIGbufView[frameIdx] != gbufView) || (s_lastGIClassView[frameIdx] != classView);
 
     bool refreshSet = (vkRT.giDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount) || resourceChanged;
     if (refreshSet)
@@ -3001,8 +2955,8 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 0, 1,
                             &vkRT.giDescSets[frameIdx], 1, &uboOff);
     // set=1: material table
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 1, 1, &vkRT.matDescSet[vk.currentFrame],
-                            0, NULL);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 1, 1,
+                            &vkRT.matDescSet[vk.currentFrame], 0, NULL);
     // set=2: probe resources. gi_ray.rgen never touches them, but the probe
     // raygen is a group in this same pipeline, so leaving the set unbound makes
     // every descriptor it declares "accessed but not updated" from the

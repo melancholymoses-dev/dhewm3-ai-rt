@@ -55,7 +55,7 @@ layout(set = GIPROBE_SET, binding = 2, std140) uniform GIProbeParams {
     ivec4 misc;        // 176  x=debugMode y=useGbufNormal z=visibility w=irradiance buckets (1+K)
     ivec4 screen;      // 192  x=screenW y=screenH z=outW w=outH
     ivec4 rect;        // 208  resolve dispatch rect, output-image space
-    vec4  debug;       // 224  x=debugGain y=probeRadius z=distSharpness w=unused
+    vec4  debug;       // 224  x=unused y=unused z=distSharpness w=unused  TODO:Shrink
     vec4  tune2;       // 240  x=giContrast y=viewBias z=fastGain[0] w=fastGain[1]
 } gp;
 
