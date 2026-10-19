@@ -123,24 +123,26 @@ static idCVar r_rtGIProbeDistSharpness("r_rtGIProbeDistSharpness", "50.0", CVAR_
                                        "EDGES, not a smooth field.");
 
 static idCVar r_rtGIProbeDebug("r_rtGIProbeDebug", "0", CVAR_RENDERER | CVAR_INTEGER,
-                               "Probe overlay: 0=off, 1=probe spheres tinted by stored irradiance, "
+                               "Probe overlay: 0=off, "
                                "2=probe weights (blue->red = fraction of weight Chebyshev rejected; "
                                "magenta = no usable probe, GI is black there), "
                                "3=leak detector: Chebyshev vs ray-traced ground truth — green=agree, "
                                "red=LEAK (occluded but let through), blue=over-dark (visible but blocked), "
-                               "magenta=all 8 probes excluded, so that surface gets NO probe GI at all, "
-                               "4=probe state (green=usable, red=never traced, blue=buried in geometry, "
-                               "yellow=in the void outside the level; flagged probes x-ray through walls at half "
-                               "brightness, so dim=behind geometry and bright=in open air, i.e. misclassified), "
-                               "5=distance atlas (blue->red ramp of mean hit distance / "
-                               "r_rtGIProbeMaxRayDist; magenta = impossible second moment), "
-                               "6=RAW backface fraction, 7=RAW miss fraction (blue=0 green=0.5 red=1). "
-                               "6/7 show the measurement mode 4's verdict is made from: an air probe must "
-                               "read BLUE in mode 6, and if it does not, no threshold can fix it. "
-                               "8=G5b fast bucket: GREEN = share of this pixel's GI that is being "
-                               "flicker-factorized, RED = flickering lights reaching the point / 3. Only the "
-                               "highest-importance one is bucketed, so red is what G5b is still leaving "
-                               "EMA-smeared — dark red across a level says one bucket covers it.");
+                               "magenta=all 8 probes excluded, so that surface gets NO probe GI at all. "
+                               "2 is the cheap always-available view, 3 costs 8 occlusion rays per pixel "
+                               "and is the ground truth 2 approximates. "
+                               "Retired, now no-ops (numbers kept stable): 1, 4, 5, 6, 7, 8 — the sphere-"
+                               "lattice overlay 1/4/5/6/7 drew through went with r_rtGIProbeDebugRadius.");
+
+// One place decides which modes exist.  A retired number must not read as "an
+// overlay is active": the probe-active test keeps the trace and resolve running
+// when r_rtGIProbes is 0 purely so the overlays work, so a dead number would cost
+// a full probe dispatch to draw nothing.
+static int VK_RT_ValidProbeDebugMode(void)
+{
+    const int mode = r_rtGIProbeDebug.GetInteger();
+    return (mode == 2 || mode == 3) ? mode : 0;
+}
 
 // ---------------------------------------------------------------------------
 // Forward declarations from other vk_*.cpp modules
@@ -240,7 +242,7 @@ static_assert(sizeof(GIProbeStatsEntry) == 8, "GIProbeStatsEntry size mismatch")
 #define VK_GIPROBE_DESC_BINDINGS 7
 
 // Resolve set bindings. Its own layout, and its own count.
-#define VK_GIPROBE_RESOLVE_BINDINGS 10
+#define VK_GIPROBE_RESOLVE_BINDINGS 8
 
 // ---------------------------------------------------------------------------
 // CPU-side probe bookkeeping
@@ -959,7 +961,7 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
 
     // Must track VK_RT_GIProbeDebugMode's range. A stale upper bound here does
     // not disable the new mode, it silently renders a DIFFERENT one.
-    ubo.misc[0] = idMath::ClampInt(0, 8, r_rtGIProbeDebug.GetInteger());
+    ubo.misc[0] = VK_RT_ValidProbeDebugMode();
     ubo.misc[1] = (vk.gbufferSupported && r_rtGbufNormals.GetBool()) ? 1 : 0;
     ubo.misc[2] = r_rtGIProbeVisibility.GetBool() ? 1 : 0;
     // G5b: how many bucket-sized tile blocks the irradiance atlas holds. The
@@ -1149,10 +1151,6 @@ static void VK_RT_InitProbeBlendPipelines(void)
 //     references it statically, so it has to be a live handle on every dispatch;
 //     the resolve therefore requires a valid TLAS, exactly as VK_RT_DispatchGI
 //     already does.
-//   8 STORAGE_BUFFER          probe stats (modes 6/7)
-//   9 STORAGE_BUFFER          GI light SSBO — G5b's mode 8 counts how many FAST
-//     lights reach each receiver, which is the measurement that decides K=1 vs
-//     K=2. Same static-reference rule as the TLAS above: debug-only, always bound.
 static void VK_RT_InitProbeResolvePipeline(void)
 {
     VkDescriptorSetLayoutBinding bindings[VK_GIPROBE_RESOLVE_BINDINGS] = {};
@@ -1170,8 +1168,6 @@ static void VK_RT_InitProbeResolvePipeline(void)
     bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[7].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    bindings[8].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; // stats, modes 6/7
-    bindings[9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; // GI lights, G5b mode 8
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1210,8 +1206,9 @@ static void VK_RT_InitProbeResolvePipeline(void)
     poolSizes[0] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 4)};
     poolSizes[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
     poolSizes[2] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
-    // 3 storage buffers per set now: probe state, probe stats, and G5b's lights.
-    poolSizes[3] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 3)};
+    // One storage buffer per set: probe state.  The stats and GI-light bindings went
+    // with debug modes 6/7 and 8.
+    poolSizes[3] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
     poolSizes[4] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
 
     VkDescriptorPoolCreateInfo poolInfo = {};
@@ -1357,10 +1354,10 @@ int VK_RT_GIProbeDebugMode(void)
         return 0;
     if (vkRT.giProbeResolvePipeline == VK_NULL_HANDLE || vkRT.giProbeIrradiance.image == VK_NULL_HANDLE)
         return 0;
-    // Mirror of the clamp in VK_RT_BuildProbeParams' misc[0]. Both must move
+    // Mirror of VK_RT_BuildProbeParams' misc[0]. Both must move
     // together: raising only this one gates the new mode in but leaves the UBO
     // telling the shader to render a different one.
-    return idMath::ClampInt(0, 8, r_rtGIProbeDebug.GetInteger());
+    return VK_RT_ValidProbeDebugMode();
 }
 
 // True when the probe path OWNS the GI result — G2 wires this to stand the
@@ -1393,7 +1390,7 @@ static bool VK_RT_GIProbeMaintain(void)
         return false;
     if (vkRT.giProbeIrradiance.image == VK_NULL_HANDLE)
         return false;
-    if (r_rtGIProbes.GetInteger() == 0 && r_rtGIProbeDebug.GetInteger() == 0)
+    if (r_rtGIProbes.GetInteger() == 0 && VK_RT_ValidProbeDebugMode() == 0)
         return false;
     return vkRT.giProbeBlendPipeline != VK_NULL_HANDLE && vkRT.giProbeBorderPipeline != VK_NULL_HANDLE;
 }
@@ -1916,12 +1913,6 @@ void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
         tlasWrite.accelerationStructureCount = 1;
         tlasWrite.pAccelerationStructures = &vkRT.tlas[frameIdx].handle;
 
-        VkDescriptorBufferInfo statsInfo = {vkRT.giProbeStatsSsbo, 0, VK_WHOLE_SIZE};
-
-        // G5b mode 8 only, but statically referenced by the shader, so it is
-        // bound on every dispatch. Same slot's buffer gi_ray.rchit reads.
-        VkDescriptorBufferInfo lightInfo = {vkRT.giLightSsbo[frameIdx], 0, VK_WHOLE_SIZE};
-
         VkWriteDescriptorSet writes[VK_GIPROBE_RESOLVE_BINDINGS] = {};
         for (int i = 0; i < VK_GIPROBE_RESOLVE_BINDINGS; i++)
         {
@@ -1946,10 +1937,6 @@ void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[6].pImageInfo = &gbufInfo;
         writes[7].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
         writes[7].pNext = &tlasWrite;
-        writes[8].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writes[8].pBufferInfo = &statsInfo;
-        writes[9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writes[9].pBufferInfo = &lightInfo;
 
         vkUpdateDescriptorSets(vk.device, VK_GIPROBE_RESOLVE_BINDINGS, writes, 0, NULL);
         vkRT.giProbeResolveDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;

@@ -1880,9 +1880,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     // r_rtReflectionDebugMode 2+ replaces reflBuffer with a visualization and
     // refl_composite.frag already draws it full-screen with blending off; adding the
     // per-surface overlay on top would re-weight it by the alpha channel and double it.
-    extern idCVar r_rtReflectionDebugMode;
-    const int reflDebugMode = r_rtReflectionDebugMode.GetInteger();
-    const bool reflDebugActive = (reflDebugMode >= 2 && reflDebugMode <= REFL_DEBUG_MAX_MODE);
+    const bool reflDebugActive = (VK_RT_ValidReflDebugMode() != 0);
 
     if (r_vkSplitSubmitVerbose.GetInteger() > 0)
     {
@@ -4740,7 +4738,7 @@ void VK_RB_DrawView(const void *data)
         s_frameCmdBuf = cmdBuf;
         s_frameActive = true;
 
-        if (r_fsrDebug.GetInteger() >= 2)
+        if (r_vkLogRT.GetInteger() >= 2)
         {
             common->Printf("VK FSR VIEW: FIRST gui=%d draw=%ux%u render=%ux%u display=%ux%u scissor=(%d,%d %ux%u) "
                            "prevFrameValid=%d jitter=(%.3f,%.3f)\n",
@@ -4828,7 +4826,7 @@ void VK_RB_DrawView(const void *data)
         // for subviews it confines rendering to the mirror surface's screen bounds.
         vkCmdSetScissor(s_frameCmdBuf, 0, 1, &s_viewScissor);
 
-        if (r_fsrDebug.GetInteger() >= 2)
+        if (r_vkLogRT.GetInteger() >= 2)
         {
             common->Printf("VK FSR VIEW: subsequent gui=%d upscaleDone=%d vp=%ux%u scissor=(%d,%d %ux%u) "
                            "vdViewport=(%d,%d %d,%d) vdScissor=(%d,%d %d,%d) sub=%d mirror=%d\n",
@@ -5691,7 +5689,7 @@ void VK_RB_SwapBuffers()
     // VK_RB_DrawView, so the sub-rect is still unresolved here.  No-op otherwise.
     if (!s_upscaleDone && VK_RT_UpscaleActive())
     {
-        if (r_fsrDebug.GetInteger() >= 2)
+        if (r_vkLogRT.GetInteger() >= 2)
             common->Printf("VK FSR VIEW: resolve ran in the SwapBuffers FALLBACK — no GUI overlay view was seen, "
                            "so the UI (if any) drew at render resolution\n");
         VK_SetRenderStage("RT_Upscale");
@@ -5728,11 +5726,6 @@ void VK_RB_SwapBuffers()
     VK_SetRenderStage("RT_MaskDebug");
     VK_RT_DispatchMaskDebug(cmdBuf);
 
-    // Bloom source overlay (r_rtBloomDebug 2).  Same slot again: after the resolve so it
-    // magnifies crisply at display resolution, before the tonemap so hdrScene is still
-    // what gets read.  No-op unless the mode is selected.
-    VK_SetRenderStage("RT_BloomDebug");
-    VK_RT_DispatchBloomDebug(cmdBuf);
 
     // Tonemap: read hdrScene (RGBA16F), apply Uchimura filmic curve, blit to swapchain.
     // After this call the swapchain image is in PRESENT_SRC_KHR.

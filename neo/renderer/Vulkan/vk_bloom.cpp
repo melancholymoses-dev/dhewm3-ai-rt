@@ -4,7 +4,6 @@
 dhewm3-rt Vulkan — vk_bloom.cpp — screen-space emissive bloom (B0/B1).
 
 Owns the bloom images, the two B1 source-capture dispatches, and the
-r_rtBloomDebug 2 source view.  See vk_bloom.h for the frame ordering and
 docs/plans/20260906_bloom_plan.md for why the source is a diff rather than a
 luminance threshold.
 
@@ -64,9 +63,9 @@ idCVar r_rtBloomMips("r_rtBloomMips", "4", CVAR_RENDERER | CVAR_INTEGER | CVAR_A
                      "Levels in the bloom blur chain, i.e. the glow radius, in display pixels at any "
                      "r_fsrRenderScale.  Keep tight: a wide radius lifts dark regions.");
 idCVar r_rtBloomDebug("r_rtBloomDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
-                      "Bloom debug view.  1 = max(r,g,b) bands of the finished frame (<0.5 black, 0.5-1 blue, "
-                      "1-2 green, 2-4 yellow, >4 red), works with r_rtTonemap 0 too.  2 = bloomMip[0], the "
-                      "extracted source; suspends the blur and composite so the view is the raw extract.");
+                      "HDR range bands of the finished frame: 1 = max(r,g,b) banded <0.5 black, 0.5-1 blue, "
+                      "1-2 green, 2-4 yellow, >4 red.  Works with r_rtTonemap 0 and with bloom off — it reads "
+                      "the frame, not the bloom chain.  Retired, now a no-op: 2 (raw bloomMip[0] extract).");
 
 // ---------------------------------------------------------------------------
 // Resources.  File-static: vk_bloom.cpp is the only translation unit that
@@ -106,14 +105,12 @@ static vkRTImage_t s_bloomMip[VK_MAX_FRAMES_IN_FLIGHT][VK_BLOOM_MAX_MIPS];
 
 static bloomPass_t s_bloomPrepass;
 static bloomPass_t s_bloomExtract;
-static bloomPass_t s_bloomDebug;
 static bloomPass_t s_bloomDown;
 static bloomPass_t s_bloomUp;
 static bloomPass_t s_bloomComposite;
 
 static bool s_prepassReady;
 static bool s_extractReady;
-static bool s_debugReady;
 static bool s_chainReady;
 
 // Linear clamp sampler for the debug magnify.  Separate from vkRT.upscaleSampler so
@@ -128,9 +125,6 @@ static int s_preFrame[VK_MAX_FRAMES_IN_FLIGHT];
 // Bounds a single blown emissive texel so one sample cannot dominate the blur chain.
 // Generous — muzzle flashes legitimately reach past 10.
 static const float BLOOM_CLAMP_MAX = 16.0f;
-
-// Pre-tonemap gain on the debug view; see bloom_debug.comp.
-static const float BLOOM_DEBUG_GAIN = 4.0f;
 
 // Upsample tap offset in source texels, and the mix weight toward each blurred
 // lower mip.  0.5 scatter keeps the chain's total weight at 1 whatever
@@ -156,15 +150,6 @@ struct BloomExtractPC
     float emissiveWeight;
     float litWeight;
     float clampMax;
-};
-
-// Must match bloom_debug.comp.
-struct BloomDebugPC
-{
-    int32_t srcExtent[2];
-    int32_t srcImageExtent[2];
-    int32_t displayExtent[2];
-    float gain;
 };
 
 // Must match bloom_down.comp.
@@ -591,9 +576,8 @@ bool VK_RT_BloomActive(void)
 {
     if (!vkRT.isInitialized)
         return false;
-    // Debug mode 1 is the tonemap's own band view and needs none of this; mode 2
-    // views the extract's output, so it has to pull the capture up on its own.
-    if (!r_rtBloom.GetBool() && r_rtBloomDebug.GetInteger() != 2)
+    // Debug mode 1 is the tonemap's own band view and needs none of this.
+    if (!r_rtBloom.GetBool())
         return false;
     if (!s_prepassReady || !s_extractReady)
         return false;
@@ -717,16 +701,7 @@ void VK_RT_BloomExtract(VkCommandBuffer cmd)
 
 bool VK_RT_BloomCompositeActive(void)
 {
-    // r_rtBloom specifically, NOT VK_RT_BloomActive: r_rtBloomDebug 2 pulls the source
-    // capture up on its own so the view has something to show, and it must not start
-    // compositing glow the user switched off.
     if (!r_rtBloom.GetBool() || !s_chainReady)
-        return false;
-    // Mode 2 views bloomMip[0], which the up chain's last level writes into.  Letting
-    // the chain run would hand the overlay blurred, chain-accumulated glow and call it
-    // the extracted source — useless for calibrating the thresholds, which is the only
-    // thing that view is for.
-    if (r_rtBloomDebug.GetInteger() == 2)
         return false;
     if (!VK_RT_BloomActive())
         return false;
@@ -854,65 +829,6 @@ void VK_RT_DispatchBloom(VkCommandBuffer cmd)
     }
 }
 
-bool VK_RT_BloomDebugActive(void)
-{
-    if (r_rtBloomDebug.GetInteger() != 2 || !s_debugReady)
-        return false;
-    if (!vkRT.isInitialized || s_bloomMip[vk.currentFrame][0].image == VK_NULL_HANDLE)
-        return false;
-    // Without this the overlay would paint the cleared black mip over the frame and
-    // read as "the extract produced nothing" rather than "nothing ran it".
-    if (s_preFrame[vk.currentFrame] != tr.frameCount)
-        return false;
-    return true;
-}
-
-void VK_RT_DispatchBloomDebug(VkCommandBuffer cmd)
-{
-    if (!VK_RT_BloomDebugActive())
-        return;
-
-    const int frameIdx = (int)vk.currentFrame;
-    const uint32_t dispW = vk.swapchainExtent.width;
-    const uint32_t dispH = vk.swapchainExtent.height;
-
-    const VkImageView srcView = s_bloomMip[frameIdx][0].view;
-    VK_RT_WriteBloomDescriptors(s_bloomDebug, frameIdx, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &srcView, 1,
-                                vkRT.hdrScene[frameIdx].view);
-
-    VK_RT_BloomSceneToGeneral(cmd, frameIdx, VK_ACCESS_SHADER_WRITE_BIT);
-
-    // Orders the extract's write of the mip against this sample of it.
-    VkMemoryBarrier mipDone = {};
-    mipDone.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    mipDone.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    mipDone.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
-                         &mipDone, 0, NULL, 0, NULL);
-
-    uint32_t srcW, srcH;
-    VK_RT_BloomLevelExtent(0, &srcW, &srcH);
-
-    BloomDebugPC pc;
-    // Every texel of mip 0 is written now that the extract resamples, so the valid
-    // rect is the whole image.
-    pc.srcExtent[0] = (int32_t)srcW;
-    pc.srcExtent[1] = (int32_t)srcH;
-    pc.srcImageExtent[0] = (int32_t)s_bloomMip[frameIdx][0].width;
-    pc.srcImageExtent[1] = (int32_t)s_bloomMip[frameIdx][0].height;
-    pc.displayExtent[0] = (int32_t)dispW;
-    pc.displayExtent[1] = (int32_t)dispH;
-    pc.gain = BLOOM_DEBUG_GAIN;
-
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_bloomDebug.pipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_bloomDebug.layout, 0, 1,
-                            &s_bloomDebug.descSets[frameIdx * s_bloomDebug.setsPerFrame], 0, NULL);
-    vkCmdPushConstants(cmd, s_bloomDebug.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-    vkCmdDispatch(cmd, (dispW + 7) / 8, (dispH + 7) / 8, 1);
-
-    VK_RT_BloomSceneToAttachment(cmd, frameIdx, VK_ACCESS_SHADER_WRITE_BIT);
-}
-
 void VK_RT_InitBloom(void)
 {
     common->Printf("VK: initializing RT bloom (B1)\n");
@@ -923,8 +839,6 @@ void VK_RT_InitBloom(void)
                                            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, sizeof(BloomPrepassPC), 1);
     s_extractReady = VK_RT_CreateBloomPass(s_bloomExtract, "glprogs/glsl/bloom_extract.comp.spv",
                                            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, sizeof(BloomExtractPC), 2);
-    s_debugReady = VK_RT_CreateBloomPass(s_bloomDebug, "glprogs/glsl/bloom_debug.comp.spv",
-                                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sizeof(BloomDebugPC), 1);
 
     // The down and up passes run once per level, each against a different pair of
     // views, so they need one descriptor set per level per frame slot.
@@ -939,8 +853,6 @@ void VK_RT_InitBloom(void)
 
     if (!s_prepassReady || !s_extractReady)
         common->Warning("VK RT Bloom: source capture unavailable — r_rtBloom will do nothing");
-    if (!s_debugReady)
-        common->Warning("VK RT Bloom: bloom_debug.comp failed to load — r_rtBloomDebug 2 unavailable");
     if (!s_chainReady)
         common->Warning("VK RT Bloom: blur chain unavailable — r_rtBloom will capture but not composite");
 }
@@ -951,7 +863,7 @@ void VK_RT_InitBloom(void)
 // rewrite, leaving descriptors resolved against freed resources.
 static void VK_RT_InvalidateBloomDescriptorCache(void)
 {
-    bloomPass_t *passes[] = {&s_bloomPrepass, &s_bloomExtract, &s_bloomDebug,
+    bloomPass_t *passes[] = {&s_bloomPrepass, &s_bloomExtract,
                              &s_bloomDown,    &s_bloomUp,      &s_bloomComposite};
     for (int i = 0; i < (int)(sizeof(passes) / sizeof(passes[0])); i++)
     {
@@ -1000,13 +912,11 @@ void VK_RT_ShutdownBloom(void)
 
     VK_RT_DestroyBloomPass(s_bloomPrepass);
     VK_RT_DestroyBloomPass(s_bloomExtract);
-    VK_RT_DestroyBloomPass(s_bloomDebug);
     VK_RT_DestroyBloomPass(s_bloomDown);
     VK_RT_DestroyBloomPass(s_bloomUp);
     VK_RT_DestroyBloomPass(s_bloomComposite);
     s_prepassReady = false;
     s_extractReady = false;
-    s_debugReady = false;
     s_chainReady = false;
 
     if (s_bloomSampler != VK_NULL_HANDLE)

@@ -355,24 +355,33 @@ menu (see the read-user-cfg rule). Reconcile the four before writing the presets
 | `pm_modelView` | FP/TP model | Camera from the player model's POV | 0 | D | = |
 | `g_showPlayerShadow` | FP/TP model | Player model casts shadow / appears in reflections | 1 | P | = |
 
-### Debug mode census (2026-10-18)
+### Debug mode census — **Phase 1d done 2026-10-18**
 
-44 live modes across 8 cvars, measured by grepping the shader `debugMode ==` branches rather
-than the help strings — the two had drifted (the shadow help documents no mode 12, and
-`r_rtShadowBackfaceCull`, which that mode visualized, no longer exists). Cleanup Phase 1d
-trims to 18. Retired numbers become documented no-ops so doc and memory references keep
-resolving.
+Was 44 live modes across 8 cvars, now **13 across 7**. Counted by grepping the shader
+`debugMode ==` branches, not the help strings — the two had drifted (the shadow help
+documented no mode 12, and `r_rtShadowBackfaceCull`, which that mode visualized, no longer
+exists). Retired numbers are documented no-ops, so doc and memory references keep resolving.
 
-| Cvar | Live modes | Count | Keep after 1d |
+| Cvar | Was | Now | Retired |
 |---|---|---|---|
-| `r_rtReflectionDebugMode` | 2,3,4,6,11,12,13,14,15 (1,5,7,8,9,10 already no-ops) | 9 | 2,3,11,12,13,15 |
-| `r_rtShadowDebugMode` | 1,2,3,5,7,8,9,10,11 | 9 | 9, 10 |
-| `r_rtGIProbeDebug` | 1-8 | 8 | 1, 3, 4 |
-| `r_fsrDebug` | 1 FSR1-ran border, 2 view logging, 3 mask overlay, 4 point-magnify A/B, 5 FSR2 bleed, 6 EASU-only, 7 motion vectors | 7 | 3, 7 |
-| `r_rtVolFroxelDebug` | 1 slice, 2 light-count heatmap, 3 grid-mapping error, 4 blocked cone hits | 4 | 1, 2, 3 |
-| `r_rtAODebug` | 1 raw mask, 2 GI×AO, 3 GI without AO | 3 | 1, 2, 3 |
-| `r_rtVolDebugMode` | 1 transmittance, 2 raw scatter | 2 | none (goes with the march path, Phase 4) |
-| `r_rtBloomDebug` | 1 HDR range bands, 2 raw extract | 2 | 1 |
+| `r_rtReflectionDebugMode` | 9 | **2** G-buffer normal, **3** F0, **11** denoiser history, **12** roughness, **13** GI handoff, **15** à-trous edge stops | 4, 6, 14 (plus 1, 5, 7-10 already) |
+| `r_rtShadowDebugMode` | 9 | **9** bias budget, **10** player exclusion, **11** light-volume cull | 1, 2, 3, 5, 7, 8 |
+| `r_rtGIProbeDebug` | 8 | **2** probe weights, **3** leak detector | 1, 4, 5, 6, 7, 8 |
+| `r_fsrDebug` | 7 | **3** reactive/T&C masks, **7** motion vectors | 1, 2, 4, 5, 6 |
+| `r_rtVolFroxelDebug` | 4 | **2** light-count heatmap, **3** grid-mapping error | 1, 4 |
+| `r_rtAODebug` | 3 | **1** raw mask, **2** GI×AO, **3** GI without AO | — |
+| `r_rtBloomDebug` | 2 | **1** HDR range bands | 2 |
+| `r_rtVolDebugMode` | 2 | cvar deleted | — |
+
+Every one of the seven now routes through a `VK_RT_Valid*DebugMode()` that coerces a retired
+number to 0. Without it a dead value still read as "an overlay is active" and took the
+perturbed path — replace-blend composite, suppressed blur, forced `r_rtReflectionMode 3` —
+to render an ordinary image.
+
+Capability actually lost, not just renumbered: the probe **sphere-lattice overlay** (placement,
+buried/void classification) and the **FSR2 bleed** and **bloom source** passes. The probe
+lattice was already broken before this pass — its renderer went with `r_rtGIProbeDebugRadius`
+in the 2026-10-18 cvar commits, so modes 1/4/5/6/7 had been rendering black.
 
 ## 3. Recommended quality preset
 

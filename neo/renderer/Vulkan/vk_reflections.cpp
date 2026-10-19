@@ -194,16 +194,11 @@ idCVar r_rtGlassCreaseRatio("r_rtGlassCreaseRatio", "0.25", CVAR_RENDERER | CVAR
 
 idCVar r_rtReflectionDebugMode(
     "r_rtReflectionDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
-    "0 = off. Retired, now no-ops: 1, 5, 7, 8, 9, 10 (numbers kept stable).\n"
+    "0 = off. Retired, now no-ops: 1, 4, 5, 6, 7, 8, 9, 10, 14 (numbers kept stable).\n"
     "2 = output G-buffer world normal as RGB (reflect_ray.rgen) — a grate floor should look\n"
     "    bumpy/detailed, not flat single-colour; silhouette edges must match geometry.\n"
     "3 = output G-buffer F0 (alpha) greyscale (reflect_ray.rgen) — most of the scene near-black,\n"
     "    metal/wet trim grey, nothing solid white.\n"
-    "4 = tint pixels using the rt_ReconstructNormal fallback (G-buffer alpha == 0) magenta\n"
-    "    (reflect_ray.rgen) — should be only sky/translucents once the prepass covers the scene.\n"
-    "6 = raw traced radiance, before reflBlend and before the Schlick/glass weight. The\n"
-    "    decisive 'dark subject vs weak interface' measurement — a dim player here means the\n"
-    "    lighting chain is short (B2/B4), a bright one means the glass weight is (B3).\n"
     "11 = reflection denoiser history age / rejection mask (needs r_rtReflDenoise >= 1, else this\n"
     "    just shows the normal unfiltered reflection — reflect_ray.rgen has no mode-11 case of\n"
     "    its own): green = accepted, brightness = history age; red = rejected this frame\n"
@@ -216,17 +211,34 @@ idCVar r_rtReflectionDebugMode(
     "    over the ceiling or below the F0 floor (GI alone). Forces r_rtReflectionMode 3\n"
     "    regardless of the cvar, so sweeping r_rtReflRoughnessMax moves the blue/green\n"
     "    boundary live.\n"
-    "14 = à-trous branch view (needs r_rtReflDenoise 2): grey = glass, dark blue = untraced,\n"
-    "    red = roughness 0 (filter skipped), yellow = traced but no traced neighbour (blur is a\n"
-    "    no-op), green = filtered, brighter = more of the blurred result used.\n"
     "15 = à-trous edge-stop weight (needs r_rtReflDenoise 2): grey level = mean step-1 weight\n"
     "    over traced neighbours, white = blends freely, black = stopped. Floors should be\n"
-    "    white, rails and creases outlined dark. Yellow = no traced neighbour; untraced/glass\n"
-    "    as mode 14. Tune r_rtReflAtrousSigmaPlane/NormalPower here.\n"
-    "Modes 2-4, 6, 12 and 13 require r_rtReflections 1 — they ride on the reflection ray\n"
+    "    white, rails and creases outlined dark. Yellow = no traced neighbour, grey = glass,\n"
+    "    dark blue = untraced. Tune r_rtReflAtrousSigmaPlane/NormalPower here.\n"
+    "Modes 2, 3, 12 and 13 require r_rtReflections 1 — they ride on the reflection ray\n"
     "dispatch, force the full-screen launch grid, and are displayed via refl_composite.frag\n"
     "with blending disabled (replace, not add). The per-surface glass overlay is suppressed\n"
     "while they are active.");
+
+// One place decides which modes exist.  A retired number must not read as "a debug
+// view is active": that would force r_rtReflectionMode 3, suppress the glass overlay
+// and switch the composite to replace-blend, all to display an ordinary image through
+// a perturbed path.
+int VK_RT_ValidReflDebugMode(void)
+{
+    switch (r_rtReflectionDebugMode.GetInteger())
+    {
+    case 2:
+    case 3:
+    case 11:
+    case 12:
+    case 13:
+    case 15:
+        return r_rtReflectionDebugMode.GetInteger();
+    default:
+        return 0;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // UBO layout matching reflect_ray.rgen ReflParams block
@@ -2229,8 +2241,8 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
     // Stage 4b: the glass population launches over the glass rect; opaque and the
     // legacy BOTH path launch full-screen. The rect itself is resolved once per frame
     // by the caller so both dispatches agree on it.
-    const int reflDebugMode = r_rtReflectionDebugMode.GetInteger();
-    const bool reflDebugActive = (reflDebugMode >= 2 && reflDebugMode <= REFL_DEBUG_MAX_MODE);
+    const int reflDebugMode = VK_RT_ValidReflDebugMode();
+    const bool reflDebugActive = (reflDebugMode != 0);
     const bool glassOnly = (r_rtReflectionMode.GetInteger() == 1) && !reflDebugActive;
     const bool launchOverGlassRect = (population == REFL_POP_GLASS) || (population == REFL_POP_BOTH && glassOnly);
 
@@ -2300,7 +2312,7 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
     // Ceiling matches the settings-menu slider range.
     ubo.reflBlend = idMath::ClampFloat(0.0f, 10.0f, r_rtReflectionBlend.GetFloat());
     ubo.roughnessScale = idMath::ClampFloat(0.0f, 4.0f, r_rtReflRoughnessScale.GetFloat());
-    ubo.debugMode = r_rtReflectionDebugMode.GetInteger();
+    ubo.debugMode = VK_RT_ValidReflDebugMode();
     ubo.sceneHasGlass = vkRT.sceneHasGlass ? 1 : 0;
     ubo.minWeight = idMath::ClampFloat(0.0f, 1.0f, r_rtReflectionMinWeight.GetFloat());
     ubo.roughLumExp = idMath::ClampFloat(0.0f, 8.0f, r_rtReflRoughLumExp.GetFloat());
@@ -2623,8 +2635,8 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
 void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
     const int frameIdx = vk.currentFrame;
-    const int debugMode = r_rtReflectionDebugMode.GetInteger();
-    const bool debugActive = (debugMode >= 2 && debugMode <= REFL_DEBUG_MAX_MODE);
+    const int debugMode = VK_RT_ValidReflDebugMode();
+    const bool debugActive = (debugMode != 0);
     const int mode = idMath::ClampInt(1, 3, r_rtReflectionMode.GetInteger());
 
     // Resolve the glass rect once: the glass dispatch launches over it and the opaque
@@ -2772,7 +2784,7 @@ static void VK_RT_DispatchReflTemporalChain(VkCommandBuffer cmd, const viewDef_t
     ubo.scissorExtentX = (int32_t)dispatchRect.extent.width;
     ubo.scissorExtentY = (int32_t)dispatchRect.extent.height;
     ubo.resetHistory = reset ? 1 : 0;
-    ubo.debugMode = r_rtReflectionDebugMode.GetInteger();
+    ubo.debugMode = VK_RT_ValidReflDebugMode();
     ubo.maxAge = 32;
     ubo.fireflyClamp = idMath::ClampFloat(0.0f, 8.0f, r_rtReflAtrousFireflyClamp.GetFloat());
     ubo._pad0[0] = 0.0f;
@@ -3096,7 +3108,7 @@ static void VK_RT_DispatchReflAtrousChain(VkCommandBuffer cmd, const viewDef_t *
         pc.scissorOffsetY = dispatchRect.offset.y;
         pc.scissorExtentX = (int32_t)dispatchRect.extent.width;
         pc.scissorExtentY = (int32_t)dispatchRect.extent.height;
-        pc.debugMode = r_rtReflectionDebugMode.GetInteger();
+        pc.debugMode = VK_RT_ValidReflDebugMode();
         pc.normalPower = normalPower;
         memcpy(pc.invViewProj, invViewProj, sizeof(pc.invViewProj));
 
@@ -3152,13 +3164,13 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
 // View for any downstream reflection consumer. See the header comment.
 static VkImageView VK_RT_ReflChainReadView(const vkReflChain_t *chain, int frameIdx)
 {
-    const int debugMode = r_rtReflectionDebugMode.GetInteger();
-    // Modes 2-4, 6, 12 and 13 are instantaneous per-frame visualizations baked into
+    const int debugMode = VK_RT_ValidReflDebugMode();
+    // Modes 2, 3, 12 and 13 are instantaneous per-frame visualizations baked into
     // the traced image by reflect_ray.rgen itself — routing them through the EMA'd
     // history would smear them across frames and defeat the point. Mode 11 is the one
     // exception: it IS the denoiser's own history/rejection state.
-    // Modes 14/15 are the à-trous pass's own views, so they read the filter output.
-    if (debugMode >= 2 && debugMode <= REFL_DEBUG_MAX_MODE && debugMode != 11 && debugMode != 14 && debugMode != 15)
+    // Mode 15 is the à-trous pass's own view, so it reads the filter output.
+    if (debugMode != 0 && debugMode != 11 && debugMode != 15)
         return chain->trace[frameIdx].view;
     // Mode 11 IS the denoiser's own history/rejection state (written directly into
     // history by refl_temporal_resolve.comp, alpha forced to 1.0 — see its own
@@ -3398,8 +3410,8 @@ void VK_RT_CompositeReflections(VkCommandBuffer cmd)
     if (!VK_RT_ReflReadReady(frameIdx) || vkRT.reflSampler == VK_NULL_HANDLE)
         return;
 
-    const int debugMode = r_rtReflectionDebugMode.GetInteger();
-    const bool debugActive = (debugMode >= 2 && debugMode <= REFL_DEBUG_MAX_MODE);
+    const int debugMode = VK_RT_ValidReflDebugMode();
+    const bool debugActive = (debugMode != 0);
 
     // R6: glass-only has nothing for this pass — opaque is never traced and glass is
     // composited per-surface. It would also read stale texels outside the traced rect.

@@ -68,7 +68,20 @@ work that would use it has shipped.
 |---|---|
 | `r_rtAODebugGain`, `r_rtGIProbeDebugGain/Radius/Dump`, `r_rtVolDebugGain/Dump`, `r_rtVolFroxelDebugSlice/Gain/Dump`, `r_rtGILightDump`, `r_rtTlasDump` | `r_rtAODebug`, `r_rtGIProbeDebug`, `r_rtVolFroxelDebug` (hardcode the gains) |
 | `r_vkRTReflDataDiag`, `r_vkRTInterLogN`, `r_vkRTLogCaptureReset`, `r_vkRTDebugLightTextures`, `r_vkRTLightLogN`, `r_vkRTDebugLightFilter`, `r_vkRTDebugSurface`, `r_vkRTDebugMaxLogsPerFrame` | `r_vkRTProfile*`, `r_vkLogRT`, `r_vkLogSubmitInfo`, `r_vkLogTLASSlow`, `r_vkBLASPoolCheck` |
-| `r_vkShadowFlipOps`, `r_vkShadowFullScissor`, `r_vkLightFullScissor`, `r_vkSplitSubmitMask/Verbose`, `r_vkLowPerturbationMode`, `r_vkLogShadowBranch/Geom`, `r_vkVcCheck` | `r_vkSerializeFrames` (cheap stability bisect) |
+| `r_vkShadowFlipOps`, `r_vkShadowFullScissor`, `r_vkLightFullScissor`, `r_vkLogShadowBranch/Geom`, `r_vkVcCheck` | `r_vkSerializeFrames`, `r_vkSplitSubmitMask/Verbose`, `r_vkLowPerturbationMode` |
+
+**Correction 2026-10-18:** the split-submit trio was wrongly listed as **X**. The three
+answer different questions and none substitutes for another:
+
+| Cvar | Axis | Question | Perturbs |
+|---|---|---|---|
+| `r_vkSerializeFrames` | across frames | CPU/GPU race on a shared host-visible buffer? | nothing inside a frame — only frames-in-flight |
+| `r_vkSplitSubmitMask` | within a frame | which pass faults / hangs? | submit granularity, i.e. the thing under test |
+| `r_vkLowPerturbationMode` | meta | master off switch (default **1**) for the probes | — |
+
+`SerializeFrames` is the only one that drops frames-in-flight to 1, and per-frame-in-flight
+resource bugs are a proven failure mode here (the GI 2-frame strobe). `SplitSubmitMask`
+cannot see that class and `SerializeFrames` cannot localise within a frame. All three stay **C**.
 
 `r_rtBloomDebug` moves to 1d (mode 1 is a general HDR-range overlay, not bloom-only).
 
@@ -100,9 +113,9 @@ doc now lists them with verdicts. Summary:
 8g Stage 5 (knob consolidation) still owns folding `r_rtReflAtrousIterations` +
 `r_rtReflAtrousRoughnessGain` into one wash scale. Do that before writing the presets.
 
-### 1d — debug mode trim
+### 1d — debug mode trim — **done 2026-10-18**
 
-44 live modes across 8 cvars; target 18. Own section: [Phase 1d](#phase-1d--debug-mode-trim).
+44 live modes across 8 cvars → **13 across 7**. Own section: [Phase 1d](#phase-1d--debug-mode-trim).
 
 Check (each group): build, load Mars City, `cvarlist r_rt` and `r_vk` shrink; baseline
 screenshots identical (image diff). Also drops the matching `DebugMode` branches in
@@ -110,35 +123,39 @@ screenshots identical (image diff). Also drops the matching `DebugMode` branches
 
 ---
 
-## Phase 1d — Debug mode trim
+## Phase 1d — Debug mode trim — **done 2026-10-18**
 
 A debug mode earns its keep if it answers a question no other instrument answers **against
-the current pipeline**. Modes built to settle an arc go when the arc's conclusion lands in
-`../rt_engine_rules.md`. **Numbers stay stable** — retired modes become documented no-ops,
-as `r_rtReflectionDebugMode` already does, so plan docs and memories keep resolving.
+the current pipeline**. Modes built to settle an arc went once the arc's conclusion landed in
+`../rt_engine_rules.md`. **Numbers stay stable** — retired modes are documented no-ops, so
+plan docs and memories keep resolving.
 
-| Cvar | Live now | Keep | Retire | Why those |
+**44 modes across 8 cvars → 13 across 7.**
+
+| Cvar | Was | Kept | Retired | Why |
 |---|---|---|---|---|
-| `r_rtReflectionDebugMode` | 2,3,4,6,11,12,13,14,15 (9) | 2,3,11,12,13,15 | 4, 6, 14 | 4 = prepass coverage, settled. 6 = the B2/B3/B4 "dark subject vs weak interface" measurement, arc closed. 14 (à-trous branch) is subsumed by 15 (edge-stop weight) |
-| `r_rtShadowDebugMode` | 1,2,3,5,7,8,9,10,11 (9) | 9, 10 | 1,2,3,5,7,8,11 | 1/2/3/5 are bias-direction views from the A12 arc — settled. 7/8 (aniso cone) shipped. 9 is the bias-vs-depth-error budget, the recurring failure. 11 goes with `r_rtShadowVolumeCull` (1b) |
-| `r_rtGIProbeDebug` | 1-8 (8) | 1, 3, 4 | 2, 5, 6, 7, 8 | 1 = is there GI here, 3 = leak detector, 4 = probe classification. 2 is subsumed by 3/4. 6/7 existed to validate 4's verdict; 8 (G5b buckets) shipped. **Move mode 5's "impossible second moment" magenta into mode 4** before deleting 5 — that check is an earned rule |
-| `r_fsrDebug` | 1-7 (7) | 3, 7 | 1, 2, 4, 5, 6 | 3 = reactive/T&C mask overlay (both masks are live knobs), 7 = motion vectors (the recurring FSR bug class). 2 is verbose view logging → fold into `r_vkLogRT`. 1/4/5/6 are U0/U3 A-B switches from closed stages |
-| `r_rtVolFroxelDebug` | 1-4 (4) | 1, 2, 3 | 4 | 1 = slice, 2 = per-cell light count (cost attribution), 3 = grid-mapping error (the infinite-far-plane discriminator). 4 (blocked cone hits) is a one-off |
-| `r_rtAODebug` | 1-3 (3) | 1, 2, 3 | — | Three distinct views, all cheap, AO is still being tuned |
-| `r_rtVolDebugMode` | 1,2 (2) | — | both | Goes with the per-pixel march path in Phase 4 |
-| `r_rtBloomDebug` | 1,2 (2) | 1 | 2 | Mode 1 is an HDR-range band overlay useful well beyond bloom; rename it out of the bloom group. 2 (raw extract) is one-off |
+| `r_rtReflectionDebugMode` | 9 | 2, 3, 11, 12, 13, 15 | 4, 6, 14 | 4 = prepass coverage, settled. 6 = the B2/B3/B4 "dark subject vs weak interface" measurement, arc closed. 14 (à-trous branch) subsumed by 15 |
+| `r_rtShadowDebugMode` | 9 | 9, 10, 11 | 1, 2, 3, 5, 7, 8 | 1/2/3/5 are bias-direction views from the A12 arc. 7/8 (aniso cone) shipped. 9 is the bias-vs-depth-error budget, the recurring failure. **11 stays:** 1b hardcoded the cull always-on (`vk_shadows.cpp:1057`), so 11 is the only way left to check it |
+| `r_rtGIProbeDebug` | 8 | 2, 3 | 1, 4, 5, 6, 7, 8 | 2 is the cheap weight view, 3 the ray-traced ground truth it approximates. 1/4/5/6/7 shared a sphere-lattice renderer that **was already deleted** with `r_rtGIProbeDebugRadius` — all five rendered black. 8 (G5b buckets) shipped |
+| `r_fsrDebug` | 7 | 3, 7 | 1, 2, 4, 5, 6 | 3 = reactive/T&C masks (both are live knobs), 7 = motion vectors (the recurring FSR bug class). 2's per-view logging moved to `r_vkLogRT 2`. 1/4/6 are U0/U3 A/B switches; 5 (FSR2 bleed) was a whole pass, deleted |
+| `r_rtVolFroxelDebug` | 4 | 2, 3 | 1, 4 | 2 = per-cell light count (cost attribution), 3 = grid-mapping error (the infinite-far-plane discriminator). 1 had already lost its `…DebugSlice` cvar and rendered black; 4 was a one-off |
+| `r_rtAODebug` | 3 | 1, 2, 3 | — | Three distinct views, all cheap, AO still being tuned |
+| `r_rtBloomDebug` | 2 | 1 | 2 | 1 is an HDR-range band overlay useful well beyond bloom and reads the frame, not the chain. 2 (raw `bloomMip[0]`) was a whole pass, deleted |
+| `r_rtVolDebugMode` | 2 | — | cvar gone | Went with the per-pixel march path |
 
-Totals: 44 → **18**, cvars 8 → 7 (`r_rtVolDebugMode` goes entirely).
+**The validator is the load-bearing part.** Every one of the seven now reads through a
+`VK_RT_Valid*DebugMode()` that returns 0 for a retired number. Without it a dead value still
+satisfied the `!= 0` / `>= 2 && <= MAX` tests that mean "an overlay is active", and took the
+perturbed path — replace-blend composite, suppressed shadow blur, forced
+`r_rtReflectionMode 3`, a probe resolve dispatched with probes off — to draw an ordinary image.
+`REFL_DEBUG_MAX_MODE` is gone; the validator replaced it.
 
-| Step | Detail |
-|---|---|
-| 1d-a | Shaders first: delete the retired branches in `reflect_ray.rgen`, `refl_atrous.comp`, `shadow_ray.rgen`, `gi_probe_resolve.comp`, `fsr_rcas.comp`, `vol_froxel_fill.comp`. Lower `REFL_DEBUG_MAX_MODE` only if 15 is ever retired — it is not |
-| 1d-b | C++ clamps and the dispatch guards that mention specific modes (`vk_reflections.cpp:3161`, `vk_backend.cpp:1943`, `vk_vol_froxel.cpp:565/1095`) |
-| 1d-c | Rewrite each cvar help string as a one-line-per-live-mode list, ending with "retired no-ops: N, N, N" |
-| 1d-d | Probe mode 5 → 4 magenta merge (do before deleting 5) |
+Deleted outright, with shader + pipeline + push-constant struct + CMake entry: the probe
+sphere-lattice tracer, `fsr2_bleed_debug.comp`, `bloom_debug.comp`. `fsr_rcas.comp` lost its
+`debugMode` push constant entirely.
 
 Check: each kept mode still renders its documented colours at Mars City; each retired number
-renders the normal image, not garbage; `cvarlist *Debug*` help text matches what the shaders do.
+renders the normal image, not garbage; `cvarlist *Debug*` help matches what the shaders do.
 
 ---
 

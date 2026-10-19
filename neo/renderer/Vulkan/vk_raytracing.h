@@ -924,20 +924,19 @@ void VK_RT_DispatchReflTemporal(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // falls back to the temporal history (1) or the traced image (0).
 void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
-// Highest r_rtReflectionDebugMode handled inside reflect_ray.rgen. Modes 2-4 are the
-// G-buffer checks (docs/plans/gbuffer_normal_pass.md); 5-7 are B0
-// (docs/plans/20260918_reflection_brightness.md). Anything in 2..this forces the
-// full-screen launch grid, takes the replace-blend composite, and suppresses the
-// per-surface glass overlay.
-// 8 = projectile emitter discs (vk_rt_emitters.cpp); 9 = glass crease split; 10 = GUI hits;
-// 11 = reflection denoiser history age / rejection mask (VK_RT_DispatchReflTemporal)
-// 14 = à-trous branch view, 15 = à-trous edge-stop weight (refl_atrous.comp)
-const int REFL_DEBUG_MAX_MODE = 15;
+// Coerces r_rtReflectionDebugMode to a mode that still exists, 0 otherwise. Every
+// consumer must go through this: a nonzero return forces the full-screen launch grid,
+// the replace-blend composite and suppression of the per-surface glass overlay, so a
+// retired number reading as "active" would route an ordinary image down that path.
+// Live: 2/3 G-buffer normal + F0, 11 denoiser history (VK_RT_DispatchReflTemporal),
+// 12 roughness, 13 GI handoff, 15 à-trous edge stops (refl_atrous.comp).
+// Numbers are kept stable across retirements so plan docs keep resolving.
+int VK_RT_ValidReflDebugMode(void);
 
 // Additively composite reflBuffer onto the framebuffer (Step 8, see
 // docs/plans/gbuffer_normal_pass.md). Must be called INSIDE the main render
 // pass, after VK_RT_CompositeGI. No-op if vk.gbufferSupported is false.
-// Selects a blend-disabled variant when r_rtReflectionDebugMode is 2-7, so the
+// Selects a blend-disabled variant while VK_RT_ValidReflDebugMode is nonzero, so the
 // debug visualization replaces rather than adds onto the lit scene.
 void VK_RT_CompositeReflections(VkCommandBuffer cmd);
 

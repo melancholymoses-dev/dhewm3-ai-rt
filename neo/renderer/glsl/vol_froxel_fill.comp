@@ -131,7 +131,6 @@ void main()
     // cull AND the occlusion ray). Written to alpha in place of extinction — see
     // the imageStore at the end.
     int litCount = 0;
-    int occludedProjCount = 0; // debug mode 4: projected-light cone hits killed by the shadow ray
 
     for (int li = 0; li < maxLights; li++)
     {
@@ -239,8 +238,6 @@ void main()
         if (rayQueryGetIntersectionTypeEXT(rq, true) !=
             gl_RayQueryCommittedIntersectionNoneEXT)
         {
-            if (lt != 0u)
-                occludedProjCount++;
             continue; // occluded
         }
 
@@ -273,9 +270,7 @@ void main()
     // Alpha is sigma_t, the extinction coefficient the integrate pass
     // exponentiates — except under debug mode 2 where it carries the light count
     // instead (uniform branch, no divergence cost).
-    float alphaOut = (fp.misc.z == 2) ? float(litCount)
-                   : (fp.misc.z == 4) ? float(occludedProjCount)
-                                      : fp.densities.x;
+    float alphaOut = (fp.misc.z == 2) ? float(litCount) : fp.densities.x;
 
     imageStore(froxelScatter, cell, vec4(scatter, alphaOut));
 

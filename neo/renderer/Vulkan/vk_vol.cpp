@@ -790,7 +790,6 @@ static void VK_RT_InitVolCompositePipeline(void)
     // --- Debug variant: blend disabled (replace), so r_rtVolDebugMode's
     // transmittance/scatter visualization isn't muddied by additive blending onto
     // the already-lit scene. Mirrors reflCompositeDebugPipeline in vk_reflections.cpp. ---
-    // TODO: Remove?  do we need this blend any more for debug?
     VkPipelineColorBlendAttachmentState replaceBlend = {};
     replaceBlend.blendEnable = VK_FALSE;
     replaceBlend.colorWriteMask =

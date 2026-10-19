@@ -20,7 +20,8 @@ two paths writes vkRT.volBuffer.  Measured 2026-09-13: 1.63 -> 0.29 ms median,
 and the grid's 64 slices over [znear, dFar] integrate more accurately than the
 march's 8 steps over [0, r_rtVolMaxDist], whose last step spanned ~300 units.
 
-r_rtVolFroxelDebug hosts the overlays;
+r_rtVolFroxelDebug hosts the two overlays: 2 = per-cell light count, 3 = the
+grid-to-world mapping check.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -58,13 +59,23 @@ static idCVar r_rtVolFroxelResZ("r_rtVolFroxelResZ", "96", CVAR_RENDERER | CVAR_
                                 "Froxel grid depth in slices, exponentially distributed out to "
                                 "r_rtVolMaxDist. Change forces a device-idle realloc.");
 
-// Overlays (F1). All three replace the composite rather than adding to it —
-// VK_RT_CompositeVolumetrics switches to the replace pipeline while any of them
-// is active.
+// Overlays (F1). Both replace the composite rather than adding to it —
+// VK_RT_CompositeVolumetrics switches to the replace pipeline while either is
+// active.  Numbers are kept stable across retirements so plan docs keep
+// resolving; VK_RT_ValidFroxelDebugMode coerces a retired number to off.
 static idCVar r_rtVolFroxelDebug("r_rtVolFroxelDebug", "0", CVAR_RENDERER | CVAR_INTEGER,
                                  "Froxel grid overlay: 0=off, 2=per-cell light-count heatmap at the pixel's own "
                                  "depth slice, 3=grid-mapping error vs the depth-reconstructed world position "
-                                 "(green=agreement). Requires r_rtVolFroxel 1.");
+                                 "(green=agreement). Requires r_rtVolFroxel 1. "
+                                 "Retired, now no-ops: 1 (single Z slice), 4 (blocked projected-cone count).");
+
+// One place decides which overlay numbers exist, so the UBO and the composite's
+// replace-pipeline switch can never disagree about whether an overlay is active.
+static int VK_RT_ValidFroxelDebugMode(void)
+{
+    const int mode = r_rtVolFroxelDebug.GetInteger();
+    return (mode == 2 || mode == 3) ? mode : 0;
+}
 
 static idCVar r_rtVolProjEmitterBias("r_rtVolProjEmitterBias", "24", CVAR_RENDERER | CVAR_FLOAT,
                                      "Projected lights only: the shadow ray stops this many units short of the "
@@ -132,7 +143,7 @@ struct VolFroxelParamsUBO
     float densities[4];     // 144  x=sigma_t y=albedo(diag) z=unused w=whiteNoiseMix
     float strengths[4];     // 160  xyz=sigma_s*gain per class  w=isotropicMix
     float anisos[4];        // 176  x=point y=directed z=flashlight w=unused
-    int32_t misc[4];        // 192  x=frameIndex y=maxLights z=debugMode w=debugSlice
+    int32_t misc[4];        // 192  x=frameIndex y=maxLights z=debugMode w=unused
     int32_t screen[4];      // 208  x=screenW y=screenH z=outW w=outH (resolve target)
     int32_t rect[4];        // 224  resolve dispatch rect, resolve-target space
     float prevViewProj[16]; // 240  F4 reprojection; identity until then
@@ -545,7 +556,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     ubo.misc[1] = idMath::ClampInt(1, 128, r_rtVolMaxLights.GetInteger());
     // The fill reads the debug mode too: mode 2 makes it write a light count into
     // alpha instead of extinction.
-    ubo.misc[2] = idMath::ClampInt(0, 4, r_rtVolFroxelDebug.GetInteger());
+    ubo.misc[2] = VK_RT_ValidFroxelDebugMode();
     ubo.misc[3] = 0;
 
     // screen.xy = full res (depth fetch / NDC), screen.zw = the volBuffer the
@@ -1056,7 +1067,7 @@ int VK_RT_VolFroxelDebugMode(void)
         return 0;
     if (vkRT.froxelResolvePipeline == VK_NULL_HANDLE)
         return 0;
-    return idMath::ClampInt(0, 4, r_rtVolFroxelDebug.GetInteger());
+    return VK_RT_ValidFroxelDebugMode();
 }
 
 // ---------------------------------------------------------------------------
@@ -1657,7 +1668,7 @@ void VK_RT_DispatchVolFroxelResolve(VkCommandBuffer cmd, const viewDef_t *viewDe
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Froxel: resolve frame=%d slot=%d mode=%d slice=%d rect=(%d,%d %dx%d) out=%ux%u\n",
-                       tr.frameCount, frameIdx, ubo.misc[2], ubo.misc[3], ubo.rect[0], ubo.rect[1], ubo.rect[2],
-                       ubo.rect[3], vb.width, vb.height);
+        common->Printf("VK RT Froxel: resolve frame=%d slot=%d mode=%d rect=(%d,%d %dx%d) out=%ux%u\n",
+                       tr.frameCount, frameIdx, ubo.misc[2], ubo.rect[0], ubo.rect[1], ubo.rect[2], ubo.rect[3],
+                       vb.width, vb.height);
 }

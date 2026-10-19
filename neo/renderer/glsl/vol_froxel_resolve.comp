@@ -149,12 +149,10 @@ void main()
         outValue = texture(froxelIntegrated, vec3(uv, texW));
         outValue.rgb = max(outValue.rgb, vec3(0.0));
     }
-    else if (mode == 2 || mode == 4)
+    else if (mode == 2)
     {
-        // Mode 4 reads the same column max; the fill puts the occluded projected-light
-        // count in alpha instead of the lit count.
         // MAX over the visible column, not the single cell at the pixel's own
-        // depth. 
+        // depth.
         int   zEnd = clamp(int(floor(vf_DistToSlice(min(surfDist, dFar)))), 0, dims.z);
         float best = 0.0;
         for (int z = 0; z < zEnd; z++)

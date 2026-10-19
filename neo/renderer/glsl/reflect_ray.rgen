@@ -362,15 +362,6 @@ void main()
         imageStore(reflImage, coord, vec4(vec3(f0Fine), 1.0));
         return;
     }
-    if (params.debugMode == 4)
-    {
-        // Prepass-coverage check: pixels the prepass never wrote (B still at the 1.0
-        // clear sentinel) tinted magenta; should be only sky/translucents once the
-        // prepass covers the scene. Can't test f0 here: black/absent specular maps
-        // legitimately write f0 == 0.
-        imageStore(reflImage, coord, GBuf_NormalValid(gbuf) ? vec4(0.0) : vec4(1.0, 0.0, 1.0, 1.0));
-        return;
-    }
     if (params.debugMode == 12)
     {
         // Stage 2 roughness as greyscale — rough concrete bright, polished trim and
@@ -652,16 +643,6 @@ void main()
     // emissive along the segment, so it joins accum on the same footing as the glows
     // rather than being tinted by the reflector.
     accum += ReflVolumetrics(segOrigin, reflDir, segHitT, coord);
-
-    if (params.debugMode == 6)
-    {
-        // B0: raw traced radiance, before reflBlend and before any Fresnel/glass weight
-        // — the measurement that separates "dark subject" from "weak interface".
-        // Alpha is positive (not the glass sentinel) so refl_composite.frag displays it
-        // with blending off, same as modes 2-4.
-        imageStore(reflImage, coord, vec4(accum, 1.0));
-        return;
-    }
 
     if (isGlass)
     {

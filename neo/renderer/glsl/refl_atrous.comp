@@ -145,48 +145,13 @@ void main()
 
     vec4 cFull = texelFetch(reflSrc, coord, 0);
 
-    // Debug 14: classify each pixel by the branch pass 0 takes, then later passes copy
-    // it through untouched. Grey = glass, dark blue = untraced, red = roughness 0
-    // (skipped), yellow = traced but no traced 3x3 neighbour (blur is a no-op),
-    // green = filtered, brightness = roughness gate (share of the blurred result used).
     // Debug 15: the step-1 edge-stop weight, mean over traced neighbours. White = blends
-    // freely, black = fully stopped, yellow = no traced neighbour. Untraced/glass as 14.
+    // freely, black = fully stopped, yellow = no traced neighbour, grey = glass,
+    // dark blue = untraced. Later passes copy pass 0's classification through untouched.
     bool debugEdge = (pc.debugMode == 15);
-    if ((pc.debugMode == 14 || debugEdge) && pc.stepSize != 1)
+    if (debugEdge && pc.stepSize != 1)
     {
         imageStore(reflDst, coord, cFull);
-        return;
-    }
-
-    if (pc.debugMode == 14)
-    {
-        vec3 vis;
-        if (ReflAlpha_IsGlass(cFull.a))
-            vis = vec3(0.25);
-        else if (!ReflAlpha_Traced(cFull.a))
-            vis = vec3(0.0, 0.0, 0.3);
-        else
-        {
-            ivec2 aSz = textureSize(gbufAlbedoSampler, 0);
-            float r   = GBuf_UnpackRoughness(texelFetch(gbufAlbedoSampler, min(coord, aSz - 1), 0).a);
-            int   n   = 0;
-            for (int dy = -1; dy <= 1; dy++)
-                for (int dx = -1; dx <= 1; dx++)
-                {
-                    if (dx == 0 && dy == 0)
-                        continue;
-                    ivec2 s = clamp(coord + ivec2(dx, dy), ivec2(0), size - 1);
-                    if (ReflAlpha_Traced(texelFetch(reflSrc, s, 0).a))
-                        n++;
-                }
-            if (r <= 0.0)
-                vis = vec3(1.0, 0.0, 0.0);
-            else if (n == 0)
-                vis = vec3(1.0, 1.0, 0.0);
-            else
-                vis = vec3(0.0, 0.15 + 0.85 * clamp(r * pc.roughnessGain, 0.0, 1.0), 0.0);
-        }
-        imageStore(reflDst, coord, vec4(vis, 1.0));
         return;
     }
 

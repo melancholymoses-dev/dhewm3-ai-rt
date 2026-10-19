@@ -64,7 +64,6 @@ struct FsrEasuPC
 struct FsrRcasPC
 {
     float sharpness;
-    int32_t debugMode;
 };
 
 // Must match motion_debug.comp.
@@ -74,14 +73,6 @@ struct MotionDebugPC
     int32_t displayExtent[2];
     float motionScale;
     float brightness;
-};
-
-// Must match fsr2_bleed_debug.comp (r_fsrDebug 5).
-struct Fsr2BleedPC
-{
-    int32_t renderExtent[2];
-    int32_t displayExtent[2];
-    float threshold;
 };
 
 // Must match fsr_tc_mask.comp (U4).
@@ -110,7 +101,11 @@ idCVar r_fsrQuality("r_fsrQuality", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARC
                     "Render-resolution preset, overriding r_fsrRenderScale.  0 = use r_fsrRenderScale, "
                     "1 = Quality (1.5x), 2 = Balanced (1.7x), 3 = Performance (2.0x), "
                     "4 = Ultra Performance (3.0x).");
-idCVar r_fsrDebug("r_fsrDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE, "FSR Debug Mode.");
+idCVar r_fsrDebug("r_fsrDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
+                  "FSR debug overlay: 0=off, 3=reactive + transparency/composition mask view (needs FSR 2 "
+                  "with both r_fsrAutoReactive and r_fsrTcMask on), 7=motion-vector overlay (needs the "
+                  "G-buffer prepass). Retired, now no-ops (numbers kept stable): 1, 2, 4, 5, 6 — mode 2's "
+                  "per-view logging moved to r_vkLogRT 2.");
 idCVar r_fsrSharpness("r_fsrSharpness", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                       "RCAS sharpening for r_fsr 1.  0 = softest, 1 = sharpest.");
 idCVar r_fsrJitter("r_fsrJitter", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
@@ -170,8 +165,6 @@ static fsrPass_t s_motionDebug; // U2, r_fsrDebug 7
 static fsrPass_t s_fsrTcMask;   // U4, gbufAlbedo.a -> tcMask
 static fsrPass_t s_fsrMaskDebug; // U4, r_fsrDebug 3
 #if defined(DHEWM3_FSR2)
-static fsrPass_t s_fsr2Bleed; // U3, r_fsrDebug 5
-static bool s_fsr2BleedReady = false;
 #endif
 static bool s_fsr1Ready = false;
 static bool s_motionDebugReady = false;
@@ -693,14 +686,6 @@ static void VK_RT_CreateFsr1Pipelines(void)
     if (!s_fsrMaskDebugReady)
         common->Warning("VK RT Upscale: fsr_mask_debug.comp failed to load — r_fsrDebug 3 unavailable");
 
-#if defined(DHEWM3_FSR2)
-    // U3 bleed overlay (r_fsrDebug 5).  Two bindings is enough: binding 1 is a storage
-    // image, so the shader reads FSR2's output and writes the tint back over it.
-    s_fsr2BleedReady = VK_RT_CreateFsrPass(s_fsr2Bleed, "glprogs/glsl/fsr2_bleed_debug.comp.spv",
-                                           VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sizeof(Fsr2BleedPC));
-    if (!s_fsr2BleedReady)
-        common->Warning("VK RT Upscale: fsr2_bleed_debug.comp failed to load — r_fsrDebug 5 unavailable");
-#endif
 }
 
 static void VK_RT_DestroyFsr1Pipelines(void)
@@ -716,17 +701,12 @@ static void VK_RT_DestroyFsr1Pipelines(void)
     s_fsrTcMaskReady = false;
     s_fsrMaskDebugReady = false;
 #if defined(DHEWM3_FSR2)
-    VK_RT_DestroyFsrPass(s_fsr2Bleed);
-    s_fsr2BleedReady = false;
 #endif
 }
 
-// r_fsrDebug 4 is the point-magnify A/B, which lives on the bilinear path, so it
-// wins over r_fsr — otherwise there is nothing honest to compare FSR against.
 static bool VK_RT_Fsr1Active(void)
 {
-    return r_fsr.GetInteger() == 1 && r_fsrDebug.GetInteger() != 4 && s_fsr1Ready &&
-           s_fsrPerceptual[vk.currentFrame].image != VK_NULL_HANDLE;
+    return r_fsr.GetInteger() == 1 && s_fsr1Ready && s_fsrPerceptual[vk.currentFrame].image != VK_NULL_HANDLE;
 }
 
 static void VK_RT_DispatchFsr1(VkCommandBuffer cmd, int frameIdx)
@@ -814,7 +794,6 @@ static void VK_RT_DispatchFsr1(VkCommandBuffer cmd, int frameIdx)
 
         FsrRcasPC pc;
         pc.sharpness = 2.0f * (1.0f - s); // FsrRcasCon takes attenuation in stops; 0 = sharpest
-        pc.debugMode = r_fsrDebug.GetInteger();
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_fsrRcas.pipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_fsrRcas.layout, 0, 1,
@@ -1199,7 +1178,7 @@ static uint32_t VK_RT_Fsr2WantedFlags(void)
     // own, so there is no application exposure value to hand over.
     uint32_t flags =
         FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE | FFX_FSR2_ENABLE_DEPTH_INFINITE | FFX_FSR2_ENABLE_AUTO_EXPOSURE;
-    if (r_fsrDebug.GetInteger() >= 2)
+    if (r_vkLogRT.GetInteger() >= 2)
         flags |= FFX_FSR2_ENABLE_DEBUG_CHECKING;
     return flags;
 }
@@ -1279,11 +1258,11 @@ static bool VK_RT_Fsr2CreateContext(void)
     return true;
 }
 
-// Is FSR 2 the path the user asked for?  r_fsrDebug 4 is the point-magnify A/B and
+// Is FSR 2 the path the user asked for?
 // lives on the bilinear path, so it overrides r_fsr exactly as it does for FSR 1.
 static bool VK_RT_Fsr2Requested(void)
 {
-    return r_fsr.GetInteger() == 2 && r_fsrDebug.GetInteger() != 4;
+    return r_fsr.GetInteger() == 2;
 }
 
 // CAPABILITY, not demand: could FSR 2 run at all, ignoring whether there is a sub-rect to
@@ -1402,41 +1381,6 @@ static bool VK_RT_Fsr2Ready(void)
         }
     }
     return true;
-}
-
-// r_fsrDebug 5: pillar 2's black-level gate.  Tints pixels where the upscaled output
-// is brighter than the sub-rect input it came from by more than a threshold — i.e.
-// where FSR2's history has leaked light into a pixel that should be dark.
-static void VK_RT_DispatchFsr2BleedDebug(VkCommandBuffer cmd, int frameIdx)
-{
-    if (!s_fsr2BleedReady)
-        return;
-
-    // hdrScene is in SHADER_READ_ONLY_OPTIMAL and hdrUpscaled in GENERAL, which is
-    // exactly where ffxFsr2ContextDispatch left them.
-    VK_RT_WriteFsrPassDescriptors(s_fsr2Bleed, frameIdx, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                  vkRT.hdrScene[frameIdx].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                  vkRT.hdrUpscaled[frameIdx].view);
-
-    Fsr2BleedPC pc;
-    pc.renderExtent[0] = (int32_t)vk.renderExtent.width;
-    pc.renderExtent[1] = (int32_t)vk.renderExtent.height;
-    pc.displayExtent[0] = (int32_t)vk.swapchainExtent.width;
-    pc.displayExtent[1] = (int32_t)vk.swapchainExtent.height;
-    pc.threshold = 0.02f; // linear HDR luminance; the black floor we care about
-
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_fsr2Bleed.pipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_fsr2Bleed.layout, 0, 1,
-                            &s_fsr2Bleed.descSets[frameIdx], 0, NULL);
-    vkCmdPushConstants(cmd, s_fsr2Bleed.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-    vkCmdDispatch(cmd, (vk.swapchainExtent.width + 7) / 8, (vk.swapchainExtent.height + 7) / 8, 1);
-
-    VkMemoryBarrier mem = {};
-    mem.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    mem.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
-    mem.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mem, 0,
-                         NULL, 0, NULL);
 }
 
 static VkImageAspectFlags VK_RT_DepthAspect(void)
@@ -1617,7 +1561,7 @@ static void VK_RT_DispatchFsr2(VkCommandBuffer cmd, int frameIdx)
     // reset: a discontinuity means the history is worthless rather than merely stale.
     // VK_RT_CaptureFsrViewParams runs the shared cut detector on the 3D view.
     dd.reset = s_fsr2ForceReset || !s_fsrView.valid || !s_fsrView.prevFrameValid || s_fsrView.cameraCut;
-    if (dd.reset && r_fsrDebug.GetInteger() >= 2)
+    if (dd.reset && r_vkLogRT.GetInteger() >= 2)
         common->Printf("VK RT FSR2: history reset (forced=%d viewValid=%d prevFrame=%d cut=%d)\n",
                        s_fsr2ForceReset ? 1 : 0, s_fsrView.valid ? 1 : 0, s_fsrView.prevFrameValid ? 1 : 0,
                        s_fsrView.cameraCut ? 1 : 0);
@@ -1626,9 +1570,6 @@ static void VK_RT_DispatchFsr2(VkCommandBuffer cmd, int frameIdx)
     const FfxErrorCode err = ffxFsr2ContextDispatch(&s_fsr2Ctx, &dd);
     if (err != FFX_OK)
         common->Warning("VK RT FSR2: ffxFsr2ContextDispatch failed (%d)", (int)err);
-
-    if (r_fsrDebug.GetInteger() == 5)
-        VK_RT_DispatchFsr2BleedDebug(cmd, frameIdx);
 
     // --- 3. Copy the display-res result back over hdrScene ----------------------
     // FSR2 left color/depth/MV in SHADER_READ_ONLY_OPTIMAL and output in GENERAL.
@@ -1794,7 +1735,7 @@ bool VK_RT_GetFsrJitter(float *jx, float *jy, int *renderW, int *renderH)
     // offset is just a whole-image translation of +-0.5 RENDER pixels — +-1.5 display
     // pixels at Ultra Performance — so every other resolve path visibly shakes.
     //
-    // Ask whether FSR 2 will actually run, not whether r_fsr requested it: r_fsrDebug 4, an
+    // Ask whether FSR 2 will actually run, not whether r_fsr requested it: an
     // unsupported device, a failed context and hardware with no independentBlend (so no
     // G-buffer prepass and no motion vectors) all fall back to the bilinear resolve with
     // r_fsr still 2.  Fsr2Possible is deliberately side-effect free, which this frontend
@@ -1850,9 +1791,8 @@ static bool s_upscaleInitDone = false;
 // Can the path that would ACTUALLY run this frame resolve the sub-rect?  This must stay
 // the exact negation of VK_RT_DispatchUpscale's pipeline early-out, not a looser "some
 // pipeline loaded" test: with a broken bilinear blit but working FSR 1 shaders, the
-// looser test keeps the reduced extent alive while r_fsr 0 (the default) and
-// r_fsrDebug 4 both still dispatch nothing — recreating the stranded-in-the-corner
-// frame this fallback exists to prevent.
+// looser test keeps the reduced extent alive while r_fsr 0 (the default) dispatches
+// nothing — recreating the stranded-in-the-corner frame this fallback exists to prevent.
 static bool VK_RT_ResolvePathReady(void)
 {
     return vkRT.upscalePipeline != VK_NULL_HANDLE || VK_RT_Fsr1Active() || VK_RT_Fsr2Possible();
@@ -2069,7 +2009,7 @@ void VK_RT_DispatchUpscale(VkCommandBuffer cmd)
     UpscalePC pc;
     pc.renderExtent[0] = (int32_t)vk.renderExtent.width;
     pc.renderExtent[1] = (int32_t)vk.renderExtent.height;
-    pc.debugMode = r_fsrDebug.GetInteger();
+    pc.debugMode = 7;
     vkCmdPushConstants(cmd, vkRT.upscalePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
 
     const uint32_t groupsX = (vk.swapchainExtent.width + 7) / 8;

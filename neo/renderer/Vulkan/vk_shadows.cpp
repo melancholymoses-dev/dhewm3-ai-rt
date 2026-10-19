@@ -187,9 +187,7 @@ extern bool VK_RT_PlayerSuppressesLight(int lightId);
 static idCVar r_rtShadowDebugMode(
     "r_rtShadowDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
     "visualize RT shadow pass internals in the shadow mask: "
-    "0=normal, 1=biasDir.y (floor=white/wall=grey), 2=got-surface-normal (white) vs camera-fallback (black), "
-    "3=dot(biasDir,lightDir) mapped 0..1; "
-    "5=raw nDotL before clamp (dark=grazing angle=heavy bias pressure), "
+    "0=normal, "
     "9=bias budget (black=base rayBias/nDotL in charge, grey-to-white=the A12 depth-error floor in "
     "charge with brightness = bias / pixel footprint; white means the bias has reached a full pixel "
     "and raising r_rtShadowBiasErrMargin further will start detaching contact shadows), "
@@ -197,11 +195,18 @@ static idCVar r_rtShadowDebugMode(
     "rays; should cover the first-person body and nothing else — view it with "
     "r_rtShadowBlurEnable 0 so the blur doesn't soften the boundary), "
     "11=light-volume cull (traced pixels black, culled pixels lit: every RT-shadowed light should "
-    "vanish; any light still visible is a pixel the cull skipped but the light reaches), "
-    "7=anisotropic cone half-angle sin(U) (tangent-plane 'right' axis), "
-    "8=anisotropic cone half-angle sin(V) (tangent-plane 'up/fwd' axis) — 7/8 together show the "
-    "elliptical soft-shadow cone shape (Phase 9 Stage 1); a spherical point light shows 7==8, an "
-    "elongated fixture or projected-light aperture shows 7!=8.");
+    "vanish; any light still visible is a pixel the cull skipped but the light reaches). The cull "
+    "is unconditional now, so 11 is the only way to check it. "
+    "Retired, now no-ops (numbers kept stable): 1, 2, 3, 5, 7, 8.");
+
+// One place decides which modes exist.  Without this a retired number would still
+// read as "a debug view is active" and suppress the blur, giving an unblurred
+// normal shadow mask that looks like a rendering bug rather than a dead cvar value.
+static int VK_RT_ValidShadowDebugMode(void)
+{
+    const int mode = r_rtShadowDebugMode.GetInteger();
+    return (mode == 9 || mode == 10 || mode == 11) ? mode : 0;
+}
 
 static bool VK_RTDebugLightFrameAllowed(bool debugEnabled)
 {
@@ -1087,7 +1092,7 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
             const float w = (float)Max(1, (int)vk.renderExtent.width);
             ubo.biasFootprintCoeff = (projXX > 1e-6f) ? (2.0f / (projXX * w)) : 0.0f;
         }
-        ubo.debugMode = r_rtShadowDebugMode.GetInteger();
+        ubo.debugMode = VK_RT_ValidShadowDebugMode();
         ubo.scissorOffsetX = (int32_t)dispatchRect.offset.x;
         ubo.scissorOffsetY = (int32_t)dispatchRect.offset.y;
         // NDC denominator for depth->world reconstruction, so it must be the extent
@@ -1184,9 +1189,9 @@ static int VK_RT_ShadowBlurRadius(void)
         vkRT.shadowMask[vk.currentFrame].blurTempImage == VK_NULL_HANDLE)
         return 0;
     // Every r_rtShadowDebugMode writes its diagnostic INTO the shadow mask, so the blur
-    // was filtering the instrument as well as the signal — which is why the binary
-    // 0/1 of mode 2 read as a smooth gradient.  A blurred debug view is a lie.
-    if (r_rtShadowDebugMode.GetInteger() != 0)
+    // was filtering the instrument as well as the signal, turning mode 10's binary 0/1
+    // into a smooth gradient.  A blurred debug view is a lie.
+    if (VK_RT_ValidShadowDebugMode() != 0)
         return 0;
     return Min(8, Max(0, r_rtShadowBlur.GetInteger()));
 }
