@@ -71,21 +71,11 @@ work that would use it has shipped.
 | `r_vkShadowFlipOps`, `r_vkShadowFullScissor`, `r_vkLightFullScissor`, `r_vkLogShadowBranch/Geom`, `r_vkVcCheck` | `r_vkSerializeFrames`, `r_vkSplitSubmitMask/Verbose`, `r_vkLowPerturbationMode` |
 
 **Correction 2026-10-18:** the split-submit trio was wrongly listed as **X**. The three
-answer different questions and none substitutes for another:
-
-| Cvar | Axis | Question | Perturbs |
-|---|---|---|---|
-| `r_vkSerializeFrames` | across frames | CPU/GPU race on a shared host-visible buffer? | nothing inside a frame — only frames-in-flight |
-| `r_vkSplitSubmitMask` | within a frame | which pass faults / hangs? | submit granularity, i.e. the thing under test |
-| `r_vkLowPerturbationMode` | meta | master off switch (default **1**) for the probes | — |
-
-`SerializeFrames` is the only one that drops frames-in-flight to 1, and per-frame-in-flight
-resource bugs are a proven failure mode here (the GI 2-frame strobe). `SplitSubmitMask`
-cannot see that class and `SerializeFrames` cannot localise within a frame. All three stay **C**.
+answer different questions and none substitutes for another
 
 `r_rtBloomDebug` moves to 1d (mode 1 is a general HDR-range overlay, not bloom-only).
 
-### 1b — after optimization Stage S closes (closed 2026-10-13)
+### 1b — Shadow Cleanup (Done)
 
 | X | Because |
 |---|---|
@@ -95,7 +85,7 @@ cannot see that class and `SerializeFrames` cannot localise within a frame. All 
 
 `r_rtShadowDebugMode` stays (**C**), trimmed to 2 modes in 1d.
 
-### 1c — reflection arc closed 2026-10-18 (unblocked)
+### 1c — Reflection Cleanup (Done)
 
 8d, 8f and 8g Stages 1-4 all landed, so the reflection diagnostics are now judged against a
 settled pipeline. 24 reflection/GUI cvars exist that predate the Settings doc — §2 of that
@@ -105,13 +95,10 @@ doc now lists them with verdicts. Summary:
 |---|---|
 | **M** | `r_rtReflectionBlend` (strength), `r_rtReflMaxLuminance` (ceiling), `r_rtSpecF0Scale`, `r_rtSpecF0Gamma`, `r_rtReflOpaqueHalfRes`, `r_rtGuiReflections` |
 | **C** | `r_rtReflDenoise(+Alpha/AlphaGlass)`, `r_rtReflRoughness{Scale,Floor,Max}`, `r_rtReflRoughLumExp`, `r_rtReflShadowPicks`, `r_rtReflectionDistance`, `r_rtReflectionMinWeight`, `r_rtReflVol(+Gain/Steps)`, `r_rtReflGlow*`, `r_rtReflFlashGlow*`, `r_rtGlassNormalMode`, `r_rtGuiReflGain`, `r_rtGuiTexInterval/Radius`, `r_rtReflectionDebugMode` |
-| **X** | `r_rtReflAtrousSigmaPlane`, `r_rtReflAtrousNormalPower`, `r_rtReflAmbientScale`, `r_rtGlassCreaseRatio`, `r_rtReflGlowScale`, `r_rtReflGlowSmokeCell`, plus whatever 8g Stage 5 folds together |
+| **X** | `r_rtReflAmbientScale`, `r_rtReflGlowScale`, `r_rtReflGlowSmokeCell` |
 
 **F0 stays and is now a menu knob** — `r_rtSpecF0Scale/Gamma` drive opaque reflections
 (the arc's main win). The old "remove F0" plan is dead; see Phase 2.
-
-8g Stage 5 (knob consolidation) still owns folding `r_rtReflAtrousIterations` +
-`r_rtReflAtrousRoughnessGain` into one wash scale. Do that before writing the presets.
 
 ### 1d — debug mode trim — **done 2026-10-18**
 
@@ -161,7 +148,7 @@ renders the normal image, not garbage; `cvarlist *Debug*` help matches what the 
 
 ## Phase 2 — Reflection legacy mode
 
-Rewritten 2026-10-17, unblocked 2026-10-18 (8g Stages 1-4 landed). The old plan (remove F0,
+Unblocked after the specular refleciton work (2026-10-18). The old plan (remove F0,
 reclaim its G-buffer alpha) assumed glass-only reflections. **Opaque reflections are now
 default (`r_rtReflectionMode 3`) and F0 is the arc's win — it drives the trace cull, the
 Fresnel weight, and 8g Stage 2's coarse G-buffer channel. F0, its remap and
@@ -278,15 +265,15 @@ Reordered 2026-10-13. Two principles, both from measurement rather than taste:
 
 | Phase | Risk | Depends on | Status |
 |---|---|---|---|
-| 0 Regression refs + FP on | none | — | Screenshots and FP default outstanding |
-| 1a Debug clutter trim | low | 0 | Blocks nothing. **Runs first in this arc** |
-| 1b Shadow diagnostics | low | optimization Stage S | Unblocked — Stage S closed 2026-10-13 |
-| 5a Reset buttons | low | 0 | No cvar-set dependency; can land any time |
+| 0 Regression refs + FP on | none | — | Done |
+| 1a Debug clutter trim | low | 0 | Done|
+| 1b Shadow diagnostics | low | optimization Stage S | Closed 2026-10-13 |
 | 1c Reflection cvar verdicts | low | reflection arc | **Unblocked 2026-10-18** — 8d/8f/8g 1-4 all landed |
-| 1d Debug mode trim | low | 1a, 1b, 1c | Shader branches, so it wants the cvar verdicts settled first |
+| 1d Debug mode trim | low | 1a, 1b, 1c | Done |
 | 2 Reflection legacy mode 2 | low-med | 1c, 8g Stage 5 | Unblocked except for Stage 5's knob fold |
 | 3 Screen-space GI | med | 1a | Dead paths confirmed at 0.001 ms |
 | 4 Non-froxel vol | med | 1a | same. Takes `r_rtVolDebugMode` with it |
+| 5a Reset buttons | low | 0 | No cvar-set dependency; can land any time |
 | 5b Presets | low | 1c, 1d, 2, 3, 4 (final cvar set) | |
 | 7 Comments | none | all of the above | Last by design; `git diff -w` must show no code change |
 
