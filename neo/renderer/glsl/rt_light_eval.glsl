@@ -68,10 +68,9 @@ layout(set = 0, binding = 4, std430) readonly buffer RTLightBuf {
     float   bounceScale;      // r_rtGIBounceScale (GI bounce hits only; reflections pass 1.0)
     float   giRadius;         // r_rtGIRadius — max range for light evaluation
     float   emissiveScale;    // r_rtGIEmissiveScale — emissive surface multiplier
-    float   reflAmbientScale; // r_rtReflAmbientScale — occluded-light lerp weight, reflections only
     int     falloffMode;      // r_rtGIFalloffMode — see rt_LightBoxAtten
     float   falloffReach;     // r_rtGIFalloffReach — point-light reach past the box face
-    float   _pad0[1];
+    float   _pad0[2];
     RTLight lights[RT_LIGHT_MAX_LIGHTS];
     // Stage 2: 1:1 with lights[] by index, meaningful only when that light's
     // flags has GI_LIGHT_FLAG_HAS_COOKIE set (vk_gi.cpp's GILightBuffer::cookies).
@@ -264,9 +263,6 @@ bool rt_TraceLightShadow(vec3 hitPos, vec3 hitNorm, vec3 lightDir, float dist, f
 //   contribScale — per-light multiplier (GI: bounceScale; reflections: 1.0)
 //   minShadowLum — P4: skip the shadow ray (but keep the contribution) when the
 //                  unshadowed contribution luminance is below this
-//   ambientScale — weight given to a light's contribution when it IS occluded
-//                  (0 = hard shadow, same as omitting it; pass rtLightBuf.reflAmbientScale
-//                  from reflect_ray/player_reflect, 0.0 from gi_ray to leave GI untouched)
 //   cullMask     — B1: shadow-ray instance mask. 0xFF everywhere except
 //                  player_reflect.rchit, which passes 0xFD so the player does not
 //                  self-shadow (matches shadow_ray.rgen:367).
@@ -281,7 +277,7 @@ bool rt_TraceLightShadow(vec3 hitPos, vec3 hitNorm, vec3 lightDir, float dist, f
 // ---------------------------------------------------------------------------
 void rt_EvalDirectLightingBuckets(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowBudget,
                                   float shadowBias, float contribScale, float minShadowLum,
-                                  float ambientScale, uint cullMask,
+                                  uint cullMask,
                                   out vec3 stableOut, out vec3 fastNormOut, out vec3 fastScaledOut)
 {
     stableOut     = vec3(0.0);
@@ -308,7 +304,7 @@ void rt_EvalDirectLightingBuckets(vec3 hitPos, vec3 hitNorm, int maxLights, int 
             {
                 shadowsUsed++;
                 if (rt_TraceLightShadow(hitPos, hitNorm, lightDir, dist, shadowBias, cullMask))
-                    weight = ambientScale;
+                    weight = 0;
             }
         }
 
@@ -331,11 +327,11 @@ void rt_EvalDirectLightingBuckets(vec3 hitPos, vec3 hitNorm, int maxLights, int 
 
 vec3 rt_EvalDirectLighting(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowBudget,
                            float shadowBias, float contribScale, float minShadowLum,
-                           float ambientScale, uint cullMask)
+                           uint cullMask)
 {
     vec3 stable, fastNorm, fastScaled;
     rt_EvalDirectLightingBuckets(hitPos, hitNorm, maxLights, shadowBudget, shadowBias, contribScale,
-                                 minShadowLum, ambientScale, cullMask, stable, fastNorm, fastScaled);
+                                 minShadowLum, cullMask, stable, fastNorm, fastScaled);
     return stable + fastScaled;
 }
 
@@ -364,12 +360,8 @@ vec3 rt_EvalDirectLighting(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowB
 // never be picked (starving its bucket) or be picked at a tiny p and spike
 // through the wSum/w0 division. Each pick lands wholly in one bucket, so the two
 // buckets sum ray-for-ray to what this returned before at s = 1.
-//
-// ambientScale: an occluded pick keeps this fraction, same as the deterministic loop.
-// GI passes 0; reflections pass rtLightBuf.reflAmbientScale (refl-refactor Stage 1).
 void rt_EvalDirectLightingStochasticBuckets(vec3 hitPos, vec3 hitNorm, int maxLights, int picks,
-                                            float shadowBias, float contribScale, uint seed,
-                                            float ambientScale, uint cullMask,
+                                            float shadowBias, float contribScale, uint seed, uint cullMask,
                                             out vec3 stableOut, out vec3 fastNormOut, out vec3 fastScaledOut)
 {
     stableOut     = vec3(0.0);
@@ -384,7 +376,7 @@ void rt_EvalDirectLightingStochasticBuckets(vec3 hitPos, vec3 hitNorm, int maxLi
     if (n <= k)
     {
         rt_EvalDirectLightingBuckets(hitPos, hitNorm, maxLights, RT_LIGHT_MAX_LIGHTS, shadowBias,
-                                     contribScale, 0.0, ambientScale, cullMask, stableOut, fastNormOut,
+                                     contribScale, 0.0, cullMask, stableOut, fastNormOut,
                                      fastScaledOut);
         return;
     }
@@ -425,7 +417,7 @@ void rt_EvalDirectLightingStochasticBuckets(vec3 hitPos, vec3 hitNorm, int maxLi
         return;
 
     bool occluded = rt_TraceLightShadow(hitPos, hitNorm, d0, t0, shadowBias, cullMask);
-    float vis0    = occluded ? ambientScale : 1.0;
+    float vis0    = occluded ? 0 : 1.0;
     if (vis0 > 0.0)
     {
         vec3 v = c0 * (vis0 * wSum / w0);
@@ -440,7 +432,7 @@ void rt_EvalDirectLightingStochasticBuckets(vec3 hitPos, vec3 hitNorm, int maxLi
         bool occluded1 = (i1 == i0)
                              ? occluded
                              : rt_TraceLightShadow(hitPos, hitNorm, d1, t1, shadowBias, cullMask);
-        float vis1 = occluded1 ? ambientScale : 1.0;
+        float vis1 = occluded1 ? 0 : 1.0;
         if (vis1 > 0.0)
         {
             vec3 v = c1 * (vis1 * wSum / w1);
@@ -456,12 +448,11 @@ void rt_EvalDirectLightingStochasticBuckets(vec3 hitPos, vec3 hitNorm, int maxLi
 }
 
 vec3 rt_EvalDirectLightingStochastic(vec3 hitPos, vec3 hitNorm, int maxLights, int picks,
-                                     float shadowBias, float contribScale, uint seed,
-                                     float ambientScale, uint cullMask)
+                                     float shadowBias, float contribScale, uint seed, uint cullMask)
 {
     vec3 stable, fastNorm, fastScaled;
     rt_EvalDirectLightingStochasticBuckets(hitPos, hitNorm, maxLights, picks, shadowBias, contribScale,
-                                           seed, ambientScale, cullMask, stable, fastNorm, fastScaled);
+                                           seed, cullMask, stable, fastNorm, fastScaled);
     return stable + fastScaled;
 }
 

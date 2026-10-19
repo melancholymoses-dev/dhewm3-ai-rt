@@ -120,25 +120,9 @@ static idCVar r_rtShadowSoftRadiusMin("r_rtShadowSoftRadiusMin", "0.0", CVAR_REN
                                       "minimum RT soft-shadow source radius after scaling");
 static idCVar r_rtShadowSoftRadiusMax("r_rtShadowSoftRadiusMax", "6.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                       "maximum RT soft-shadow source radius after scaling");
-static idCVar r_rtShadowMinSamples(
-    "r_rtShadowMinSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-    "minimum RT shadow rays per pixel (default 1 keeps baseline behavior; raise only for diagnostics)");
-static idCVar r_rtShadowVolumeCull(
-    "r_rtShadowVolumeCull", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-    "skip RT shadow rays for pixels outside the light volume (1); 0 traces every pixel in the "
-    "light scissor, for A/B. r_rtShadowDebugMode 11 shows what is culled");
 // World units the light volume is grown by before culling, so the plane test can never
 // clip a pixel the falloff/projection textures still light.
 static const float VK_RT_SHADOW_CULL_PAD = 4.0f;
-static idCVar r_rtShadowTemporalJitter(
-    "r_rtShadowTemporalJitter", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-    "vary RT shadow sampling pattern per frame (0 = stable pattern for shimmer diagnostics)");
-static idCVar r_rtShadowStablePattern(
-    "r_rtShadowStablePattern", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-    "use stable per-light spatial jitter seed (reduces temporal shimmer; can retain static speckle)");
-static idCVar r_rtShadowTemporalJitterMinSamples(
-    "r_rtShadowTemporalJitterMinSamples", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-    "minimum effective RT shadow samples required before enabling per-frame temporal jitter");
 static idCVar r_rtShadowBlurEnable("r_rtShadowBlurEnable", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                                    "enable RT shadow blur pass (diagnostic: 0 bypasses blur)");
 static idCVar r_rtShadowBlurDepthAware("r_rtShadowBlurDepthAware", "1",
@@ -1070,7 +1054,7 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         // Stage S2: the same 6 planes the frontend culls interactions with, built from the
         // lightProject the interaction attenuates by, so point and projected lights agree.
         // Cull off writes (0,0,0,-1): every pixel is then 1 unit inside every plane.
-        const bool volumeCull = r_rtShadowVolumeCull.GetBool();
+        const bool volumeCull = true;
         for (int p = 0; p < 6; p++)
         {
             const idPlane &pl = vLight->lightDef->frustum[p];
@@ -1080,32 +1064,9 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
             ubo.lightPlanes[p][3] = volumeCull ? pl[3] - VK_RT_SHADOW_CULL_PAD : -1.0f;
         }
         const int requestedSamples = Max(1, r_rtShadowSamples.GetInteger());
-        const int minSamples = Max(1, r_rtShadowMinSamples.GetInteger());
         ubo.numSamples = requestedSamples;
-        const int jitterMinSamples = Max(1, r_rtShadowTemporalJitterMinSamples.GetInteger());
-        const bool allowTemporalJitter =
-            r_rtShadowTemporalJitter.GetBool() &&
-            (ubo.numSamples >= jitterMinSamples || (r_rtShadowBlurEnable.GetBool() && r_rtShadowBlur.GetInteger() > 0));
-        if (allowTemporalJitter)
-        {
-            if (r_rtShadowStablePattern.GetBool())
-            {
-                // Stable per-light seed derived from quantized light origin.
-                const int sx = idMath::FtoiFast(shadowOrigin.x * 16.0f);
-                const int sy = idMath::FtoiFast(shadowOrigin.y * 16.0f);
-                const int sz = idMath::FtoiFast(shadowOrigin.z * 16.0f);
-                ubo.frameIndex = (uint32_t)(sx * 73856093) ^ (uint32_t)(sy * 19349663) ^ (uint32_t)(sz * 83492791) ^
-                                 (uint32_t)(light.pointLight ? 0x9e3779b9u : 0x85ebca6bu);
-            }
-            else
-            {
-                ubo.frameIndex = (uint32_t)(vk.currentFrame * 100 + tr.frameCount);
-            }
-        }
-        else
-        {
-            ubo.frameIndex = 0u;
-        }
+        ubo.frameIndex = 0u;
+
         ubo.rayBias = r_rtShadowRayBias.GetFloat();
         // A12: worldPos reconstruction error is d^2*ulp/znear; without this floor the
         // bias is swamped at range and the origin self-shadows.  ulp ~6e-8; the margin
@@ -1168,18 +1129,17 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         {
             const char *lightName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
             common->Printf("VK RT LIGHT DBG: frame=%d light='%s' point=%d origin=(%.2f,%.2f,%.2f) rad=(%.2f,%.2f,%.2f) "
-                           "volCull=%d samples=%d reqSamples=%d minSamples=%d bias=%.4f jitter=%d effJitter=%d "
-                           "jitterMinSamples=%d stable=%d seed=%u softRadius=%.3f kind=%u axisHalf=(%.3f,%.3f,%.3f) "
+                           "volCull=%d samples=%d reqSamples=%d  bias=%.4f  "
+                           "seed=%u softRadius=%.3f kind=%u axisHalf=(%.3f,%.3f,%.3f) "
                            "blurEn=%d blurRad=%d depthAware=%d depthTh=%.5f "
                            "mask=%ux%u layer=%d\n",
                            tr.frameCount, lightName, light.pointLight ? 1 : 0, shadowOrigin.x, shadowOrigin.y,
                            shadowOrigin.z, light.lightRadius.x, light.lightRadius.y, light.lightRadius.z,
-                           volumeCull ? 1 : 0, ubo.numSamples, requestedSamples, minSamples, ubo.rayBias,
-                           r_rtShadowTemporalJitter.GetBool() ? 1 : 0, allowTemporalJitter ? 1 : 0, jitterMinSamples,
-                           r_rtShadowStablePattern.GetBool() ? 1 : 0, ubo.frameIndex, softRadius, ubo.lightKind,
-                           axisRightHalf, axisUpHalf, axisFwdHalf, r_rtShadowBlurEnable.GetBool() ? 1 : 0,
-                           r_rtShadowBlur.GetInteger(), r_rtShadowBlurDepthAware.GetBool() ? 1 : 0,
-                           r_rtShadowBlurDepthThreshold.GetFloat(), sm.width, sm.height, (int)ubo.shadowLayer);
+                           volumeCull ? 1 : 0, ubo.numSamples, requestedSamples, ubo.rayBias, ubo.frameIndex,
+                           softRadius, ubo.lightKind, axisRightHalf, axisUpHalf, axisFwdHalf,
+                           r_rtShadowBlurEnable.GetBool() ? 1 : 0, r_rtShadowBlur.GetInteger(),
+                           r_rtShadowBlurDepthAware.GetBool() ? 1 : 0, r_rtShadowBlurDepthThreshold.GetFloat(),
+                           sm.width, sm.height, (int)ubo.shadowLayer);
         }
 
         memcpy(uboMapped, &ubo, sizeof(ShadowParamsUBO));
@@ -1198,10 +1158,9 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         if (r_vkLogRT.GetInteger() >= 1)
         {
             common->Printf(
-                "VK RT TRACE: frame=%u uboOff=%u dims=%ux%u (scissor=%d,%d) layer=%d bias=%.4f fIdx=%u samples=%d "
-                "jitter=%d\n",
+                "VK RT TRACE: frame=%u uboOff=%u dims=%ux%u (scissor=%d,%d) layer=%d bias=%.4f fIdx=%u samples=%d\n",
                 frameIdx, uboOff, dispatchW, dispatchH, dispatchRect.offset.x, dispatchRect.offset.y,
-                (int)ubo.shadowLayer, ubo.rayBias, ubo.frameIndex, ubo.numSamples, allowTemporalJitter ? 1 : 0);
+                (int)ubo.shadowLayer, ubo.rayBias, ubo.frameIndex, ubo.numSamples);
             fflush(NULL);
         }
 

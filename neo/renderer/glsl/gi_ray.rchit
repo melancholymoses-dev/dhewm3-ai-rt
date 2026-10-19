@@ -169,7 +169,7 @@ void main()
         // 0xFF: the player *should* occlude bounce light in the room (B1).
         rt_EvalDirectLightingStochasticBuckets(hitPos, hitNorm, params.maxBounceLights,
                                                params.stochasticLights, GI_SHADOW_BIAS,
-                                               rtLightBuf.bounceScale, seed, 0.0, 0xFFu,
+                                               rtLightBuf.bounceScale, seed, 0xFFu,
                                                stable, fastNorm, fastScaled);
     }
     else
@@ -178,7 +178,7 @@ void main()
         // threshold 0). Kept for A/B against the stochastic estimator.
         rt_EvalDirectLightingBuckets(hitPos, hitNorm, params.maxBounceLights,
                                      RT_LIGHT_MAX_LIGHTS, GI_SHADOW_BIAS,
-                                     rtLightBuf.bounceScale, 0.0, 0.0, 0xFFu,
+                                     rtLightBuf.bounceScale, 0.0, 0xFFu,
                                      stable, fastNorm, fastScaled);
     }
 

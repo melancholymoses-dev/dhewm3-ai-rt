@@ -84,11 +84,6 @@ static idCVar r_rtGIFalloffReach("r_rtGIFalloffReach", "1.0", CVAR_RENDERER | CV
                                  "How far past the light's box a point light reaches, in box-normalised units. "
                                  "1.0 = stop at the box face (vanilla containment), 1.5 = initial RT throw");
 
-static idCVar r_rtReflAmbientScale(
-    "r_rtReflAmbientScale", "0.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-    "Fraction of a shadowed light's contribution reflect_ray/player_reflect still add (0 = hard "
-    "shadow, 1 = unshadowed). Nonzero leaks light through walls and floors into reflections.");
-
 static idCVar r_rtGIMaxBounceLights(
     "r_rtGIMaxBounceLights", "16", CVAR_RENDERER | CVAR_INTEGER,
     "Max uploaded lights evaluated by GI bounce shading (GI pass only; reflections unaffected)");
@@ -284,13 +279,12 @@ static_assert(sizeof(GILightCookie) == 80, "GILightCookie size mismatch");
 struct GILightBuffer
 {
     int32_t numLights;
-    float bounceScale;      // r_rtGIBounceScale — per-light irradiance multiplier
-    float giRadius;         // r_rtGIRadius — hit-point light evaluation window (shader-side)
-    float emissiveScale;    // r_rtGIEmissiveScale — emissive surface contribution multiplier
-    float reflAmbientScale; // r_rtReflAmbientScale — reflections only, see rt_light_eval.glsl
-    int32_t falloffMode;    // r_rtGIFalloffMode — T4b, consumed by rt_LightBoxAtten
-    float falloffReach;     // r_rtGIFalloffReach — also sizes posRadius[3]'s sphere pre-cull
-    float pad[1];           // pads header to 32 bytes (RTLight's std430 base alignment is 16)
+    float bounceScale;   // r_rtGIBounceScale — per-light irradiance multiplier
+    float giRadius;      // r_rtGIRadius — hit-point light evaluation window (shader-side)
+    float emissiveScale; // r_rtGIEmissiveScale — emissive surface contribution multiplier
+    int32_t falloffMode; // r_rtGIFalloffMode — T4b, consumed by rt_LightBoxAtten
+    float falloffReach;  // r_rtGIFalloffReach — also sizes posRadius[3]'s sphere pre-cull
+    float pad[2];        // pads header to 32 bytes (RTLight's std430 base alignment is 16)
     GILightEntry lights[VK_GI_MAX_LIGHTS];
     // Stage 2: mirrored in GLSL as RTLightBuf::cookies[RT_LIGHT_MAX_LIGHTS]
     // (rt_light_eval.glsl), 1:1 with lights[] by index.
@@ -1642,7 +1636,6 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     lb->bounceScale = idMath::ClampFloat(0.0f, 100.0f, r_rtGIBounceScale.GetFloat());
     lb->giRadius = Max(1.0f, r_rtGIRadius.GetFloat());
     lb->emissiveScale = idMath::ClampFloat(0.0f, 100.0f, r_rtGIEmissiveScale.GetFloat());
-    lb->reflAmbientScale = idMath::ClampFloat(0.0f, 1.0f, r_rtReflAmbientScale.GetFloat());
     lb->falloffMode = idMath::ClampInt(0, 2, r_rtGIFalloffMode.GetInteger());
     lb->falloffReach = idMath::ClampFloat(1.0f, 3.0f, r_rtGIFalloffReach.GetFloat());
 

@@ -234,9 +234,6 @@ struct vkBufferData_t
     VkDeviceSize size; // requested bytes
 };
 
-static idCVar r_vkVcCheck("r_vkVcCheck", "0", CVAR_RENDERER | CVAR_BOOL,
-                          "validate vertex-cache block range/alignment in VK_VertexCache_GetBuffer");
-
 static int s_vcTrimDrains = 0; // drains left in which to trim after a level load
 
 // Request a trim after a level load; the old level's blocks only return to the free
@@ -255,9 +252,6 @@ void VK_VertexCache_Shutdown(void)
 // leak; a high drain volume with a flat live count is just churn.
 static int s_bufferLiveCount = 0;
 static VkDeviceSize s_bufferLiveBytes = 0;
-
-static idCVar r_vkLogBufferGarbage("r_vkLogBufferGarbage", "0", CVAR_RENDERER | CVAR_BOOL,
-                                   "log vertex-cache buffer alloc/free accounting every drain");
 
 // ---------------------------------------------------------------------------
 // Buffer garbage list — deferred destruction after the per-frame fence fires,
@@ -306,32 +300,6 @@ void VK_Buffer_DrainGarbage(uint32_t frameIdx)
     {
         s_vcTrimDrains--;
         VK_Pool_TrimEmpty(&s_vcPool);
-    }
-
-    // Accumulate and log once per 30 drains instead of every frame.
-    static int s_logDrains = 0, s_logRing = 0, s_logOverflow = 0;
-    if (r_vkLogBufferGarbage.GetBool())
-    {
-        s_logDrains++;
-        s_logRing += ringDrained;
-        s_logOverflow += overflowDrained;
-    }
-    else
-    {
-        s_logDrains = s_logRing = s_logOverflow = 0;
-    }
-
-    if (r_vkLogBufferGarbage.GetBool() && s_logDrains >= 30)
-    {
-        int chunks = 0;
-        VkDeviceSize totalBytes = 0, freeBytes = 0, largestFree = 0;
-        VK_Pool_Stats(&s_vcPool, &chunks, &totalBytes, &freeBytes, &largestFree);
-        common->Printf("VK buf drain (last %d): freed %d (overflow %d) -> live %d bufs / %d KB | chunks %d / %d MB, "
-                       "free %d MB (largest %d KB)\n",
-                       s_logDrains, s_logRing + s_logOverflow, s_logOverflow, s_bufferLiveCount,
-                       (int)(s_bufferLiveBytes >> 10), chunks, (int)(totalBytes >> 20), (int)(freeBytes >> 20),
-                       (int)(largestFree >> 10));
-        s_logDrains = s_logRing = s_logOverflow = 0;
     }
 }
 
@@ -408,8 +376,6 @@ bool VK_VertexCache_GetBuffer(vertCache_t *block, VkBuffer *outBuf, VkDeviceSize
     vkBufferData_t *bd = (vkBufferData_t *)block->backendData;
     if (!bd || !VK_Pool_IsLive(&s_vcPool, bd->range))
         return false;
-    if (r_vkVcCheck.GetBool())
-        VK_Pool_Check(&s_vcPool, bd->range, bd->size);
     *outBuf = bd->range.buf;
     *outOffset = bd->range.offset;
     return true;

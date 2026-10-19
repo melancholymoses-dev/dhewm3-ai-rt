@@ -2478,8 +2478,6 @@ struct RTCVars
     idCVar *rtShadowSoftRadiusMin = nullptr;
     idCVar *rtShadowSoftRadiusMax = nullptr;
     idCVar *rtFlashlightBias = nullptr;
-    idCVar *rtShadowTemporalJitter = nullptr;
-    idCVar *rtShadowStablePattern = nullptr;
 
     // AO fine-tuning
     idCVar *rtAOSamples = nullptr;
@@ -2630,8 +2628,6 @@ static void InitRTOptionsMenu()
     rtCVars.rtShadowSoftRadiusMin = cvarSystem->Find("r_rtShadowSoftRadiusMin");
     rtCVars.rtShadowSoftRadiusMax = cvarSystem->Find("r_rtShadowSoftRadiusMax");
     rtCVars.rtFlashlightBias = cvarSystem->Find("r_rtFlashlightBias");
-    rtCVars.rtShadowTemporalJitter = cvarSystem->Find("r_rtShadowTemporalJitter");
-    rtCVars.rtShadowStablePattern = cvarSystem->Find("r_rtShadowStablePattern");
     rtCVars.rtAOSamples = cvarSystem->Find("r_rtAOSamples");
     rtCVars.rtAORadius = cvarSystem->Find("r_rtAORadius");
     rtCVars.rtAOFalloff = cvarSystem->Find("r_rtAOFalloff");
