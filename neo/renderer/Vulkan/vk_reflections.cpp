@@ -122,14 +122,9 @@ static idCVar r_rtReflVolGain("r_rtReflVolGain", "1.0", CVAR_RENDERER | CVAR_FLO
 idCVar r_rtReflectionMode("r_rtReflectionMode", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                           "1 = glass only. Reflections are dispatched over the union screen rect of the\n"
                           "    view's SURFTYPE_GLASS surfaces and skipped entirely when the view holds no glass;\n"
-                          "    opaque geometry never reflects, so no per-pixel F0/Fresnel work is done at all.\n"
-                          "2 = legacy full-screen. Every non-sky pixel is traced and gated by the specular-map F0\n"
-                          "    remap (r_rtSpecF0Scale/Gamma) plus r_rtReflectionMinWeight. Predates Stages 2-3\n"
-                          "    (roughness/GGX) and ignores r_rtReflRoughnessMax — kept as an A/B baseline.\n"
+                          "    opaque geometry never reflects.\n"
                           "3 = glass + opaque-with-roughness (default).\n"
-                          "    Full-screen like mode 2, but opaque surfaces rougher than r_rtReflRoughnessMax\n"
-                          "    skip the reflection ray entirely and take GI alone, so the GGX lobe never\n"
-                          "    double-counts GI's own near-diffuse contribution at high roughness.\n"
+                          "    Also allow rough specular reflection"
                           "Use r_rtReflections 0 to turn the feature off entirely.",
                           1, 3);
 
@@ -248,19 +243,17 @@ int VK_RT_ValidReflDebugMode(void)
 //   uint   frameIndex   offset 68  size  4
 //   ivec2  screenSize   offset 72  size  8  (ivec2 std140 align=8 → 72 is fine)
 //   float  reflBlend      offset 80  size  4  (r_rtReflectionBlend, applied at imageStore)
-//   float  roughnessScale offset 84  size  4  (r_rtReflRoughnessScale, Stage 3 — was grazingMax)
+//   float  roughnessScale offset 84  size  4  (r_rtReflRoughnessScale)
 //   int    debugMode      offset 88  size  4  (r_rtReflectionDebugMode, Step 9)
-//   int    sceneHasGlass  offset 92  size  4  (P6 — skip glass probe when 0)
-//   float  minWeight      offset 96  size  4  (r_rtReflectionMinWeight, R1)
-//   int    rectOriginX    offset 100 size  4  (R6 launch-grid origin — was 104; grazingGain's
-//                                               old slot is gone — roughLumExp now fills offset 124)
+//   int    sceneHasGlass  offset 92  size  4  (skip glass probe when 0)
+//   float  minWeight      offset 96  size  4  (r_rtReflectionMinWeight)
+//   int    rectOriginX    offset 100 size  4  (launch-grid origin)
 //   int    rectOriginY    offset 104 size  4
-//   int    reflMode       offset 108 size  4  (r_rtReflectionMode — 1/2/3, Stage 4 adds 3)
+//   int    reflMode       offset 108 size  4  (r_rtReflectionMode — 1, 3)
 //   int    emitterCount   offset 112 size  4  (vk_rt_emitters.cpp, 0 = none)
 //   float  glowGain       offset 116 size  4  (r_rtReflGlowGain, 0 when r_rtReflGlow is off)
 //   int    glowTriCount   offset 120 size  4  (vk_rt_emitters.cpp glow triangles)
-//   float  roughLumExp    offset 124 size  4  (r_rtReflRoughLumExp — fills the slot std140
-//                                               left before the mat4 when grazingGain went)
+//   float  roughLumExp    offset 124 size  4  (r_rtReflRoughLumExp)
 //   mat4   viewProj       offset 128 size 64  (froxel grid's own, GL convention)
 //   vec4   froxelCamPos   offset 192 size 16  (xyz)
 //   vec4   froxelCamFwd   offset 208 size 16  (xyz)
@@ -274,18 +267,15 @@ int VK_RT_ValidReflDebugMode(void)
 //   int    glassNormalMode offset 252 size 4  (r_rtGlassNormalMode)
 //   float  glassCreaseRatio offset 256 size 4  (r_rtGlassCreaseRatio)
 //   float  guiReflGain    offset 260 size  4  (r_rtGuiReflGain)
-//   float  roughnessMax   offset 264 size  4  (r_rtReflRoughnessMax, Stage 4 — took one of
-//                                               the two trailing pad floats; _pad0 is now [1])
-//   float  maxLuminance   offset 268 size  4  (r_rtReflMaxLuminance, 2026-10-16 addendum —
-//                                               took the last pad float; block still ends at
-//                                               272, already a multiple of 16, no new padding)
-//   int    shadowPicks    offset 272 size  4  (r_rtReflShadowPicks, refl-refactor Stage 1)
-//   int    population     offset 276 size  4  (Stage 4b — spent the old _pad0[3] plus 8 more)
+//   float  roughnessMax   offset 264 size  4  (r_rtReflRoughnessMax,)
+//   float  maxLuminance   offset 268 size  4  (r_rtReflMaxLuminance)
+//   int    shadowPicks    offset 272 size  4  (r_rtReflShadowPicks)
+//   int    population     offset 276 size  4
 //   int    glassRectX     offset 280 size  4
 //   int    glassRectY     offset 284 size  4
 //   int    glassRectW     offset 288 size  4
 //   int    glassRectH     offset 292 size  4
-//   int    reflScale      offset 296 size  4  (Stage 4c — 1 full res, 2 half res)
+//   int    reflScale      offset 296 size  4  (1 full res, 2 half res)
 //   total: 304 bytes — std140 rounds the block up to a multiple of
 //   16, and uboInfo.range is sizeof(ReflParamsUBO), which must not be smaller.
 // ---------------------------------------------------------------------------
@@ -298,22 +288,19 @@ struct ReflParamsUBO
     int32_t screenWidth;
     int32_t screenHeight;
     float reflBlend;       // r_rtReflectionBlend — baked into imageStore in rgen
-    float roughnessScale;  // r_rtReflRoughnessScale (Stage 3) — was grazingMax's slot
-    int32_t debugMode;     // r_rtReflectionDebugMode — 2/3/4 handled in rgen (Step 9)
+    float roughnessScale;  // r_rtReflRoughnessScale
+    int32_t debugMode;     // r_rtReflectionDebugMode — 2/3/4 handled in rgen
     int32_t sceneHasGlass; // P6 — 0 when no MAT_FLAG_GLASS geometry in the TLAS
-    float minWeight;       // r_rtReflectionMinWeight — pre-trace Fresnel cull (R1)
+    float minWeight;       // r_rtReflectionMinWeight — pre-trace Fresnel cull
     int32_t rectOriginX;   // R6 — launch-grid origin; rgen adds this to gl_LaunchIDEXT
     int32_t rectOriginY;
-    int32_t reflMode;     // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen, 3 glass+opaque (Stage 4)
+    int32_t reflMode;     // r_rtReflectionMode — 1 glass-only, 3 glass+opaque
     int32_t emitterCount; // projectile glow discs in the emitter SSBO (binding 6)
     float glowGain;       // r_rtReflGlowGain
     int32_t glowTriCount; // additive translucent triangles after the discs in binding 6
     float roughLumExp;    // r_rtReflRoughLumExp — reuses the pre-mat4 slot retired with grazingGain
 
-    // Froxel scatter grid (20261013_reflection_volumetrics.md). Mirrors
-    // VolFroxelSlices in vol_froxel_sample.glsl plus the forward projection the
-    // world -> grid lookup needs; filled from VK_RT_GetFroxelSampleParams so the
-    // mapping is the one the fill actually used.
+    // Froxel scatter grid. Mirrors
     float viewProj[16];
     float froxelCamPos[4];
     float froxelCamFwd[4];
@@ -323,14 +310,12 @@ struct ReflParamsUBO
     int32_t froxelNz;
     int32_t volSteps; // 0 = no usable grid this frame; the rgen takes no samples
     float volGain;
-    float volIsoMix;         // r_rtVolIsotropicMix — Stage 5, for rt_PhaseFromMeanDir
+    float volIsoMix;         // r_rtVolIsotropicMix — for rt_PhaseFromMeanDir
     int32_t glassNormalMode; // r_rtGlassNormalMode — 0 interpolated, 1 face, 2 crease-aware
     float glassCreaseRatio;  // r_rtGlassCreaseRatio — mode 2 flattens when devRatio < this
     float guiReflGain;       // r_rtGuiReflGain — scales live GUI screen hits (MAT_FLAG_GUI_LIVE)
-    float roughnessMax;      // r_rtReflRoughnessMax (Stage 4) — took one of the two trailing
-                             // pad floats Stage 3 left here; _pad0 shrinks to match
-    float maxLuminance;      // r_rtReflMaxLuminance (2026-10-16 addendum) — took the last pad
-                             // float; block still lands on exactly 272, no new padding needed
+    float roughnessMax;      // r_rtReflRoughnessMax
+    float maxLuminance;      // r_rtReflMaxLuminance
     int32_t shadowPicks;     // r_rtReflShadowPicks — 0 deterministic, 1-2 stochastic (opaque only)
 
     // Stage 4b: which population this dispatch owns. See REFL_POP_* below.
@@ -348,8 +333,8 @@ struct ReflParamsUBO
 };
 
 // Which surfaces a reflect_ray.rgen dispatch is responsible for (ubo.population).
-// BOTH is the pre-Stage-4b single-dispatch path: still used by r_rtReflectionMode 2
-// and by every debug mode, so those keep one code path and one image.
+// BOTH is the pre-Stage-4b single-dispatch path: used by every debug mode,
+// so those keep one code path and one image.
 #define REFL_POP_BOTH 0
 #define REFL_POP_GLASS 1
 #define REFL_POP_OPAQUE 2
@@ -2176,7 +2161,8 @@ static void VK_RT_DispatchReflUpsample(VkCommandBuffer cmd, const viewDef_t *vie
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.reflUpsamplePipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.reflUpsamplePipelineLayout, 0, 1,
                             &chain->upsampleDescSets[frameIdx], 0, NULL);
-    vkCmdPushConstants(cmd, vkRT.reflUpsamplePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, REFL_UPSAMPLE_PC_SIZE, &pc);
+    vkCmdPushConstants(cmd, vkRT.reflUpsamplePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, REFL_UPSAMPLE_PC_SIZE,
+                       &pc);
     vkCmdDispatch(cmd, (dst.width + 7) / 8, (dst.height + 7) / 8, 1);
 
     if (r_vkLogRT.GetInteger() >= 1)
@@ -2332,10 +2318,16 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
     // exception, since it exists specifically to visualize that ceiling, so it forces
     // mode 3 regardless of what r_rtReflectionMode is actually set to.
     // Modes 14/15 keep the real mode so they classify the pixels normal play traces.
+    uint reflMode;
     if (reflDebugActive && reflDebugMode != 14 && reflDebugMode != 15)
-        ubo.reflMode = (reflDebugMode == 13) ? 3 : 2;
+        ubo.reflMode = 3;
     else
-        ubo.reflMode = idMath::ClampInt(1, 3, r_rtReflectionMode.GetInteger());
+        reflMode = r_rtReflectionMode.GetInteger();
+    if (reflMode == 1 || reflMode == 3)
+        ubo.reflMode = reflMode;
+    else
+        common->Error("r_rtReflectionMode must be one of 1 or 3\n");
+
     ubo.roughnessMax = idMath::ClampFloat(0.0f, 1.0f, r_rtReflRoughnessMax.GetFloat());
     ubo.maxLuminance = Max(0.0f, r_rtReflMaxLuminance.GetFloat());
     ubo.shadowPicks = idMath::ClampInt(0, 2, r_rtReflShadowPicks.GetInteger());
@@ -2415,10 +2407,10 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
 
     const bool reflResourceChanged =
         (chain->lastTlas[frameIdx] != vkRT.tlas[frameIdx].handle) ||
-        (chain->lastStorageView[frameIdx] != storageView) ||
-        (chain->lastDepthView[frameIdx] != vk.depthSampledView) || (chain->lastLightSsbo[frameIdx] != lightSsbo) ||
-        (chain->lastGbufView[frameIdx] != gbufView) || (chain->lastGbufAlbedoView[frameIdx] != gbufAlbedoView) ||
-        (chain->lastFroxelView[frameIdx] != froxelView) || (chain->lastFroxelDirView[frameIdx] != froxelDirView);
+        (chain->lastStorageView[frameIdx] != storageView) || (chain->lastDepthView[frameIdx] != vk.depthSampledView) ||
+        (chain->lastLightSsbo[frameIdx] != lightSsbo) || (chain->lastGbufView[frameIdx] != gbufView) ||
+        (chain->lastGbufAlbedoView[frameIdx] != gbufAlbedoView) || (chain->lastFroxelView[frameIdx] != froxelView) ||
+        (chain->lastFroxelDirView[frameIdx] != froxelDirView);
 
     if (reflResourceChanged && chain->traceDescSetLastUpdated[frameIdx] == tr.frameCount && r_vkLogRT.GetInteger() >= 1)
     {
@@ -2650,9 +2642,9 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
             glassRect = VkRect2D{{gx, gy}, {gw, gh}};
     }
 
-    // Every debug mode, and the legacy full-screen mode 2, keep the single REFL_POP_BOTH
+    // Every debug mode keep the single REFL_POP_BOTH
     // dispatch into the opaque chain — one image for the visualization to land in, and
-    // mode 2's semantics ("one pass, glass by alpha sign") preserved exactly.
+    // old mode 2's semantics ("one pass, glass by alpha sign") preserved exactly.
     const bool split = (mode != 2) && !debugActive;
     s_reflSplitActive[frameIdx] = split;
 
