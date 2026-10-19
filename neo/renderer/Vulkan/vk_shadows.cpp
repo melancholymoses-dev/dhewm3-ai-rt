@@ -30,20 +30,20 @@ of the original Doom 3 GPL Source Code release.
 
 struct ShadowParamsUBO
 {
-    float invViewProj[16];    // column-major 4x4,  offset   0
-    float lightOrigin[4];     // xyz = pos, w = legacy isotropic radius (max axis), offset  64
-    float _pad0;              // was lightFalloffRadius (r_rtShadowDistanceCutoff, replaced by lightPlanes) // offset  80
-    int numSamples;           // offset  84
-    uint32_t frameIndex;      // offset  88
-    float rayBias;            // offset  92
-    uint32_t rayCullMask;     // 0xFD excludes player     // offset  96
-    int debugMode;            // 0=normal 1..3=diag        // offset 100
-    int32_t scissorOffsetX;   // dispatch rect origin X // offset 104
-    int32_t scissorOffsetY;   // dispatch rect origin Y // offset 108
-    int32_t screenWidth;      // full framebuffer width  // offset 112
-    int32_t screenHeight;     // full framebuffer height // offset 116
-    int32_t shadowLayer;      // P1b: shadow mask array layer for this light // offset 120
-    float biasErrCoeff;       // was _pad0 — depth-reconstruction bias floor, margin*ulp/znear // offset 124
+    float invViewProj[16];  // column-major 4x4,  offset   0
+    float lightOrigin[4];   // xyz = pos, w = legacy isotropic radius (max axis), offset  64
+    float _pad0;            // was lightFalloffRadius (r_rtShadowDistanceCutoff, replaced by lightPlanes) // offset  80
+    int numSamples;         // offset  84
+    uint32_t frameIndex;    // offset  88
+    float rayBias;          // offset  92
+    uint32_t rayCullMask;   // 0xFD excludes player     // offset  96
+    int debugMode;          // 0=normal 1..3=diag        // offset 100
+    int32_t scissorOffsetX; // dispatch rect origin X // offset 104
+    int32_t scissorOffsetY; // dispatch rect origin Y // offset 108
+    int32_t screenWidth;    // full framebuffer width  // offset 112
+    int32_t screenHeight;   // full framebuffer height // offset 116
+    int32_t shadowLayer;    // P1b: shadow mask array layer for this light // offset 120
+    float biasErrCoeff;     // was _pad0 — depth-reconstruction bias floor, margin*ulp/znear // offset 124
 
     // --- Phase 9 / Stage 1: anisotropic soft-shadow light shape ---
     // Point lights: world-axis-aligned ellipsoid semi-axes (matches the box-extents
@@ -153,11 +153,6 @@ static idCVar r_rtShadowBlurMinRect(
     "(P1a perf: tiny lights don't visibly benefit; 0 = always blur)");
 static idCVar r_vkRTDebugLights("r_vkRTDebugLights", "0", CVAR_RENDERER | CVAR_INTEGER,
                                 "log Vulkan RT shadow dispatch state (0=off, 1=filtered lights)");
-static idCVar r_vkRTLightLogN("r_vkRTLightLogN", "0", CVAR_RENDERER | CVAR_INTEGER,
-                              "limit Vulkan RT light debug logging to N frames after enable (0 = unlimited)");
-static idCVar r_vkRTDebugLightFilter(
-    "r_vkRTDebugLightFilter", "", CVAR_RENDERER | CVAR_ARCHIVE,
-    "substring filter for r_vkRTDebugLights using light shader name (empty = all lights)");
 
 static idCVar r_rtShadowPlayerExcludeDist(
     "r_rtShadowPlayerExcludeDist", "30", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
@@ -174,10 +169,9 @@ static idCVar r_rtShadowPlayerExcludeDist(
 // are standing against — both land in the same band — so the sphere also cancelled the
 // player's shadow on that wall, punching a hole in it.  Doubles as the off switch: 0 here
 // (or pm_showFirstPersonBody 0) disables the exclusion on both paths.
-idCVar r_rtPlayerExcludeRadius(
-    "r_rtPlayerExcludeRadius", "40", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
-    "fallback radius for culling the player body from shadow/GI rays, used only when the "
-    "G-buffer surface class is unavailable; 0 disables the exclusion entirely");
+idCVar r_rtPlayerExcludeRadius("r_rtPlayerExcludeRadius", "40", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                               "fallback radius for culling the player body from shadow/GI rays, used only when the "
+                               "G-buffer surface class is unavailable; 0 disables the exclusion entirely");
 
 /*
 ===============
@@ -225,30 +219,11 @@ static idCVar r_rtShadowDebugMode(
     "elliptical soft-shadow cone shape (Phase 9 Stage 1); a spherical point light shows 7==8, an "
     "elongated fixture or projected-light aperture shows 7!=8.");
 
-extern idCVar r_vkRTLogCaptureReset;
-
-static bool VK_RTDebugLightMatch(const viewLight_t *vLight)
-{
-    const char *filter = r_vkRTDebugLightFilter.GetString();
-    if (!filter || !filter[0])
-        return true;
-    const char *lightName = (vLight && vLight->lightShader) ? vLight->lightShader->GetName() : "";
-    return idStr::FindText(lightName, filter, false) >= 0;
-}
-
 static bool VK_RTDebugLightFrameAllowed(bool debugEnabled)
 {
     static bool s_wasEnabled = false;
     static int s_startFrame = -1;
     static int s_lastResetToken = -1;
-
-    const int resetToken = r_vkRTLogCaptureReset.GetInteger();
-    if (s_lastResetToken != resetToken)
-    {
-        s_lastResetToken = resetToken;
-        s_wasEnabled = false;
-        s_startFrame = -1;
-    }
 
     if (!debugEnabled)
     {
@@ -263,11 +238,7 @@ static bool VK_RTDebugLightFrameAllowed(bool debugEnabled)
         s_startFrame = tr.frameCount;
     }
 
-    const int frameBudget = Max(0, r_vkRTLightLogN.GetInteger());
-    if (frameBudget <= 0)
-        return true;
-
-    return (tr.frameCount - s_startFrame) < frameBudget;
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1193,7 +1164,7 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         // protect, and the rgen must not spend a fetch deciding that per pixel.
         ubo.playerClassValid = (VK_RT_ShadowClassValid() && ubo.playerExcludeRadius > 0.0f) ? 1 : 0;
 
-        if (VK_RTDebugLightFrameAllowed(r_vkRTDebugLights.GetInteger() > 0) && VK_RTDebugLightMatch(vLight))
+        if (VK_RTDebugLightFrameAllowed(r_vkRTDebugLights.GetInteger() > 0))
         {
             const char *lightName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
             common->Printf("VK RT LIGHT DBG: frame=%d light='%s' point=%d origin=(%.2f,%.2f,%.2f) rad=(%.2f,%.2f,%.2f) "
@@ -1553,9 +1524,8 @@ void VK_RT_ShadowBatchClearLayers(VkCommandBuffer cmd)
 
 static bool VK_RT_ShadowBatchUsable(void)
 {
-    return vkRT.isInitialized && vkRT.tlas[vk.currentFrame].isValid &&
-           r_useRayTracing.GetBool() && r_rtShadows.GetBool() &&
-           vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE;
+    return vkRT.isInitialized && vkRT.tlas[vk.currentFrame].isValid && r_useRayTracing.GetBool() &&
+           r_rtShadows.GetBool() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE;
 }
 
 // Trace + blur one batch.  inLoop: called between vkCmdEndRenderPass and the resume

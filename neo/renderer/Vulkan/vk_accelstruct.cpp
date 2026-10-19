@@ -129,15 +129,7 @@ static ID_INLINE void VK_RT_LapTicks(uint64_t *mark, uint64_t *acc)
     *mark = now;
 }
 
-static idCVar r_vkRTReflDataDiag(
-    "r_vkRTReflDataDiag", "0", CVAR_RENDERER | CVAR_INTEGER,
-    "Reflection hit-data diagnostics: 0=off, 1=per-frame summary, 2=summary + first suspicious slots");
-
 extern idCVar r_rtVolMaxDist; // vk_vol.cpp — vol shadow-ray reach, reported by r_rtTlasDump
-
-static idCVar r_rtTlasDump("r_rtTlasDump", "0", CVAR_RENDERER | CVAR_BOOL,
-                           "One-shot: dump the next TLAS build — per-pass instance counts, the pass-2 cull radius "
-                           "against each consumer's ray reach, and the pass-2 reject tally by reason.");
 
 static idCVar r_rtTlasFallbackRadius("r_rtTlasFallbackRadius", "0", CVAR_RENDERER | CVAR_FLOAT,
                                      "Pass-2 radius for adding off-screen static geometry to the TLAS. 0 = auto: "
@@ -170,14 +162,14 @@ static const int VK_RT_MAX_TLAS_INSTANCES = 4096;
 // ---------------------------------------------------------------------------
 struct vkRTTlasPassStats_t
 {
-    uint32_t pass1, pass2, pass3;         // instances admitted per pass
-    uint32_t pass1World, pass2World;      // of those, world BSP areas (_area<N>)
-    uint32_t worldAreasInMap;             // total _area<N> entityDefs
+    uint32_t pass1, pass2, pass3;    // instances admitted per pass
+    uint32_t pass1World, pass2World; // of those, world BSP areas (_area<N>)
+    uint32_t worldAreasInMap;        // total _area<N> entityDefs
     // Pass-2 rejects, by the check that dropped the entity.
     uint32_t rejDist, rejAlreadyAdded, rejDynamic, rejViewLocal, rejNoModel, rejNoCachedBlas, rejGeomFull;
-    uint32_t rejDistWorld;                // world areas lost to the distance cull alone
-    float nearestRejWorldOrigin;          // origin-based distance of the closest such area
-    float nearestRejWorldBounds;          // same area measured against its bounds — what stage 2 will use
+    uint32_t rejDistWorld;       // world areas lost to the distance cull alone
+    float nearestRejWorldOrigin; // origin-based distance of the closest such area
+    float nearestRejWorldBounds; // same area measured against its bounds — what stage 2 will use
 };
 
 // Distance from a point to the entity's world-space bounds, 0 when inside.
@@ -1210,7 +1202,6 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkRTTlasPassStats_t passStats = {};
     passStats.nearestRejWorldOrigin = idMath::INFINITY;
     passStats.nearestRejWorldBounds = idMath::INFINITY;
-    const bool tlasDump = r_rtTlasDump.GetBool();
 
     for (const viewEntity_t *vEntity = viewDef->viewEntitys;
          vEntity != NULL && (staticCount + dynamicCount) < VK_RT_MAX_TLAS_INSTANCES; vEntity = vEntity->next)
@@ -1551,26 +1542,15 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             // World areas all sit at origin (0,0,0), so they use bounds distance only.  Other
             // entities take the cheap origin accept first; the 8-corner bounds test runs only
             // on origin rejects, so large or offset meshes whose origin is far still count.
-            const bool outOfRange =
-                isWorldArea ? (VK_RT_EntityBoundsDistance(ent, camPos) > pass2Rad)
-                            : ((ent->parms.origin - camPos).LengthSqr() > distCullSq &&
-                               VK_RT_EntityBoundsDistance(ent, camPos) > pass2Rad);
+            const bool outOfRange = isWorldArea ? (VK_RT_EntityBoundsDistance(ent, camPos) > pass2Rad)
+                                                : ((ent->parms.origin - camPos).LengthSqr() > distCullSq &&
+                                                   VK_RT_EntityBoundsDistance(ent, camPos) > pass2Rad);
             if (outOfRange)
             {
                 passStats.rejDist++;
                 if (isWorldArea && ent->blasFrameCount != tr.frameCount)
                 {
                     passStats.rejDistWorld++;
-                    // Bounds transform is 8 points per area — dump path only.
-                    if (tlasDump)
-                    {
-                        const float dBounds = VK_RT_EntityBoundsDistance(ent, camPos);
-                        if (dBounds < passStats.nearestRejWorldBounds)
-                        {
-                            passStats.nearestRejWorldBounds = dBounds;
-                            passStats.nearestRejWorldOrigin = (ent->parms.origin - camPos).Length();
-                        }
-                    }
                 }
                 continue;
             }
@@ -1839,65 +1819,6 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     const uint32_t instanceCount = staticCount + dynamicCount;
     passStats.pass3 = instanceCount - passStats.pass1 - passStats.pass2;
 
-    // Printed here rather than beside the build log below so it still fires on the
-    // instanceCount == 0 early return.
-    if (tlasDump)
-    {
-        r_rtTlasDump.SetBool(false);
-
-        const idVec3 camPos = viewDef->renderView.vieworg;
-        const float pass2Radius = VK_RT_Pass2CullRadius();
-
-        common->Printf("=== [r_rtTlasDump] frame=%u frameCount=%d ===\n", vk.currentFrame, tr.frameCount);
-        common->Printf("  camera=(%.0f %.0f %.0f)  dist to map origin=%.0f\n", camPos.x, camPos.y, camPos.z,
-                       camPos.Length());
-        common->Printf("  instances=%u (static=%u dynamic=%u, cap %d)  geoms: static=%u dynamic=%u (cap %u)\n",
-                       instanceCount, staticCount, dynamicCount, VK_RT_MAX_TLAS_INSTANCES, staticGeomCount,
-                       dynamicGeomCount, VK_MAT_MAX_GEOMS);
-        common->Printf("  pass 1  viewEntitys        : %5u instances  (world BSP areas: %u)\n", passStats.pass1,
-                       passStats.pass1World);
-        common->Printf("  pass 2  static off-screen  : %5u instances  (world BSP areas: %u)\n", passStats.pass2,
-                       passStats.pass2World);
-        common->Printf("  pass 3  near dynamic       : %5u instances\n", passStats.pass3);
-        common->Printf("  world BSP areas: %u in map, %u in TLAS this frame\n", passStats.worldAreasInMap,
-                       passStats.pass1World + passStats.pass2World);
-        common->Printf("  pass 2 cull radius = %.0f (r_rtTlasFallbackRadius=%.0f, 0=auto); world areas by bounds, "
-                       "others by parms.origin\n",
-                       pass2Radius, r_rtTlasFallbackRadius.GetFloat());
-        common->Printf("  pass 3 cull radius = %.0f (r_rtNearDynRadius)\n", r_rtNearDynRadius.GetFloat());
-        // Live bytes per BLAS pool: the R3 A/B reads AS and scratch totals from here.
-        const vkBufferPool_t *pools[3] = {&s_blasStoragePool, &s_blasScratchPool, &s_blasGeomPool};
-        for (int p = 0; p < 3; p++)
-        {
-            int chunks = 0;
-            VkDeviceSize total = 0, freeBytes = 0, largest = 0;
-            VK_Pool_Stats(pools[p], &chunks, &total, &freeBytes, &largest);
-            common->Printf("  pool %-11s: used %6d KB of %6d KB in %d chunk(s)\n", pools[p]->name,
-                           (int)((total - freeBytes) >> 10), (int)(total >> 10), chunks);
-        }
-        common->Printf("  scratch awaiting release: %d range(s)\n", s_scratchGarbage.Num());
-        // r_rtReflectionDistance is file-static in vk_reflections.cpp; read it by name
-        // rather than widen its linkage for a debug line.
-        common->Printf("  consumer ray reach: GI=%.0f  vol=%.0f+lightDist  refl=%.0f\n", r_rtGIRadius.GetFloat(),
-                       r_rtVolMaxDist.GetFloat(), cvarSystem->GetCVarFloat("r_rtReflectionDistance"));
-        common->Printf("  pass 2 rejects: dist=%u (of which world areas not already added: %u) alreadyAdded=%u "
-                       "dynamic=%u viewLocal=%u noModel=%u noCachedBLAS=%u geomTableFull=%u\n",
-                       passStats.rejDist, passStats.rejDistWorld, passStats.rejAlreadyAdded, passStats.rejDynamic,
-                       passStats.rejViewLocal, passStats.rejNoModel, passStats.rejNoCachedBlas,
-                       passStats.rejGeomFull);
-        if (passStats.rejDistWorld > 0)
-        {
-            // parms.origin is (0,0,0) for every _area<N> (RenderWorld_load.cpp:714), so the
-            // origin column is really camera-to-map-origin. The bounds column is the closest
-            // world area measured honestly — the gap between the two is the defect, and the
-            // bounds figure is what stage 2's radius has to clear.
-            common->Printf("  closest world area rejected by the distance cull: bounds-based=%.0f  "
-                           "origin-based=%.0f\n",
-                           passStats.nearestRejWorldBounds, passStats.nearestRejWorldOrigin);
-        }
-        fflush(NULL);
-    }
-
     if (instanceCount == 0)
     {
         if (r_vkLogRT.GetInteger() >= 1)
@@ -2020,86 +1941,6 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         common->Warning("VK RT: combined geom count overflow (static=%u dynamic=%u limit=%u) — clamping dynamic",
                         staticGeomCount, dynamicGeomCount, VK_MAT_MAX_GEOMS);
         dynamicGeomCount = VK_MAT_MAX_GEOMS - staticGeomCount;
-    }
-
-    // Reflection hit-data diagnostics: validate material/address tables before upload.
-    if (r_vkRTReflDataDiag.GetInteger() > 0)
-    {
-        int badAddrCount = 0;
-        int badTexCount = 0;
-        int badBaseCount = 0;
-        int alphaNoDiffuseCount = 0;
-        int glassCount = 0;
-        int playerCount = 0;
-        int loggedBad = 0;
-
-        auto logBadSlot = [&](const char *bucket, uint32_t localIdx, uint32_t expectedBase,
-                              const VkMaterialEntry &entry, uint64_t vtxAddr, uint64_t idxAddr, bool badAddr,
-                              bool badTex, bool badBase) {
-            if (r_vkRTReflDataDiag.GetInteger() < 2 || loggedBad >= 16)
-                return;
-            common->Printf(
-                "VK RT ReflData BAD: frame=%d %s local=%u expectedBase=%u base=%u flags=0x%X diff=%u norm=%u "
-                "alpha=%.3f vtx=0x%llx idx=0x%llx bad(addr=%d tex=%d base=%d)\n",
-                tr.frameCount, bucket, localIdx, expectedBase, entry.baseGeomIdx, (unsigned int)entry.flags,
-                entry.diffuseTexIndex, entry.normalTexIndex, entry.alphaThreshold, (unsigned long long)vtxAddr,
-                (unsigned long long)idxAddr, badAddr ? 1 : 0, badTex ? 1 : 0, badBase ? 1 : 0);
-            loggedBad++;
-        };
-
-        for (uint32_t i = 0; i < staticGeomCount; i++)
-        {
-            const VkMaterialEntry &entry = staticMatEntries[i];
-            const uint64_t vtxAddr = s_staticGeomVtxAddrs[i];
-            const uint64_t idxAddr = s_staticGeomIdxAddrs[i];
-            const bool badAddr = (vtxAddr == 0 || idxAddr == 0);
-            const bool badTex =
-                (entry.diffuseTexIndex >= VK_MAT_MAX_TEXTURES || entry.normalTexIndex >= VK_MAT_MAX_TEXTURES);
-            const bool badBase = (entry.baseGeomIdx != i);
-
-            badAddrCount += badAddr ? 1 : 0;
-            badTexCount += badTex ? 1 : 0;
-            badBaseCount += badBase ? 1 : 0;
-            if ((entry.flags & VK_MAT_FLAG_ALPHA_TESTED) != 0 && entry.diffuseTexIndex == 0)
-                alphaNoDiffuseCount++;
-            if ((entry.flags & VK_MAT_FLAG_GLASS) != 0)
-                glassCount++;
-            if ((entry.flags & VK_MAT_FLAG_PLAYER_BODY) != 0)
-                playerCount++;
-
-            if (badAddr || badTex || badBase)
-                logBadSlot("static", i, i, entry, vtxAddr, idxAddr, badAddr, badTex, badBase);
-        }
-
-        for (uint32_t i = 0; i < dynamicGeomCount; i++)
-        {
-            const VkMaterialEntry &entry = dynamicMatEntries[i];
-            const uint64_t vtxAddr = s_dynGeomVtxAddrs[i];
-            const uint64_t idxAddr = s_dynGeomIdxAddrs[i];
-            const uint32_t expectedBase = staticGeomCount + i;
-            const bool badAddr = (vtxAddr == 0 || idxAddr == 0);
-            const bool badTex =
-                (entry.diffuseTexIndex >= VK_MAT_MAX_TEXTURES || entry.normalTexIndex >= VK_MAT_MAX_TEXTURES);
-            const bool badBase = (entry.baseGeomIdx != expectedBase);
-
-            badAddrCount += badAddr ? 1 : 0;
-            badTexCount += badTex ? 1 : 0;
-            badBaseCount += badBase ? 1 : 0;
-            if ((entry.flags & VK_MAT_FLAG_ALPHA_TESTED) != 0 && entry.diffuseTexIndex == 0)
-                alphaNoDiffuseCount++;
-            if ((entry.flags & VK_MAT_FLAG_GLASS) != 0)
-                glassCount++;
-            if ((entry.flags & VK_MAT_FLAG_PLAYER_BODY) != 0)
-                playerCount++;
-
-            if (badAddr || badTex || badBase)
-                logBadSlot("dynamic", i, expectedBase, entry, vtxAddr, idxAddr, badAddr, badTex, badBase);
-        }
-
-        common->Printf("VK RT ReflData: frame=%d static=%u dynamic=%u total=%u badAddr=%d badTex=%d badBase=%d "
-                       "alphaNoDiffuse=%d glass=%d player=%d\n",
-                       tr.frameCount, staticGeomCount, dynamicGeomCount, staticGeomCount + dynamicGeomCount,
-                       badAddrCount, badTexCount, badBaseCount, alphaNoDiffuseCount, glassCount, playerCount);
     }
 
     // P6 (rt_optimization_tuning.md): does any glass geometry exist in this frame's
@@ -2410,7 +2251,8 @@ void VK_RT_Init(void)
     vkGetPhysicalDeviceProperties2(vk.physicalDevice, &props2);
     if (asProps.minAccelerationStructureScratchOffsetAlignment > s_blasScratchPool.align)
         s_blasScratchPool.align = asProps.minAccelerationStructureScratchOffsetAlignment;
-    common->Printf("VK RT: BLAS scratch alignment %u\n", (unsigned)s_blasScratchPool.align);    common->Printf("VK RT: acceleration structure support initialized\n");
+    common->Printf("VK RT: BLAS scratch alignment %u\n", (unsigned)s_blasScratchPool.align);
+    common->Printf("VK RT: acceleration structure support initialized\n");
 }
 
 void VK_RT_Shutdown(void)

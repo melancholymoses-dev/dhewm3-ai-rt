@@ -143,11 +143,6 @@ static idCVar r_rtGIWhiteWeight(
     "×this. Lower = colored accents beat white fills more strongly for the limited light slots. "
     "1.0 = no saturation weighting (legacy)");
 
-static idCVar r_rtGILightDump("r_rtGILightDump", "0", CVAR_RENDERER | CVAR_BOOL,
-                              "auto_relight.md §0: dump every in-view lightDef to the console once — name, color, "
-                              "saturation, radius, noShadows, classifier verdict, admitted/rejected, importance "
-                              "pre/post saturation weight. Self-clearing (prints once then resets to 0)");
-
 // G5b (20260906_froxel_probe_gi.md): flicker factorization. A flickering light
 // is a scalar s(t) on an otherwise static light, and the CPU knows it exactly
 // every frame, so its bounce transport can be cached NORMALISED (at s = 1) and
@@ -1701,19 +1696,6 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     static int s_prevUploadFrameNum = -1;
     const int prevUploadFrame = s_prevUploadFrameNum;
 
-    // §0 (auto_relight.md): one-shot console dump of every light this collector
-    // sees, with its classifier verdict — self-clearing so it doesn't spam.
-    const bool dumpLights = r_rtGILightDump.GetBool();
-    if (dumpLights)
-    {
-        if (useAreaWalk)
-            common->Printf("VK RT GI light dump (area walk: startArea=%d hops=%d maxDist=%.1f, "
-                           "+ Stage 1.5 view-flood union + Stage 1.75 boundary-fuzz seed):\n",
-                           viewDef->areaNum, areaHops, maxLightDist);
-        else
-            common->Printf("VK RT GI light dump (camera sphere: collectRadius=%.1f):\n", lightCollectRadius);
-    }
-
     const float whiteWeight = idMath::ClampFloat(0.0f, 1.0f, r_rtGIWhiteWeight.GetFloat());
 
     // G5b: the classifier's clock. renderView.time is the game's own millisecond
@@ -1879,41 +1861,6 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         const float sat = (maxChan > 1e-4f) ? (maxChan - minChan) / maxChan : 0.0f;
         const float satWeight = whiteWeight + (1.0f - whiteWeight) * sat;
 
-        if (dumpLights)
-        {
-            const float lumDbg = Max(0.0f, 0.299f * r + 0.587f * g + 0.114f * b);
-            const float dstSq = Max(dSq, radius * radius);
-            const float baseImportanceDbg = (dstSq > 1e-4f) ? intensity * lumDbg * radius * radius / dstSq : 0.0f;
-            common->Printf("  %-28s cls=%-12s noShadows=%d radius=%6.1f dist=%6.1f area=%d hop=%d "
-                           "color=(%.2f %.2f %.2f) sat=%.2f imp=%.4f->%.4f -> %s\n",
-                           lightLocal->lightShader ? lightLocal->lightShader->GetName() : "<null>",
-                           VK_RT_LightClassName(lightClass), p.noShadows ? 1 : 0, radius, idMath::Sqrt(dSq), gatherArea,
-                           gatherHop, r, g, b, sat, baseImportanceDbg, baseImportanceDbg * satWeight,
-                           admitted ? "ADMIT" : "REJECT");
-            // G5b verdict. "color" above is now L̂ for a fast light, so print the
-            // current luminance beside it or the two are indistinguishable in a
-            // log taken at a moment the light happens to be at peak.
-            // Whether this light also WINS the bucket is decided after the
-            // selection sort, so it is reported in the [final order] block
-            // below rather than here.
-            // parm vs evaluated is the tell for a time-driven light material:
-            // they differ only where the stage's colour is an expression, which
-            // is exactly where a flicker can be found. Equal everywhere means
-            // this area simply has no animated lights, NOT that detection is
-            // broken — most Doom 3 fixtures are a plain `colored` stage, whose
-            // registers are parm0-2 verbatim.
-            // depth is the tell for a light that latched on a one-off transient
-            // (a switch-on at map load) rather than a real flicker: the latch is
-            // permanent, so depth near 0 on a FAST light means it changed once
-            // and has been steady since.
-            common->Printf("    G5b: %-7s s=%.3f depth=%.2f parm=(%.2f %.2f %.2f) eval=(%.2f %.2f %.2f) "
-                           "Lhat=(%.2f %.2f %.2f) lum now=%.3f peak=%.3f%s\n",
-                           flicker.fast ? "FAST" : "steady", flicker.scale, flicker.depth, parmColorDbg.x,
-                           parmColorDbg.y, parmColorDbg.z, evalColorDbg.x, evalColorDbg.y, evalColorDbg.z, r, g, b,
-                           curLumDbg, VK_RT_LightLuminance(idVec3(r, g, b)),
-                           flicker.tracked ? "" : " [untracked: index past the table, or buckets off]");
-        }
-
         if (!admitted)
             return;
 
@@ -1993,16 +1940,9 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             c.entry.fastScale = flicker.scale;
             c.entry.fastBucket = 0u; // K is clamped to 1 — see r_rtGIProbeFastBuckets
 
-            if (dumpLights)
-                common->Printf("    type: pointLight=%d parallel=%d isProjected=%d lightType=%u\n",
-                               p.pointLight ? 1 : 0, p.parallel ? 1 : 0, isProjected ? 1 : 0, c.entry.lightType);
-
             // Stage 6 (20261013_reflection_volumetrics.md) — axial attenuation for
             // projected lights comes from the light's falloffImage, texgenned by
-            // lightProject[3], exactly as interaction.vert:90 does it. The linear ramp
-            // this replaces had no counterpart in GL (lights/defaultProjectedLight is
-            // `lightFalloffImage _noFalloff`, flat white) and, being built from the
-            // AXIAL projection, grew toward the cone edge at constant distance.
+            // lightProject[3], exactly as interaction.vert:90 does it.
             //
             // Projected only. Point lights keep rt_LightBoxAtten, whose falloffMode and
             // falloffReach are tuned by eye; swapping them to the image is a separate
@@ -2018,12 +1958,6 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
                     c.cookie.planeF[comp] = fPlane[comp];
                 c.cookie.falloffIndex = VK_RT_GetOrAssignTexIndex(lightLocal->falloffImage);
                 c.entry.flags |= GI_LIGHT_FLAG_HAS_FALLOFF;
-
-                if (dumpLights)
-                    common->Printf("    falloff: image=%s slot=%u planeF=(%.5f %.5f %.5f %.2f)\n",
-                                   lightLocal->falloffImage ? lightLocal->falloffImage->imgName.c_str() : "<none>",
-                                   c.cookie.falloffIndex, c.cookie.planeF[0], c.cookie.planeF[1], c.cookie.planeF[2],
-                                   c.cookie.planeF[3]);
             }
             else
             {
@@ -2078,23 +2012,6 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
                     c.cookie.imageIndex = VK_RT_GetOrAssignTexIndex(stage->texture.image);
                     c.cookie.pad[0] = c.cookie.pad[1] = 0u;
                     c.entry.flags |= GI_LIGHT_FLAG_HAS_COOKIE;
-                }
-
-                if (dumpLights)
-                {
-                    if (chosenStage >= 0)
-                        common->Printf("    cookie: stages=%d passing=%d chosen=%d image=%s\n",
-                                       lightShader->GetNumStages(), numPassing, chosenStage,
-                                       lightShader->GetStage(chosenStage)->texture.image->imgName.c_str());
-                    else
-                        common->Printf("    cookie: stages=%d passing=%d chosen=none\n", lightShader->GetNumStages(),
-                                       numPassing);
-                    if (numPassing > 1)
-                        common->Printf("    cookie: %d stages passed condition simultaneously on '%s' — v1 only "
-                                       "uses the first (stage %d); real Doom3 draws them as separate additive "
-                                       "interaction passes, so this is an incomplete v1 for this fixture, not a "
-                                       "bug — see rt_projected_light_cookies.md Stage 1 note\n",
-                                       numPassing, lightShader->GetName(), chosenStage);
                 }
             }
         }
@@ -2153,14 +2070,6 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             s_bfsQueue[tail].area = viewDef->areaNum;
             s_bfsQueue[tail].hop = 0;
             tail++;
-        }
-
-        if (dumpLights)
-        {
-            common->Printf("  [Stage 1.75] boundsEps=%.1f seedAreas(%d)=[", boundsEps, tail);
-            for (int i = 0; i < tail; i++)
-                common->Printf("%s%d", i ? "," : "", s_bfsQueue[i].area);
-            common->Printf("]  (PointInArea single classification would have been area=%d)\n", viewDef->areaNum);
         }
 
         while (head < tail)
@@ -2261,19 +2170,13 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         }
     }
 
-    // Self-clearing: r_rtGILightDump prints one frame's worth of lights, not every frame.
-    if (dumpLights)
-        r_rtGILightDump.SetBool(false);
-
     // --- L1 (rt_optimization_tuning.md): stratified selection + importance ordering ---
     //
     // Pure nearest-to-camera selection (legacy path below) lets dim fill lights near
     // the camera crowd out a bright light 200u away, and makes distant sources pop
     // as the player moves. Instead: bucket by distance tier, sort each tier by
     // importance, give each tier a guaranteed slot quota, and upload the final set
-    // ordered importance-first — order matters because every consumer walks a
-    // *prefix* of this buffer (GI bounce: maxBounceLights, reflection hits: shadow
-    // budget, volumetrics: maxLights).
+    // ordered importance-first
     const int toUpload = Min(numCandidates, maxLights);
 
     if (!r_rtGILightStratify.GetBool())
@@ -2458,45 +2361,11 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         g_vkVolMaxLightReach = maxReach; // read by the next TLAS build's pass-2 radius
     }
 
-    // r_rtGILightDump's per-candidate log above shows *admission* (area/hop); this
-    // shows the two downstream selections so a before/after at a suspected pop can
-    // show exactly which light dropped and why (GI-level cut vs. vol-unreachable).
-    if (dumpLights)
-    {
-        common->Printf("  [final order] importance-sorted GI upload (%d):\n", numSelected);
-        for (int i = 0; i < numSelected; i++)
-        {
-            const Candidate *c = s_selected[i];
-            const idRenderLightLocal *ld =
-                (c->lightIdx >= 0 && c->lightIdx < numLightDefs) ? world->lightDefs[c->lightIdx] : NULL;
-            common->Printf("    #%-3d %-28s imp=%.4f tier=%d dist=%6.1f\n", i,
-                           (ld && ld->lightShader) ? ld->lightShader->GetName() : "<?>", c->importance, c->tier,
-                           idMath::Sqrt(c->distSq));
-        }
-        common->Printf("  [vol selection] reachable within r_rtVolMaxDist=%.0f, capped at "
-                       "r_rtVolMaxLights=%d (%d selected):\n",
-                       r_rtVolMaxDist.GetFloat(), r_rtVolMaxLights.GetInteger(), numVolSelected);
-        for (int i = 0; i < numVolSelected; i++)
-        {
-            const Candidate *c = s_volSelected[i];
-            const idRenderLightLocal *ld =
-                (c->lightIdx >= 0 && c->lightIdx < numLightDefs) ? world->lightDefs[c->lightIdx] : NULL;
-            common->Printf("    #%-3d %-28s imp=%.4f dist=%6.1f reach=%.1f\n", i,
-                           (ld && ld->lightShader) ? ld->lightShader->GetName() : "<?>", c->importance,
-                           idMath::Sqrt(c->distSq), c->entry.posRadius[3]);
-        }
-    }
-
     // G5b: count the flickering lights as they go in, and note which one wins
     // the single fast bucket — see GI_LIGHT_FLAG_FAST_BUCKET on why it holds
     // exactly one light.
     //
-    // Ranked on importance x flicker DEPTH, not importance alone. Importance
-    // measures how much a light contributes; depth measures how much of that
-    // contribution the EMA is currently destroying. Only the product says how
-    // much error the bucket would remove, and ranking on importance alone put
-    // the bucket on a light swinging 0.9-1.0 while a strobe going fully black
-    // sat in the stable bucket.
+    // Ranked on importance x flicker DEPTH, not importance alone.
     int bucketIdx = -1;
     int bucketSel = -1;
     float bucketScore = 0.0f;
@@ -2533,29 +2402,6 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         lb->lights[bucketIdx].flags |= GI_LIGHT_FLAG_FAST_BUCKET;
         lb->lights[bucketIdx].fastBucket = 0u;
         s_giFastGain[0] = idMath::ClampFloat(0.0f, 1.0f, lb->lights[bucketIdx].fastScale);
-    }
-
-    if (dumpLights)
-    {
-        // Every fast light with its score, so a surprising bucket winner can be
-        // explained from the log instead of guessed at in the room.
-        common->Printf("  [G5b] %d flickering light(s) in the upload, ranked by importance x depth:\n",
-                       s_giFastLightCount);
-        for (int i = 0; i < numSelected; i++)
-        {
-            if ((lb->lights[i].flags & GI_LIGHT_FLAG_FAST) == 0u)
-                continue;
-            const idRenderLightLocal *ld = (s_selected[i]->lightIdx >= 0 && s_selected[i]->lightIdx < numLightDefs)
-                                               ? world->lightDefs[s_selected[i]->lightIdx]
-                                               : NULL;
-            common->Printf("    %-28s imp=%.4f depth=%.2f score=%.4f s=%.3f%s\n",
-                           (ld && ld->lightShader) ? ld->lightShader->GetName() : "<?>", s_selected[i]->importance,
-                           s_selected[i]->flickerDepth, s_selected[i]->importance * s_selected[i]->flickerDepth,
-                           lb->lights[i].fastScale, (i == bucketSel) ? "   <== BUCKET 0" : "");
-        }
-        common->Printf("    gain[0]=%.3f. Non-bucketed fast lights keep their gain everywhere else but fall "
-                       "back to EMA-smeared probe GI.\n",
-                       s_giFastGain[0]);
     }
 
     s_prevUploadFrameNum = tr.frameCount;

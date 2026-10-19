@@ -656,10 +656,10 @@ typedef struct
     int c_visibleViewEntities;
     int c_shadowViewEntities;
     int c_viewLights;
-    int c_numViews;         // number of total views rendered
-    int c_deformedSurfaces; // idMD5Mesh::GenerateSurface
-    int c_deformedVerts;    // idMD5Mesh::GenerateSurface
-    int c_deformedIndexes;  // idMD5Mesh::GenerateSurface
+    int c_numViews;            // number of total views rendered
+    int c_deformedSurfaces;    // idMD5Mesh::GenerateSurface
+    int c_deformedVerts;       // idMD5Mesh::GenerateSurface
+    int c_deformedIndexes;     // idMD5Mesh::GenerateSurface
     int c_tangentIndexes;      // R_DeriveTangents()
     int c_rtDeformTangents;    // deformed surfaces derived only because the TLAS is live
     int c_rtDeformTangentUsec; // CPU time spent in those derivations
@@ -668,19 +668,19 @@ typedef struct
     int frontEndMsec; // sum of time in all RE_RenderScene's in a frame
 
     // dhewm3-rt: microsecond CPU breakdown for the r_vkRTProfile "VK CPU PROFILE" line.
-    int c_frontEndUsec;          // all RenderScene calls
-    int c_findViewUsec;          // FindViewLightsAndEntities
-    int c_addLightsUsec;         // R_AddLightSurfaces
-    int c_addModelsUsec;         // R_AddModelSurfaces (includes the dynamic-model spans below)
-    int c_callbackUsec;          // R_IssueEntityDefCallback (game-side animation updates)
-    int c_dynCached, c_dynCachedUsec;         // DM_CACHED instantiations (MD5 skinning, etc.)
-    int c_dynContinuous, c_dynContinuousUsec; // DM_CONTINUOUS instantiations (particles, beams)
+    int c_frontEndUsec;                            // all RenderScene calls
+    int c_findViewUsec;                            // FindViewLightsAndEntities
+    int c_addLightsUsec;                           // R_AddLightSurfaces
+    int c_addModelsUsec;                           // R_AddModelSurfaces (includes the dynamic-model spans below)
+    int c_callbackUsec;                            // R_IssueEntityDefCallback (game-side animation updates)
+    int c_dynCached, c_dynCachedUsec;              // DM_CACHED instantiations (MD5 skinning, etc.)
+    int c_dynContinuous, c_dynContinuousUsec;      // DM_CONTINUOUS instantiations (particles, beams)
     int c_vcAllocs, c_vcAllocBytes, c_vcAllocUsec; // static vertex-cache device buffers created
     int c_vcFrees;
     // Per-call-site split of the three counters above; [site][model kind], see vcSite_t / vcModelKind.
     int c_vcSiteCount[VCS_COUNT][VCK_COUNT], c_vcSiteBytes[VCS_COUNT][VCK_COUNT], c_vcSiteUsec[VCS_COUNT][VCK_COUNT];
-    int c_gameTicUsec;  // game->RunFrame, copied from time_gameFrameUsec at EndFrame
-    int c_backEndUsec;  // previous backend run, copied from backEnd.pc at EndFrame
+    int c_gameTicUsec; // game->RunFrame, copied from time_gameFrameUsec at EndFrame
+    int c_backEndUsec; // previous backend run, copied from backEnd.pc at EndFrame
 } performanceCounters_t;
 
 // dhewm3-rt: microsecond clock for the c_*Usec counters above.
@@ -889,10 +889,10 @@ class idRenderSystemLocal : public idRenderSystem
 
     viewDef_t *viewDef;
 
-    performanceCounters_t pc; // performance counters
+    performanceCounters_t pc;          // performance counters
     performanceCounters_t pcLastFrame; // dhewm3-rt: pc as of the last EndFrame, for r_vkRTProfile
-    int vcSite;      // dhewm3-rt: vcSite_t of the VertexCache_Alloc call about to be made
-    int vcModelKind; // dhewm3-rt: VCK_* of the surface being cached by R_AddAmbientDrawsurfs
+    int vcSite;                        // dhewm3-rt: vcSite_t of the VertexCache_Alloc call about to be made
+    int vcModelKind;                   // dhewm3-rt: VCK_* of the surface being cached by R_AddAmbientDrawsurfs
 
     drawSurfsCommand_t lockSurfacesCmd; // use this when r_lockSurfaces = 1
     // renderView_t			lockSurfacesRenderView;
@@ -958,23 +958,23 @@ extern idCVar r_renderer; // arb2, etc
 extern idCVar r_useGLSL;  // use GLSL backend instead of ARB assembly programs
 
 // Vulkan / Ray Tracing backend
-extern idCVar r_backend;          // "opengl" or "vulkan"
-extern idCVar r_useRayTracing;    // enable hardware ray tracing
-extern idCVar r_rtShadows;        // ray traced shadows
-extern idCVar r_rtAO;             // ray traced ambient occlusion
-extern idCVar r_rtAOTemporal;     // temporal denoising for AO
-extern idCVar r_rtReflections;    // ray traced reflections
-extern idCVar r_rtGI;             // ray traced global illumination (Phase 6.1)
-extern idCVar r_rtDeformedTangents;  // force per-frame tangent derivation on deformed models for RT
-extern idCVar r_rtGIDirectScale; // scaler to reduce impact of global illumination
-extern idCVar r_rtGIStrength;    // global scale on the GI buffer before compositing
-extern idCVar r_rtGIRadius;          // distance to allow GI
-extern idCVar r_rtShadowSamples;  // shadow rays per pixel
-extern idCVar r_rtShadowBlur;     // shadow mask blur radius (0=off, 1-8=kernel half-width)
-extern idCVar r_rtFlashlightBias; // units to push flashlight origin forward to avoid hand self-shadow
-extern idCVar r_vkLogRT;          // RT diagnostics verbosity (0=off,1=frame,2=per-light)
-extern idCVar r_rtAOSamples;      // AO rays per pixel
-extern idCVar r_rtNearDynRadius;  // radius for forcing off-screen dynamic entities into TLAS
+extern idCVar r_backend;            // "opengl" or "vulkan"
+extern idCVar r_useRayTracing;      // enable hardware ray tracing
+extern idCVar r_rtShadows;          // ray traced shadows
+extern idCVar r_rtAO;               // ray traced ambient occlusion
+extern idCVar r_rtAOTemporal;       // temporal denoising for AO
+extern idCVar r_rtReflections;      // ray traced reflections
+extern idCVar r_rtGI;               // ray traced global illumination (Phase 6.1)
+extern idCVar r_rtDeformedTangents; // force per-frame tangent derivation on deformed models for RT
+extern idCVar r_rtGIDirectScale;    // scaler to reduce impact of global illumination
+extern idCVar r_rtGIStrength;       // global scale on the GI buffer before compositing
+extern idCVar r_rtGIRadius;         // distance to allow GI
+extern idCVar r_rtShadowSamples;    // shadow rays per pixel
+extern idCVar r_rtShadowBlur;       // shadow mask blur radius (0=off, 1-8=kernel half-width)
+extern idCVar r_rtFlashlightBias;   // units to push flashlight origin forward to avoid hand self-shadow
+extern idCVar r_vkLogRT;            // RT diagnostics verbosity (0=off,1=frame,2=per-light)
+extern idCVar r_rtAOSamples;        // AO rays per pixel
+extern idCVar r_rtNearDynRadius;    // radius for forcing off-screen dynamic entities into TLAS
 
 extern idCVar r_checkBounds; // compare all surface bounds with precalculated ones
 
@@ -999,12 +999,7 @@ extern idCVar
     r_usePreciseTriangleInteractions; // 1 = do winding clipping to determine if each ambiguous tri should be lit
 extern idCVar r_useTurboShadow;       // 1 = use the infinite projection with W technique for dynamic shadows
 extern idCVar r_useExternalShadows;   // 1 = skip drawing caps when outside the light volume
-extern idCVar r_vkLogShadowBranch;    // Vulkan shadow branch logging (0=off,1=basic,2=detailed)
-extern idCVar r_vkShadowFlipOps;      // Vulkan shadow debug: swap non-mirror/mirror stencil-op pipeline selection
 extern idCVar r_vkShadowStableMode;   // Vulkan shadow stabilization: force full-volume Z-fail path
-extern idCVar r_vkLogShadowGeom;      // Vulkan shadow geometry logging (source path and geometry signature)
-extern idCVar r_vkShadowFullScissor;  // Vulkan shadow debug: draw shadow volumes with full-frame scissor
-extern idCVar r_vkLightFullScissor;   // Vulkan shadow debug: force full-frame scissor for whole light pass
 extern idCVar r_vkInsideLightHysteresisEnter; // Vulkan shadow stability: extra enter-inside margin below slop
 extern idCVar r_vkInsideLightHysteresisExit;  // Vulkan shadow stability: extra leave-inside margin above slop
 extern idCVar r_vkLogSubmitInfo;              // Vulkan submit diagnostics (0=off,1=per-frame,2=verbose)

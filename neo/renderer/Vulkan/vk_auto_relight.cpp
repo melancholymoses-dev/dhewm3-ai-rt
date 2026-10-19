@@ -866,16 +866,7 @@ static void AR_Synthesize(idRenderWorldLocal *world, idList<arCluster_t> &cluste
         rl.lightRadius.y = idMath::Fabs(left.y) * hw + idMath::Fabs(up.y) * hh + idMath::Fabs(c.normal.y) * reach;
         rl.lightRadius.z = idMath::Fabs(left.z) * hw + idMath::Fabs(up.z) * hh + idMath::Fabs(c.normal.z) * reach;
 
-        // 2026-08-30: intensity is baked into RGB rather than parked in parm3.
-        //
-        // Slot 3 on a *light* is SHADERPARM_TIMESCALE, not an intensity — see the note
-        // in vk_gi.cpp's considerLight for the full derivation. Writing intensity there
-        // only ever worked because our own GI/vol light collector was reading it back
-        // out with the same wrong assumption; the interaction path that actually draws
-        // these lights takes brightness from RGB alone (tr_render.cpp:872-874,
-        // draw_common.cpp:2079). So r_rtAutoRelightIntensity was silently a GI/vol-only
-        // control, with no effect on the direct lighting from the very fixtures it
-        // synthesizes. Baking it into RGB makes one number mean one thing everywhere.
+        // Slot 3 on a *light* is SHADERPARM_TIMESCALE, not an intensity
         rl.shaderParms[SHADERPARM_RED] = c.emissiveColor.x * intensity;
         rl.shaderParms[SHADERPARM_GREEN] = c.emissiveColor.y * intensity;
         rl.shaderParms[SHADERPARM_BLUE] = c.emissiveColor.z * intensity;
