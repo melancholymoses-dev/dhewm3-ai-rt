@@ -136,10 +136,12 @@ table had never listed, and moved six defaults. Defaults below are read from sou
 | `r_rtReflectionMinWeight` | Reflections | Skip rays below this coarse (mip-4 F0) Fresnel weight — panel-scale, not texel-scale. A value tuned against per-pixel F0 reads far stricter here (8g 2b) | 0.04 | C |
 | `r_rtReflVol` | Reflections | March the reflected segment through `froxelScatter` (arc 8c) | 1 | C |
 | `r_rtReflVolGain` / `r_rtReflVolSteps` | Reflections | Reflected-beam gain and march steps | 1.0 / 6 | C |
+| `r_rtReflVolStepLen` | Reflections | Max world units one march step may represent. Uncapped, a missed ray put ~167 units behind one froxel tap and outlined reflective silhouettes in white. 0 = uncapped | 48 | C |
 | `r_rtReflGlow` / `…Gain` | Reflections | Emissive glow in reflections, and its gain | 1 / 1.0 | C |
 | `r_rtReflGlowDist` | Reflections | Glow reach | 1024 | C |
 | `r_rtReflGlowSmoke` / `…SmokeMinLum` | Reflections | Glow through smoke, min luminance | 1 / 0.3 | C |
-| `r_rtReflFlashGlow` / `…Gain` / `…Radius` / `…Offset` | Reflections | Flashlight lamp glow in reflections — the viewmodel can never reach a reflection ray, so the lamp is drawn analytically | 1 / 1.5 / 1.5 / 0.0 | C |
+| `r_rtReflFlashGlow` / `…Gain` / `…Radius` / `…Offset` | Reflections | Flashlight lamp glow in reflections — the viewmodel can never reach a reflection ray, so the lamp is drawn analytically. Projected lights only (`flashPointLight 0`) | 1 / 1.5 / 1.5 / 0.0 | C |
+| `r_rtReflMuzzleGlow` / `…Gain` / `…Radius` | Reflections | The weapon's firing flash in reflections. Same light def as the flashlight, split on `pointLight`; textured with the flash material's `lights/round` so the `muzzleflashtable` ramp and flicker read as an animated flare | 1 / 1.0 / 6.0 | C |
 | `r_rtGlassNormalMode` | Reflections | Glass normal: 0 interpolated, 1 face, 2 crease-aware (arc 8b) | 2 | C |
 | `r_rtGlassCreaseRatio` | Reflections | Mode 2 threshold. Tuned once and settled | 0.25 | X |
 | `r_rtGuiReflGain` | Reflections | GUI screen brightness in reflections | 0.3 | C |

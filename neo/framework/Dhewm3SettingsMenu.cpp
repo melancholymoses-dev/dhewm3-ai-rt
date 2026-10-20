@@ -2496,6 +2496,10 @@ struct RTCVars
     idCVar *rtSpecF0Gamma = nullptr;
     idCVar *rtReflGlow = nullptr;
     idCVar *rtReflVol = nullptr;
+    idCVar *rtReflVolStepLen = nullptr;
+    idCVar *rtReflFlashGlow = nullptr;
+    idCVar *rtReflMuzzleGlow = nullptr;
+    idCVar *rtReflMuzzleGlowGain = nullptr;
     idCVar *rtGuiReflections = nullptr;
     idCVar *rtReflOpaqueHalfRes = nullptr;
     idCVar *rtReflAtrousFireflyClamp = nullptr;
@@ -2609,6 +2613,10 @@ static void InitRTOptionsMenu()
     rtCVars.rtSpecF0Gamma = cvarSystem->Find("r_rtSpecF0Gamma");
     rtCVars.rtReflGlow = cvarSystem->Find("r_rtReflGlow");
     rtCVars.rtReflVol = cvarSystem->Find("r_rtReflVol");
+    rtCVars.rtReflVolStepLen = cvarSystem->Find("r_rtReflVolStepLen");
+    rtCVars.rtReflFlashGlow = cvarSystem->Find("r_rtReflFlashGlow");
+    rtCVars.rtReflMuzzleGlow = cvarSystem->Find("r_rtReflMuzzleGlow");
+    rtCVars.rtReflMuzzleGlowGain = cvarSystem->Find("r_rtReflMuzzleGlowGain");
     rtCVars.rtGuiReflections = cvarSystem->Find("r_rtGuiReflections");
     rtCVars.rtReflOpaqueHalfRes = cvarSystem->Find("r_rtReflOpaqueHalfRes");
     rtCVars.rtReflAtrousFireflyClamp = cvarSystem->Find("r_rtReflAtrousFireflyClamp");
@@ -2808,12 +2816,16 @@ static void DrawRTOptionsMenu()
         RTSliderFloat("Reflection Blend", rtCVars.rtReflectionBlend, 0.0f, 10.0f);
         RTCheckbox("Projectiles in Reflections", rtCVars.rtReflGlow);
         RTCheckbox("Screens in Reflections", rtCVars.rtGuiReflections);
+        RTCheckbox("Flashlight Lamp in Reflections", rtCVars.rtReflFlashGlow);
+        RTCheckbox("Muzzle Flash in Reflections", rtCVars.rtReflMuzzleGlow);
+        RTSliderFloat("Muzzle Flash Brightness", rtCVars.rtReflMuzzleGlowGain, 0.0f, 4.0f, "%.2f");
         ImGui::TableNextColumn();
         RTSliderFloat("Specular F0 Scale (Fresnel intensity)", rtCVars.rtSpecF0Scale, 0.0f, 1.0f);
         RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 5.0f, "%.2f");
         RTSliderFloat("Reflection Max Luminance", rtCVars.rtReflMaxLuminance, 0.0f, 24.0f, "%.1f");
         RTSliderFloat("Rough Highlight Damping", rtCVars.rtReflRoughLumExp, 0.0f, 8.0f, "%.1f");
         RTCheckbox("Light Shafts in Reflections", rtCVars.rtReflVol);
+        RTSliderFloat("Light Shaft Step Length (0 = uncapped)", rtCVars.rtReflVolStepLen, 0.0f, 256.0f, "%.0f");
         RTCheckbox("Half-Res Opaque Trace (1/4 the rays)", rtCVars.rtReflOpaqueHalfRes);
         ImGui::EndTable();
     }

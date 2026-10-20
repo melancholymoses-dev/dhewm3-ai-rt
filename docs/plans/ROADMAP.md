@@ -1,6 +1,6 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-10-18 · **Next action: 8g Stage 5 knob consolidation (step 7b), or cleanup 1a + 5a (step 4).**
+**Status reviewed:** 2026-10-20 · **Next action: 8h Stage 1 (step 9b), 8g Stage 5 knob consolidation (step 7b), or cleanup 1a + 5a (step 4).**
 Optimization Stage L (interaction overdraw) was characterized and **parked** — four candidate
 causes all measured negative, and the remaining one is blocked on light falloff being a
 texture. Details and dead ends: `20261010_vk_core_audit.md` → "Stage L — parked".
@@ -22,6 +22,7 @@ they are things to check code against, not things to schedule.
 | 8d | **Surface roughness in reflections** — extend past glass to opaque surfaces with a GGX lobe. Stages 1-4 | `completed/20261013_reflection_roughness.md` | **Done 2026-10-16.** Closed on live visual confirmation (sheen on floors, clear screen/emitter reflections, no fireflies or blinding pixels), not the formal numeric Stage Checks — none of those were run end to end. Three same-day addenda beyond the original plan: roughness-gated à-trous spatial filter (`r_rtReflDenoise 2`) with a tunable wash gain, a local firefly clamp (`r_rtReflAtrousFireflyClamp`), and a flat brightness ceiling (`r_rtReflMaxLuminance`). Stage 5's menu/preset/doc polish not done — see that doc's "What's left" |
 | 8g | **Reflection pipeline refactor** — stochastic lights at hits, demodulation, linear-depth + normal edge stops, half-res opaque trace, knob consolidation | `20261017_reflection_pipeline_refactor.md` | **Stages 1-4 done, verified 2026-10-18.** `gpu.Refl` 3.81 → 1.45 ms p50 and `gpu.total` 7.89 → 5.52 (−30%) at Mars City HQ, no visible quality loss. The reflection stack went from 55% of RT time to 36%. Only Stage 5 (knob consolidation) is left, and it is cleanup — no image change intended |
 | 8f | **Live GUI screens in reflections** — render GUIs to slot textures, admit GUI surfaces to the TLAS. Stages 0-3 | `completed/20261015_gui_reflections.md` | **Done 2026-10-16.** Bioscan screens live in the glass; gain 0.3, refresh every 2nd frame. Unchecked: pool size in the admin offices |
+| 8h | **Muzzle flash sprite in reflections** — the authored `*_mflash` surface instead of a disc synthesized from the muzzle-flash light. Stages 1-4 | `20261020_muzzle_flash_sprite_reflections.md` | **Not started.** Stage 1 (emitter texture matrix) is the dependency and is useful alone — every animated additive stage currently reaches reflections at frame 0 |
 | 8e | **Cleanup + polish** — cvar trim (1a/1b/1c), debug mode trim (1d), dead-path deletion, resets, presets, comment sweep | `20261010_cleanup_polish.md` | Re-scoped 2026-10-18 after the reflection arcs closed. Measured scale: **255 cvars, 116 menu widgets, 44 debug modes**; Phase 1 now assigns every cvar M (menu) / C (console) / X (delete). New Phase 1d trims debug modes 44 → 18. 1a, 1b, 1c and 5a are all unblocked; only Phase 2 and the presets still wait on 8g Stage 5 |
 
 ### Execution order
@@ -43,6 +44,7 @@ this says *when*.
 | 8 | Cleanup 1c, then 1d | 8e | 1c unblocked 2026-10-18 — reflection cvars have M/C/X verdicts in the Settings doc. 1d (debug modes 44 → 18) wants 1a/1b/1c settled first since it edits shader branches |
 | 8b | Cleanup Phase 2 (legacy reflection mode 2) | 8e | Rewritten 2026-10-17: F0 stays and becomes a menu knob; only mode 2 goes. Needs 8g Stage 5's knob fold first |
 | 9 | ~~Cleanup 3, 4~~ — **done 2026-10-20** | 8e | Both landed; neither validated in-game yet. Screen-space GI and the per-pixel vol march are gone, probe GI and the froxel grid are the only paths |
+| 9b | 8h muzzle flash sprite, Stages 1-3 | 8h | Unblocked. Stage 3 deletes cvars added 2026-10-20, so land it before cleanup 1c assigns them a tier |
 | 10 | Cleanup 5b presets, then Phase 7 comments | 8e | Needs the final cvar set |
 
 

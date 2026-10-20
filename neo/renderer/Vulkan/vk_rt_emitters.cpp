@@ -341,7 +341,13 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
 }
 
 // ---------------------------------------------------------------------------
-// The first-person muzzle flash (= the flashlight) as a reflection emitter.
+// The first-person muzzle flash as a reflection emitter.
+//
+// idWeapon builds ONE muzzleFlash light from the weapon def's mtr_flashShader, so
+// this light is the flashlight lamp when the flashlight is out and the firing flash
+// of whatever else the player is holding otherwise. The two want different sizes and
+// brightnesses, and `pointLight` separates them: flashPointLight defaults to 1 and
+// only weapon_flashlight.def sets it to 0 (it needs a projected cone for the beam).
 //
 // Its lamp face cannot reach reflections as geometry by any route: the view model
 // is excluded from the TLAS, the entity walk below skips weaponDepthHack outright,
@@ -373,6 +379,19 @@ static idCVar r_rtReflFlashGlowOffset("r_rtReflFlashGlowOffset", "0.0", CVAR_REN
                                       "push the disc this far along the cone axis, out of the fixture it is "
                                       "nominally inside and onto the lens");
 
+// The weapon firing flash, same light, different object. Its material (`muzzleflash`,
+// materials/weapons.mtr) animates: muzzleflashtable is a clamped 0.45 -> 1 -> 0 ramp
+// over 0.25 s, times a 3.33 Hz muzzleflashrandom flicker, mapping lights/round. The
+// register evaluation below already reproduces that, so the gain defaults to 1.0 —
+// above it the top of the ramp clips and the flash reads as a steady ball.
+static idCVar r_rtReflMuzzleGlow("r_rtReflMuzzleGlow", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
+                                 "show the weapon's firing muzzle flash in reflections");
+static idCVar r_rtReflMuzzleGlowRadius("r_rtReflMuzzleGlowRadius", "6.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                                       "radius of the muzzle flash flare in world units", 0.0f, 64.0f);
+static idCVar r_rtReflMuzzleGlowGain("r_rtReflMuzzleGlowGain", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                                     "scale on the flash's evaluated colour. 1.0 is the material's own ramp.",
+                                     0.0f, 8.0f);
+
 // vk_accelstruct.cpp — true exactly for the first-person muzzle flash, which is the
 // light the flashlight beam comes from.
 extern bool VK_RT_PlayerSuppressesLight(int lightId);
@@ -401,12 +420,7 @@ static const idRenderLightLocal *FindWorldMuzzleFlash(const viewDef_t *viewDef)
 
 static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_t *list, int &num, bool log)
 {
-    if (!r_rtReflFlashGlow.GetBool())
-        return;
-
-    const float gain = Max(0.0f, r_rtReflFlashGlowGain.GetFloat());
-    const float radius = Max(0.0f, r_rtReflFlashGlowRadius.GetFloat());
-    if (gain <= 0.0f || radius <= 0.0f)
+    if (!r_rtReflFlashGlow.GetBool() && !r_rtReflMuzzleGlow.GetBool())
         return;
 
     // Geometry source, found once: the view flash's world counterpart sits on the end
@@ -422,6 +436,18 @@ static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_
         if (!VK_RT_PlayerSuppressesLight(p.lightId))
             continue;
 
+        // pointLight: a weapon's firing flash. Projected: the flashlight lamp.
+        const bool isMuzzle = p.pointLight;
+        if (isMuzzle ? !r_rtReflMuzzleGlow.GetBool() : !r_rtReflFlashGlow.GetBool())
+            continue;
+
+        const float gain =
+            Max(0.0f, isMuzzle ? r_rtReflMuzzleGlowGain.GetFloat() : r_rtReflFlashGlowGain.GetFloat());
+        const float radius =
+            Max(0.0f, isMuzzle ? r_rtReflMuzzleGlowRadius.GetFloat() : r_rtReflFlashGlowRadius.GetFloat());
+        if (gain <= 0.0f || radius <= 0.0f)
+            continue;
+
         // Colour from the view light (this is the one the player sees lit); position and
         // facing from the world one when it exists. They share shaderParms, so the split
         // costs nothing.
@@ -433,6 +459,7 @@ static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_
         float r = p.shaderParms[SHADERPARM_RED];
         float g = p.shaderParms[SHADERPARM_GREEN];
         float b = p.shaderParms[SHADERPARM_BLUE];
+        idImage *flashImage = NULL;
         const idMaterial *lightShader = lightLocal->lightShader;
         if (lightShader != NULL)
         {
@@ -447,6 +474,13 @@ static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_
                 r = regs[stage->color.registers[0]];
                 g = regs[stage->color.registers[1]];
                 b = regs[stage->color.registers[2]];
+                // Muzzle only: `muzzleflash` maps lights/round, a flare shape, where the
+                // procedural (1-r^2)^2 disc reads as a hard ball. The flashlight's image
+                // (lights/flashlight5, no material decl — implicit single stage) is a cone
+                // PROJECTION with a hotspot, wrong on a ray-facing disc, so the lamp keeps
+                // the procedural falloff.
+                if (isMuzzle)
+                    flashImage = stage->texture.image;
                 break; // first passing stage, matching the GI upload's choice
             }
         }
@@ -472,17 +506,18 @@ static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_
         c.e.rgb[0] = r * gain;
         c.e.rgb[1] = g * gain;
         c.e.rgb[2] = b * gain;
-        c.e.texIndex = 0; // procedural falloff — no authored sprite to point at
+        c.e.texIndex = EmitterTexIndex(flashImage, NULL);
         c.distSq = (pos - viewDef->renderView.vieworg).LengthSqr();
         c.ent = NULL;
         c.matName = lightShader ? lightShader->GetName() : "<no light shader>";
-        c.imageName = "<procedural>";
+        c.imageName = flashImage ? flashImage->imgName.c_str() : "<procedural>";
 
         if (log)
-            common->Printf("VK RT Emitter: view flash lightId=%d mtr='%s' placed=%s pos=(%.0f %.0f %.0f) "
-                           "viewPos=(%.0f %.0f %.0f) r=%.1f rgb=(%.2f %.2f %.2f)\n",
-                           p.lightId, c.matName, (worldFlash != NULL) ? "worldJoint" : "viewFlash(fallback)", pos.x,
-                           pos.y, pos.z, lightLocal->globalLightOrigin.x, lightLocal->globalLightOrigin.y,
+            common->Printf("VK RT Emitter: view flash lightId=%d kind=%s mtr='%s' img='%s' placed=%s "
+                           "pos=(%.0f %.0f %.0f) viewPos=(%.0f %.0f %.0f) r=%.1f rgb=(%.2f %.2f %.2f)\n",
+                           p.lightId, isMuzzle ? "muzzle" : "flashlight", c.matName, c.imageName,
+                           (worldFlash != NULL) ? "worldJoint" : "viewFlash(fallback)", pos.x, pos.y, pos.z,
+                           lightLocal->globalLightOrigin.x, lightLocal->globalLightOrigin.y,
                            lightLocal->globalLightOrigin.z, c.e.radius, c.e.rgb[0], c.e.rgb[1], c.e.rgb[2]);
 
         InsertNearest(list, num, c);

@@ -129,6 +129,7 @@ layout(set = 0, binding = 3) uniform ReflParams {
     int    reflScale;     // 1 full res, 2 half res (opaque only). reflImage is
                           // 1/reflScale the G-buffer's size; every full-res fetch below
                           // scales coord up by it, imageStore does not.
+    float  volStepLen;    // r_rtReflVolStepLen — max world-unit march step; see ReflVolumetrics
 } params;
 
 // Must match the REFL_POP_* defines in vk_reflections.cpp.
@@ -215,6 +216,14 @@ vec3 ReflClampLuminance(vec3 c, float maxLum)
 // The jitter is spatial only, never per frame. Nothing downstream denoises the
 // reflection buffer, so a per-frame offset would read as a shimmering beam
 // instead of a static dither.
+//
+// The step length is CAPPED (r_rtReflVolStepLen), so a long segment marches only
+// its first volStepLen*volSteps units instead of stretching the same step count
+// over the whole thing. hitT/volSteps alone put ~167 units of path length behind
+// one trilinear tap on a ray that missed (hitT = maxDist = 1000): a single bright
+// near-camera froxel then reads as a huge number, which is what outlined every
+// reflective silhouette in white — grazing rays skim along the surface straight
+// through those small bright cells.
 // ---------------------------------------------------------------------------
 vec3 ReflVolumetrics(vec3 o, vec3 d, float hitT, ivec2 coord)
 {
@@ -225,6 +234,8 @@ vec3 ReflVolumetrics(vec3 o, vec3 d, float hitT, ivec2 coord)
     VolFroxelSlices slices = refl_FroxelSlices();
 
     float segLen = hitT / float(n);
+    if (params.volStepLen > 0.0)
+        segLen = min(segLen, params.volStepLen);
     float jitter = randFloat(wang_hash(uint(coord.x) * 73856093u ^ wang_hash(uint(coord.y) * 19349663u)));
 
     vec3  scattered    = vec3(0.0);
@@ -232,7 +243,10 @@ vec3 ReflVolumetrics(vec3 o, vec3 d, float hitT, ivec2 coord)
 
     for (int i = 0; i < n; i++)
     {
-        vec3 p = o + d * ((float(i) + jitter) * segLen);
+        float t = (float(i) + jitter) * segLen;
+        if (t >= hitT)
+            break;
+        vec3 p = o + d * t;
 
         vec3 tc;
         if (!vfs_WorldToTexCoord(slices, params.viewProj, params.froxelCamPos.xyz, params.froxelCamFwd.xyz, p, tc))

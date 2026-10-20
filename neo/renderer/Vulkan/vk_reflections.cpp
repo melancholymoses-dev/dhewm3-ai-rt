@@ -114,6 +114,16 @@ static idCVar r_rtReflVolSteps("r_rtReflVolSteps", "6", CVAR_RENDERER | CVAR_INT
                                "samples per reflection ray through the froxel scatter grid (1-32). Raise if the "
                                "reflected beam bands; brightness should not change with this.");
 
+// hitT/volSteps alone stretches the step count over the whole segment, so a ray that
+// missed (hitT = r_rtReflectionDistance) puts ~167 world units of path length behind one
+// trilinear froxel tap. Near-camera cells are small and bright, and grazing rays skim
+// through them, so that over-estimate outlined reflective silhouettes in white.
+static idCVar r_rtReflVolStepLen("r_rtReflVolStepLen", "48", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                                 "max world-unit step for the reflected in-scatter march. Caps how much path "
+                                 "length one froxel tap can represent; the march then covers only the first "
+                                 "r_rtReflVolSteps * this units of the segment. 0 = uncapped (old behaviour).",
+                                 0.0f, 512.0f);
+
 static idCVar r_rtReflVolGain("r_rtReflVolGain", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                               "scale on reflected in-scatter. 1.0 is the literal integral — since the "
                               "mean-direction grid landed, there is no phase-angle bias left to compensate for.");
@@ -274,6 +284,7 @@ int VK_RT_ValidReflDebugMode(void)
 //   int    glassRectW     offset 288 size  4
 //   int    glassRectH     offset 292 size  4
 //   int    reflScale      offset 296 size  4  (1 full res, 2 half res)
+//   float  volStepLen     offset 300 size  4  (r_rtReflVolStepLen)
 //   total: 304 bytes — std140 rounds the block up to a multiple of
 //   16, and uboInfo.range is sizeof(ReflParamsUBO), which must not be smaller.
 // ---------------------------------------------------------------------------
@@ -327,7 +338,7 @@ struct ReflParamsUBO
     int32_t glassRectH;
     // Stage 4c: reflImage is 1/reflScale the G-buffer's size. 1 full res, 2 half res.
     int32_t reflScale;
-    int32_t _pad0[1]; // std140 block size rounds to 16
+    float volStepLen; // r_rtReflVolStepLen — caps the volumetric march step length
 };
 
 // Which surfaces a reflect_ray.rgen dispatch is responsible for (ubo.population).
@@ -2363,6 +2374,7 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
             ubo.froxelNz = fs.nz;
             ubo.volSteps = r_rtReflVol.GetBool() ? idMath::ClampInt(1, 32, r_rtReflVolSteps.GetInteger()) : 0;
             ubo.volGain = Max(0.0f, r_rtReflVolGain.GetFloat());
+            ubo.volStepLen = Max(0.0f, r_rtReflVolStepLen.GetFloat());
             // Stage 5: the same clamp vk_vol_froxel.cpp applies, so the reflected
             // segment and the primary view evaluate one phase function, not two.
             ubo.volIsoMix = idMath::ClampFloat(0.0f, 1.0f, r_rtVolIsotropicMix.GetFloat());
