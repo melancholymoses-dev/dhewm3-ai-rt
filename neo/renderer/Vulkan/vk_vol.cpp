@@ -9,7 +9,7 @@ depth-reconstructed surface, firing occlusion queries toward nearby lights
 and accumulating in-scattering with a Henyey-Greenstein phase function.
 
 Dispatch order in the RT frame (outside render pass):
-  ... VK_RT_DispatchAtrousGI ...
+  ... VK_RT_DispatchGIAlbedoMod ...
   VK_RT_DispatchVolumetrics  ← this file
   (resume render pass)
   VK_RT_CompositeGI

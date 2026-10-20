@@ -750,13 +750,10 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/ao_ray.rahit
 	renderer/glsl/ao_ray.rchit
 	renderer/glsl/atrous_filter.comp	
-	renderer/glsl/gi_ray.rgen
 	renderer/glsl/gi_ray.rchit
 	renderer/glsl/gi_ray.rahit
 	renderer/glsl/gi_ray.rmiss
 	renderer/glsl/gi_shadow.rmiss
-	renderer/glsl/gi_temporal_resolve.comp
-	renderer/glsl/gi_atrous.comp
 	renderer/glsl/gi_albedo_mod.comp
 	renderer/glsl/gi_probe_trace.rgen
 	renderer/glsl/gi_probe_blend.comp

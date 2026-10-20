@@ -25,8 +25,8 @@ Stochastic light selection:
   Set r_rtGIStochasticLights 0 for the legacy all-lights path.
 
   Fallback (numLights == 0, e.g. r_rtGILightBounce 0):
-    Returns raw albedo (Option A behaviour) so the rgen's giStrength scale
-    provides a uniform ambient lift.
+    Returns raw albedo so the giStrength scale provides a uniform ambient lift
+    rather than black.
 
 Shadow ray flags:
   gl_RayFlagsTerminateOnFirstHitEXT — stop on first blocker.
@@ -56,18 +56,19 @@ Code release.
 // ---------------------------------------------------------------------------
 layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
 
+// Prefix of vk_gi.cpp's GIParamsUBO — see the layout table there.  Stops at
+// stochasticLights; a shorter trailing block leaves earlier offsets intact.
 layout(set = 0, binding = 3) uniform GIParams {
     mat4  invViewProj;
     float giRadius;
-    int   numSamples;
     uint  frameIndex;
     float giStrength;
     ivec2 screenSize;
     ivec2 scissorOffset;
     ivec2 scissorExtent;
-    int   maxBounceLights;   // 0 = Option A fallback; otherwise caps light loop
-    float giContrast;        // rgen only — present so the block matches GIParamsUBO
-    int   stochasticLights;  // P3: shadow rays per bounce hit (0 = every light)
+    int   maxBounceLights;   // 0 = albedo-only fallback; otherwise caps light loop
+    float giContrast;        // resolve only — present so the block matches GIParamsUBO
+    int   stochasticLights;  // shadow rays per bounce hit (0 = every light)
 } params;
 
 // ---------------------------------------------------------------------------
@@ -136,7 +137,7 @@ void main()
         return;
     }
 
-    // --- Option B: evaluate each in-range light at the secondary hit ---
+    // --- Evaluate each in-range light at the secondary hit ---
     vec3 hitPos  = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
 
     // Two-sided geometry: face the hemisphere toward the incoming ray.
@@ -144,7 +145,7 @@ void main()
         hitNorm = -hitNorm;
 
     // Shared light loop (rt_light_eval.glsl). bounceScale rides in as contribScale.
-    // params.maxBounceLights == 0 signals Option A fallback (bounce disabled).
+    // params.maxBounceLights == 0 disables the bounce and takes the albedo fallback.
     int n = min(rtLightBuf.numLights, min(params.maxBounceLights, RT_LIGHT_MAX_LIGHTS));
 
     // G5b: three-way split. `stable` is the steady lights; `fastNorm` is the
@@ -154,10 +155,10 @@ void main()
     vec3 stable, fastNorm, fastScaled;
     if (params.stochasticLights > 0)
     {
-        // P3: importance-sample 1-2 lights and fire only those shadow rays.
-        // The seed must differ per pixel, per GI sample and per frame — gl_HitTEXT
-        // separates the rgen's numSamples hemisphere rays (same launch ID, different
-        // hit distance), frameIndex lets temporal accumulation average the picks.
+        // Importance-sample 1-2 lights and fire only those shadow rays.
+        // The seed must differ per ray and per frame — gl_HitTEXT separates the
+        // raygen's hemisphere rays (same launch ID, different hit distance),
+        // frameIndex lets the probe EMA average the picks.
         uint seed = rtle_hash(uint(gl_LaunchIDEXT.x) * 73856093u
                             ^ uint(gl_LaunchIDEXT.y) * 19349663u
                             ^ params.frameIndex     * 83492791u
@@ -180,10 +181,9 @@ void main()
     }
 
     // Final bounce colour: albedo × gathered irradiance.
-    // giStrength in the rgen provides an additional global scale.
-    // Option A fallback: if no light contributed (numLights == 0 or all failed
-    // radius/NdotL checks), return raw albedo so the rgen's giStrength still
-    // provides a uniform ambient lift rather than returning black.
+    // Fallback: if no light contributed (numLights == 0 or all failed radius/NdotL
+    // checks), return raw albedo so giStrength still provides a uniform ambient
+    // lift rather than returning black.
     if (n == 0 || rtLightBuf.bounceScale == 0.0)
     {
         giPayload.colour = albedo;

@@ -3,7 +3,7 @@
 
 dhewm3-rt Vulkan — gi_composite.frag — GI buffer composite into framebuffer.
 
-Samples the RGBA16F GI buffer built by gi_ray.rgen and outputs it for
+Samples the RGBA16F GI buffer built by the GI chain and outputs it for
 additive blending onto the main framebuffer.  This pass runs once per
 view (before the per-light interaction draws) so the GI contribution is
 applied exactly once per pixel regardless of how many lights touch it.

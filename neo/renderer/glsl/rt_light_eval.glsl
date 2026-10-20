@@ -4,11 +4,11 @@
   reflect_ray.rchit had drifted apart (bounceScale, shadow budget, tMax guard).
   This include owns the single loop both use.
 
-  P3 (Wave 3) landed the stochastic variant here:
+  The stochastic variant lives here too:
   rt_EvalDirectLightingStochastic() walks the same lights but fires shadow rays
   for only 1-2 importance-sampled winners, dividing by the selection probability
-  (resampled importance sampling — unbiased).  GI's worst case drops from
-  numSamples x maxBounceLights rays/pixel to numSamples x picks.
+  (resampled importance sampling — unbiased).  GI's worst case per bounce hit
+  drops from maxBounceLights shadow rays to the pick count.
 
   Declares the shared light-list SSBO (set=0, binding=4 — the GI light buffer
   vk_gi.cpp uploads; vk_reflections.cpp binds the same buffer) and the shadow-ray

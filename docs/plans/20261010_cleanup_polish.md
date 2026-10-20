@@ -165,18 +165,26 @@ Check: modes 1 and 3 screenshots identical; `grep -rn "reflMode == 2\|Reflection
 
 ---
 
-## Phase 3 — Remove screen-space GI
-
-Probes own GI (`VK_RT_GIProbeActive()`): `vk_temporal.cpp:1261` and the A-trous at `vk_gi.cpp:3401` already return early when probes are on.
+## Phase 3 — Remove screen-space GI ✅ done (2026-10-20), not yet validated in-game
 
 | Step | Detail |
 |---|---|
-| 3a. Map | List what `vk_gi.cpp` (3840 lines) provides to probes (light collection, area walk, stratify, upload) vs screen-space only (per-pixel bounce, checkerboard, A-trous, GI temporal) |
-| 3b. Split | Move shared light selection into `vk_gi_lights.cpp`; add to `CMakeLists.txt` |
-| 3c. Delete | `r_rtGISamples`, `r_rtGICheckerboard`, `r_rtGITemporal(+Alpha)`, `r_rtGIAtrous*`, `r_rtGIRadius` (if screen-only), `r_rtGIStochasticLights`, `r_rtGIProbes` toggle (probes always on), shaders for per-pixel GI + GI denoise, GI parts of `VK_RT_Temporal*` |
-| 3d. Keep | Probe resolve, `r_rtGIStrength/Contrast/FalloffMode/Reach`, AO temporal (separate path) |
+| 3a/3c. Deleted | `gi_ray.rgen`, `gi_temporal_resolve.comp`, `gi_atrous.comp`; `r_rtGISamples`, `r_rtGICheckerboard`, `r_rtGITemporal(+Alpha)`, `r_rtGIAtrous*`, the `r_rtGIProbes` toggle; the GI halves of `VK_RT_Temporal*`/`VK_RT_Atrous*`; `GIParamsUBO.numSamples`/`checker`/`checkerPhase` |
+| 3b. Not done | Shared light selection stays in `vk_gi.cpp`. Optional — track separately if the file is still unwieldy |
+| 3d. Kept | Probe resolve, `r_rtGIStrength/Contrast/FalloffMode/Reach`, AO temporal + à-trous (`vk_temporal.cpp` is now AO-only), the albedo-mod pass and its `giScratchA/B` pair |
 
-Check: GI screenshots identical (probes already active); GI GPU ms ≤ baseline; GPU memory drops by the GI history/denoise images (log VRAM before/after).
+Struck from 3c: `r_rtGIRadius` sizes light collection and the TLAS radius, and
+`r_rtGIStochasticLights` is read by `gi_ray.rchit`, which probe rays traverse. Neither was
+screen-space-only.
+
+Structural consequence: `gi_probe_trace.rgen` is now the GI pipeline's only raygen, so a
+missing `gi_probe_trace.rgen.spv` disables GI outright instead of falling back, and the SBT
+re-indexed to 4 groups / 6 records. `VK_RT_DispatchGI` survives as set-0 setup only — it
+traces nothing, and the probe trace depends on it having run.
+
+Check: GI screenshots identical; GI GPU ms ≤ baseline; `r_vkLogRT 1` shows `probe-rgen` in
+the SBT line and no "scratch images not ready" warning; VRAM drops by the GI history and
+one of the two denoise ping-pong pairs.
 
 ---
 

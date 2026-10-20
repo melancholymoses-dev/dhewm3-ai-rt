@@ -42,7 +42,7 @@ is worth 30% of GPU frame time at no visible cost, so it is a real perf choice, 
 A/B.
 
 `CVAR_ARCHIVE` still missing on `r_rtGIStrength`, `r_rtVolGain`, `r_rtGIRadius`,
-`r_rtGISamples`, `r_rtAORadius`, `r_rtVolMaxDist`, `r_rtAOTemporalAlpha` — Phase 5a fixes
+`r_rtAORadius`, `r_rtVolMaxDist`, `r_rtAOTemporalAlpha` — Phase 5a fixes
 this. `r_rtDenoise` (the dead "Temporal Denoising" checkbox) is resolved: the menu now
 binds `r_rtReflDenoise`, and no `r_rtDenoise` exists in the renderer. §4's row is closed.
 
@@ -168,16 +168,14 @@ menu (see the read-user-cfg rule). Reconcile the four before writing the presets
 | `r_rtGIEmissiveScale` | GI | Emissive surface contribution | 2.0 | C |
 | `r_rtGIFalloffMode` | GI | Point-light falloff shape (shared with reflections + vol) | 1 | C |
 | `r_rtGIFalloffReach` | GI | Falloff reach (1.0 = stop at light box) | 1.0 | C |
-| `r_rtGIAlbedo` | GI | Multiply denoised GI by receiver albedo | 1 | C |
-| `r_rtGISamples` | GI | Bounce rays per pixel (1-8) | 4 | X |
-| `r_rtGIRadius` | GI | Max bounce ray distance | 128 | X |
-| `r_rtGICheckerboard` | GI | Checkerboard tracing | 1 | X |
-| `r_rtGITemporal` / `…TemporalAlpha` | GI | Temporal accumulation and EMA blend | 1 / 0.5 | X |
-| `r_rtGIAtrous` / `…Iterations` / `…SigmaL` / `…SigmaZ` | GI | A-trous spatial filter | 1 / 3 / 0.2 / 0.01 | X |
+| `r_rtGIAlbedo` | GI | Multiply resolved GI by receiver albedo | 1 | C |
+| `r_rtGIRadius` | GI | Light-collection window and TLAS radius | 128 | C |
 
-The X rows here are all screen-space-only and go with Phase 3, which deletes the per-pixel
-bounce now that probes own GI. Verify each is screen-only before removing it — `r_rtGIRadius`
-in particular is read by the probe trace in some paths.
+Phase 3 removed the screen-space GI path: `r_rtGISamples`, `r_rtGICheckerboard`,
+`r_rtGITemporal(+Alpha)` and `r_rtGIAtrous*` are gone. `r_rtGIRadius` stayed — it sizes
+light collection (`vk_gi.cpp`) and the TLAS radius (`vk_accelstruct.cpp`), not just the
+deleted per-pixel ray. `r_rtGIStochasticLights` stayed for the same reason: `gi_ray.rchit`
+reads it and probe rays go through that shader.
 
 ### GI light selection
 
@@ -204,7 +202,6 @@ Deleted 2026-10-18: `r_rtGILightDump`.
 
 | Name | Group | Purpose | Default | Verdict |
 |---|---|---|---|---|
-| `r_rtGIProbes` | GI probes | Probe grid on/off. X after Phase 3 — probes become unconditional | 1 | C → X |
 | `r_rtGIProbeSpacing` | GI probes | Probe spacing (world units). Keep `r_rtAORadius` below it | 64 | C |
 | `r_rtGIProbeCountX/Y/Z` | GI probes | Grid dimensions | 32 / 32 / 16 | C |
 | `r_rtGIProbeRays` | GI probes | Rays per probe update. Preset writes 64 / 128 / 128 / 192 | 128 | C (preset) |
@@ -405,14 +402,12 @@ The numbers below are starting points, not measured.
 |---|---|---|---|---|
 | `r_rtShadowSamples` | 1 | 2 | 2 | 4 |
 | `r_rtAOSamples` | 2 | 4 | 4 | 8 |
-| `r_rtGISamples` | 1 | 2 | 4 | 6 |
 | `r_rtGIProbeRays` | 64 | 128 | 128 | 192 |
 | `r_rtGIProbeUpdatesPerFrame` | 512 | 1024 | 1024 | 2048 |
 | `r_rtGIMaxBounceLights` | 8 | 16 | 16 | 24 |
 | `r_rtVolSamples` | 4 | 8 | 8 | 12 |
 | `r_rtVolHalfRes` | 1 | 1 | 1 | 0 |
 | `r_rtVolFroxelRes{X,Y,Z}` | 120/68/48 | 160/90/64 | 240/135/96 | 320/180/128 |
-| `r_rtGICheckerboard` | 1 | 1 | 1 | 0 |
 
 ## 4. Menu cleanup checklist
 

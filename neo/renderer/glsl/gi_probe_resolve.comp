@@ -312,7 +312,7 @@ GIProbeSite gip_Site(ivec2 coord, ivec2 fullSize)
 
     float depth = texelFetch(depthSampler, coord, 0).r;
     if (depth >= 1.0)
-        return s; // sky gets no GI, same as gi_ray.rgen
+        return s; // sky gets no GI
 
     s.worldPos = rt_ReconstructWorldPos(coord, fullSize, gp.invViewProj);
     vec3 toEye = gp.cameraPosW.xyz - s.worldPos;
@@ -418,9 +418,7 @@ void main()
         {
             outColour = irradiance * gp.tune.z;
 
-            // Same energy-neutral contrast push gi_ray.rgen applies, so an
-            // r_rtGIProbes A/B at matched r_rtGIStrength/r_rtGIContrast
-            // compares the sampling structure and nothing else.
+            // Energy-neutral contrast push, r_rtGIContrast
             if (gp.tune2.x > 0.0)
             {
                 vec3 grayRef = vec3(dot(outColour, vec3(1.0 / 3.0)));

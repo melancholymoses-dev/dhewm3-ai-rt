@@ -15,16 +15,13 @@ Four passes:
   1. trace   (G1) — gi_probe_trace.rgen, the SECOND raygen group in vk_gi.cpp's
                     existing GI ray pipeline.  Fires r_rtGIProbeRays rays for
                     each of r_rtGIProbeUpdatesPerFrame probes into a scratch
-                    image.  Shares gi_ray.rchit/rmiss with the per-pixel path,
-                    so a probe sees exactly the scene per-pixel GI sees.
+                    image.  Shares gi_ray.rchit/rmiss — and therefore the light
+                    list, cookies and admission — with every other RT consumer.
   2. blend   (G1) — gi_probe_blend.comp, scratch rays -> octahedral irradiance
                     and visibility atlases, with an EMA.
   3. border  (G1) — gi_probe_border.comp, octahedral seam fill.
   4. resolve (G2) — gi_probe_resolve.comp, per-pixel 8-probe fetch -> giBuffer,
-                    and every debug overlay.  Under r_rtGIProbes 1 this stands
-                    the per-pixel rgen launch, the temporal EMA and the a-trous
-                    chain down; gi_albedo_mod and gi_composite are unchanged and
-                    still run after it.
+                    and every debug overlay.
 
 The lattice is ABSOLUTE (cell * spacing) and storage is TOROIDAL
 (cell mod gridDim), so the window can follow the camera without probes sliding
@@ -53,14 +50,8 @@ Code release.
 #include <string.h>
 
 // ---------------------------------------------------------------------------
-// CVars (20260906_froxel_probe_gi.md B.4)
+// Probe GI
 // ---------------------------------------------------------------------------
-
-static idCVar r_rtGIProbes("r_rtGIProbes", "1", CVAR_RENDERER | CVAR_INTEGER,
-                           "Global illumination sampling structure: 0 = per-pixel GI rays "
-                           "(gi_ray.rgen + denoise chain), 1 = world-space irradiance probes. "
-                           "At 1 the per-pixel launch, r_rtGITemporal and r_rtGIAtrous are stood "
-                           "down;");
 
 static idCVar r_rtGIProbeSpacing("r_rtGIProbeSpacing", "64", CVAR_RENDERER | CVAR_FLOAT,
                                  "World units between probes. Doom 3 interiors are small; 64 is "
@@ -112,7 +103,7 @@ static idCVar r_rtGIProbeVisibility("r_rtGIProbeVisibility", "1", CVAR_RENDERER 
 
 static idCVar r_rtGIProbeMaxRayDist("r_rtGIProbeMaxRayDist", "512", CVAR_RENDERER | CVAR_FLOAT,
                                     "Probe ray length, and the value a miss records in the visibility "
-                                    "moments. Independent of r_rtGIRadius, which is the per-pixel path's. "
+                                    "moments. Independent of r_rtGIRadius, which bounds the light window. "
                                     "Also the unit the distance atlas is normalised by (rg16f cannot hold "
                                     "a raw second moment), so changing it re-scales the atlas and the EMA "
                                     "needs about a full refresh to wash the old encoding out.");
@@ -134,10 +125,6 @@ static idCVar r_rtGIProbeDebug("r_rtGIProbeDebug", "0", CVAR_RENDERER | CVAR_INT
                                "Retired, now no-ops (numbers kept stable): 1, 4, 5, 6, 7, 8 — the sphere-"
                                "lattice overlay 1/4/5/6/7 drew through went with r_rtGIProbeDebugRadius.");
 
-// One place decides which modes exist.  A retired number must not read as "an
-// overlay is active": the probe-active test keeps the trace and resolve running
-// when r_rtGIProbes is 0 purely so the overlays work, so a dead number would cost
-// a full probe dispatch to draw nothing.
 static int VK_RT_ValidProbeDebugMode(void)
 {
     const int mode = r_rtGIProbeDebug.GetInteger();
@@ -158,7 +145,7 @@ extern VkImageView VK_RT_GetNullGbufNormalView(void);
 
 // vk_gi.cpp — this frame's GIParams dynamic-UBO binding. gi_ray.rchit reads that
 // block, and the probe trace runs the same hit shader, so the probe dispatch has
-// to bind set 0 with a valid offset into it. Reusing the per-pixel path's rather
+// to bind set 0 with a valid offset into it. Reusing vk_gi.cpp's rather
 // than allocating a second identical block: every field the hit shader reads
 // (maxBounceLights, frameIndex, stochasticLights) is per-frame, not per-launch.
 extern bool VK_RT_GIParamsBinding(int frameIdx, uint32_t *outOffset);
@@ -166,8 +153,8 @@ extern bool VK_RT_GIParamsBinding(int frameIdx, uint32_t *outOffset);
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
 extern idCVar r_rtGI;
-extern idCVar r_rtGIStrength; // vk_gi.cpp — shared so an r_rtGIProbes A/B is at matched strength
-extern idCVar r_rtGIContrast; // ditto: the resolve applies the same contrast push gi_ray.rgen does
+extern idCVar r_rtGIStrength; // vk_gi.cpp
+extern idCVar r_rtGIContrast; // vk_gi.cpp — the resolve applies the contrast push
 extern idCVar r_rtGbufNormals;
 
 // ---------------------------------------------------------------------------
@@ -343,7 +330,7 @@ static void VK_RT_GIProbeLatchFailure(const int32_t dim[3], int32_t rays, int32_
     s_probeGeomFailed[4] = updates;
     s_probeGeomFailed[5] = VK_RT_GIFastBucketCount();
     common->Warning("VK RT GIProbe: resource allocation failed at %dx%dx%d, %d rays x %d updates, %d fast bucket(s) "
-                    "— probe path stood down (per-pixel GI is unaffected)",
+                    "— probe path stood down, GI will be black",
                     dim[0], dim[1], dim[2], rays, updates, s_probeGeomFailed[5]);
 }
 
@@ -1351,8 +1338,7 @@ bool VK_RT_GIProbeActive(void)
 {
     if (!vkRT.isInitialized || !r_useRayTracing.GetBool() || !r_rtGI.GetBool())
         return false;
-    if (r_rtGIProbes.GetInteger() != 1)
-        return false;
+
     return vkRT.giProbeBlendPipeline != VK_NULL_HANDLE && vkRT.giProbeBorderPipeline != VK_NULL_HANDLE &&
            vkRT.giProbeResolvePipeline != VK_NULL_HANDLE && vkRT.giProbeIrradiance.image != VK_NULL_HANDLE &&
            vkRT.giPipeline != VK_NULL_HANDLE && vkRT.giProbeRgenRegion.deviceAddress != 0;
@@ -1366,8 +1352,6 @@ static bool VK_RT_GIProbeMaintain(void)
     if (!vkRT.isInitialized || !r_useRayTracing.GetBool() || !r_rtGI.GetBool())
         return false;
     if (vkRT.giProbeIrradiance.image == VK_NULL_HANDLE)
-        return false;
-    if (r_rtGIProbes.GetInteger() == 0 && VK_RT_ValidProbeDebugMode() == 0)
         return false;
     return vkRT.giProbeBlendPipeline != VK_NULL_HANDLE && vkRT.giProbeBorderPipeline != VK_NULL_HANDLE;
 }
@@ -1786,9 +1770,8 @@ void VK_RT_DispatchGIProbeBlend(VkCommandBuffer cmd, const viewDef_t *viewDef)
 //
 // Writes vkRT.giBuffer and repoints giReadView at it, so gi_composite.frag
 // keeps sampling one 2D image and knows nothing about probes.  giReadView has
-// to be re-pointed because temporal/a-trous aimed it at their own outputs
-// earlier in the frame (they stand down under r_rtGIProbes 1, but the overlays
-// run with the per-pixel path live).
+// to be re-pointed because the albedo-mod pass aims it at its own scratch
+// output, and that is where it is left at the end of the previous frame.
 //
 // Mode 0 is the shipping G2 resolve; any other mode is an overlay, and
 // VK_RT_DispatchGIAlbedoMod skips so a measurement reaches the composite

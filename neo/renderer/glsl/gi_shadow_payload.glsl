@@ -1,4 +1,4 @@
-/* gi_shadow_payload.glsl — shadow ray payload for GI Option B.
+/* gi_shadow_payload.glsl — shadow ray payload for GI bounce lighting.
 
   Used by gi_ray.rchit (traces shadow rays toward lights at the secondary hit)
   and gi_shadow.rmiss (clears the flag when no geometry is hit).

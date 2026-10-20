@@ -148,9 +148,8 @@ idCVar r_rtReflDenoiseAlphaGlass("r_rtReflDenoiseAlphaGlass", "0.35", CVAR_RENDE
                                  "glass surface's motion, not the reflected image's parallax, so a low floor smears\n"
                                  "a sharp mirror reflection under camera motion.");
 idCVar r_rtReflAtrousIterations("r_rtReflAtrousIterations", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
-                                "r_rtReflDenoise 2 only. À-trous passes (0-8); effective radius is 2^N - 1 pixels.\n"
-                                "Same default as r_rtGIAtrousIterations.",
-                                0, 8);
+                                "r_rtReflDenoise 2 only. À-trous passes (0-8); effective radius is 2^N - 1 pixels.", 0,
+                                8);
 // Refl-refactor Stage 3 replaces r_rtReflAtrousSigmaZ (raw NDC depth, dead past ~20 units).
 idCVar r_rtReflAtrousSigmaPlane("r_rtReflAtrousSigmaPlane", "0.02", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                                 "r_rtReflDenoise 2 only. Edge stop on a tap's distance from the centre pixel's\n"
@@ -771,9 +770,9 @@ static void VK_RT_DestroyReflImages(vkReflChain_t *chain)
 // ---------------------------------------------------------------------------
 // Reflection temporal denoiser images (Stage 1, 20261013_reflection_roughness.md)
 //
-// Single shared instance each, not per-slot — same reasoning as aoHistory/
-// giHistory: the EMA recurrence is sequential across frames, and all RT work
-// goes through one queue in submission order, so a shared image never races.
+// Single shared instance each, not per-slot — same reasoning as aoHistory: the
+// EMA recurrence is sequential across frames, and all RT work goes through one
+// queue in submission order, so a shared image never races.
 // ---------------------------------------------------------------------------
 
 static bool VK_RT_AllocReflAuxImage(vkRTImage_t &img, uint32_t width, uint32_t height, VkImageUsageFlags usage)
@@ -2921,8 +2920,7 @@ void VK_RT_DispatchReflTemporal(VkCommandBuffer cmd, const viewDef_t *viewDef)
 // ---------------------------------------------------------------------------
 // VK_RT_DispatchReflAtrous (public) — r_rtReflDenoise 2, Stage 1 addendum.
 // Roughness-gated à-trous spatial filter, run on top of the temporal resolve's
-// output. Mirrors VK_RT_DispatchGIAtrous's N-pass ping-pong structure
-// (vk_gi.cpp) — see refl_atrous.comp for the per-pixel roughness gate itself.
+// output.  See refl_atrous.comp for the per-pixel roughness gate itself.
 // Must run after VK_RT_DispatchReflTemporal and before the resumed render pass.
 // ---------------------------------------------------------------------------
 // Defined below; the first pass reads whatever this chain's denoiser state says is

@@ -13,8 +13,8 @@ by how well each ray's direction agrees with the texel's own direction:
 
   irradiance — weight = max(0, dot(texelDir, rayDir)).  The stored value is the
       cosine-weighted MEAN incoming radiance, i.e. E/pi, not E.  That is the
-      same quantity gi_ray.rgen's per-pixel average produces, so r_rtGIStrength
-      keeps its meaning across the r_rtGIProbes A/B instead of needing a
+      same quantity a per-pixel hemisphere average produces, so r_rtGIStrength
+      keeps its meaning at the same value instead of needing a
       silent factor of pi.  Back-face hits are excluded: the inside of a wall
       is not a light source.
   distance  — weight = pow(max(0, dot), distSharpness), a much tighter lobe

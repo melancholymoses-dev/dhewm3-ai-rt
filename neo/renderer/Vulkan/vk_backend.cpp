@@ -284,8 +284,8 @@ static idCVar r_vkSplitSubmitMask(
     "Bitmask: 1=after RT block, 2=after interactions, 4=after shader passes, 8=after fog, "
     "16=after TLAS, 32=after AO, 64=after reflections, 128=after RT renderpass resume, "
     "256=after GI dispatch (outside RP), 512=after GI composite (inside RP), "
-    "1024=after GI temporal+atrous, before volumetrics (isolates vol march/temporal/"
-    "bilateral from GI temporal/atrous — both were previously one submit). "
+    "1024=after the whole GI chain, before volumetrics (isolates the vol passes from "
+    "probe trace/blend/resolve + albedo mod — both were previously one submit). "
     "Can be added together to trigger multiple submissions.");
 static idCVar r_vkLowPerturbationMode(
     "r_vkLowPerturbationMode", "1", CVAR_RENDERER | CVAR_INTEGER,
@@ -363,8 +363,7 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_REFL_TEMPORAL,
     VK_RTPROF_PHASE_REFL_ATROUS,
     VK_RTPROF_PHASE_GI,
-    VK_RTPROF_PHASE_GI_TEMPORAL,
-    VK_RTPROF_PHASE_GI_ATROUS,
+    VK_RTPROF_PHASE_GI_ALBEDO,
     VK_RTPROF_PHASE_GI_PROBE_TRACE,
     VK_RTPROF_PHASE_GI_PROBE_BLEND,
     VK_RTPROF_PHASE_GI_PROBE_RESOLVE,
@@ -445,40 +444,22 @@ static bool s_rtProfReady = false;
 static uint64_t s_rtProfFrameStart[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
 // A table rather than a switch: the same names index the profiler's metric
-// registry (gpu.<name> / cpu.<name>) and label every pass for GPU capture tools,
-// so a phase added to the enum without a name here shows up as a hole.
-static const char *const s_rtProfPhaseNames[VK_RTPROF_PHASE_COUNT] = {
-    "TLAS",
-    "Shadows",
-    "AO",
-    "Refl",
-    "ReflTemporal",
-    "ReflAtrous",
-    "GI",
-    "GITemporal",
-    "GIAtrous",
-    "ProbeTrace",
-    "ProbeBlend",
-    "ProbeResolve",
-    "GIComposite",
-    "Vol",
-    "VolTemporal",
-    "VolBilateral",
-    "FroxelFill",
-    "FroxelIntegrate",
-    "FroxelResolve",
-    "VolComposite",
-    "DepthPrepass",
-    "Interactions",
-    "ShaderPasses",
-    "FogLights",
-    "Upscale",
-    "Bloom",
-    "Tonemap",
-    "GuiTextures",
-    "TLAS.BLAS",
-    "Interactions.Shadows",
+// registry (gpu.<name> / cpu.<name>) and label every pass for GPU capture tools.
+// Unbounded, with the assert below, because a short initializer against an
+// explicit [VK_RTPROF_PHASE_COUNT] bound compiles silently and SHIFTS every name
+// past the gap onto the wrong phase instead of leaving a visible hole.
+static const char *const s_rtProfPhaseNames[] = {
+    // Ray tracing — sums into total=
+    "TLAS", "Shadows", "AO", "Refl", "ReflTemporal", "ReflAtrous", "GI", "GIAlbedo", "ProbeTrace", "ProbeBlend",
+    "ProbeResolve", "GIComposite", "Vol", "VolTemporal", "VolBilateral", "FroxelFill", "FroxelIntegrate",
+    "FroxelResolve", "VolComposite",
+    // Rest of the frame — sums into raster=
+    "DepthPrepass", "Interactions", "ShaderPasses", "FogLights", "Upscale", "Bloom", "Tonemap", "GuiTextures",
+    // Nested sub-spans — printed, excluded from both totals
+    "TLAS.BLAS", "Interactions.Shadows",
 };
+static_assert(sizeof(s_rtProfPhaseNames) / sizeof(s_rtProfPhaseNames[0]) == VK_RTPROF_PHASE_COUNT,
+              "s_rtProfPhaseNames is out of sync with vkRTProfilePhase_t");
 
 static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
 {
@@ -5098,12 +5079,6 @@ void VK_RB_DrawView(const void *data)
                     return;
             }
 
-            if ((splitMask & 1024) != 0)
-            {
-                if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGIAtrous", false))
-                    return;
-            }
-
             // Probe GI (20260906_froxel_probe_gi.md Part B). The trace MUST come
             // after VK_RT_DispatchGI: it reuses the GIParams dynamic-UBO binding
             // that call establishes, because gi_ray.rchit is shared between the
@@ -5122,10 +5097,8 @@ void VK_RB_DrawView(const void *data)
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfProbeBlend);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_PROBE_BLEND, rtCpuProbeBlendStart);
 
-            // After temporal/a-trous, for the same reason the froxel resolve is
-            // last in the vol chain: it overwrites giBuffer and claims
-            // giReadView, so running it before those passes had read giBuffer
-            // would feed an overlay into their history.
+            // Last in the GI chain, for the same reason the froxel resolve is last
+            // in the vol chain: it overwrites giBuffer and claims giReadView.
             VK_SetRenderStage("RT_GI_ProbeResolve");
             const uint64_t rtCpuProbeResStart = VK_RTProfile_CPUStamp();
             int rtProfProbeRes = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_PROBE_RESOLVE);
@@ -5133,20 +5106,22 @@ void VK_RB_DrawView(const void *data)
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfProbeRes);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_PROBE_RESOLVE, rtCpuProbeResStart);
 
-            // gi_albedo_target.md: shares the à-trous profiler phase — it's the
-            // last step of the same "turn raw radiance into what composite should
-            // add" chain, and its own cost is a single small dispatch.
-            //
-            // It runs AFTER the probe resolve because under r_rtGIProbes 1 the
-            // resolve is what produces the radiance it modulates (G2). It skips
-            // itself while a probe overlay owns giBuffer, so the per-pixel path's
-            // output is byte-identical to what it was before this move.
+            // gi_albedo_target.md. Runs AFTER the probe resolve, which is what
+            // produces the radiance it modulates (G2). Skips itself while a probe
+            // overlay owns giBuffer, so a measurement reaches the composite unscaled.
             VK_SetRenderStage("RT_GI_AlbedoMod");
             const uint64_t rtCpuGIAlbedoStart = VK_RTProfile_CPUStamp();
-            int rtProfGIAlbedo = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_ATROUS);
+            int rtProfGIAlbedo = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_ALBEDO);
             VK_RT_DispatchGIAlbedoMod(cmdBuf, backEnd.viewDef);
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIAlbedo);
-            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_ATROUS, rtCpuGIAlbedoStart);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_ALBEDO, rtCpuGIAlbedoStart);
+
+            // Isolates the vol chain from the whole GI chain — both were one submit.
+            if ((splitMask & 1024) != 0)
+            {
+                if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGI_Chain", false))
+                    return;
+            }
 
             VK_SetRenderStage("RT_Volumetrics");
             const uint64_t rtCpuVolStart = VK_RTProfile_CPUStamp();

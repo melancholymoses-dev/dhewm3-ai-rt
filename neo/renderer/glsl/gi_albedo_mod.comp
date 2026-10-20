@@ -11,9 +11,9 @@ how much of it that surface would actually reflect — a near-black material
 gets the same GI wash as a white one. See docs/plans/gi_albedo_target.md.
 
 Runs once before the interaction render pass composites GI
-onto the framebuffer. Not in-place: the source is read-only (checkerboard
-history / à-trous ping-pong state), so the result is written to a separate
-scratch image and vk_gi.cpp repoints giReadView at it.
+onto the framebuffer. Not in-place: the source is bound as a read-only sampler,
+so the result is written to one of the giScratchA/B images and vk_gi.cpp
+repoints giReadView at it.
 
 Inputs  (set 0, binding 0) : denoised GI buffer  (COMBINED_IMAGE_SAMPLER)
 Inputs  (set 0, binding 1) : gbufAlbedo          (COMBINED_IMAGE_SAMPLER)

@@ -404,54 +404,20 @@ struct vkRTState_t
     VkSampler giSampler;                           // linear-clamp for interaction shader
 
     // --------------------------------------------------------------------------
-    // GI temporal EMA accumulation
+    // GI result view, and the scratch pair the chain hands it between.
     //
-    // giHistory: RGBA16F single shared accumulation buffer, NOT per-slot.
-    //   gi_temporal_resolve.comp blends giBuffer (raw current frame) into it.
-    // giReadView: per-slot; updated each frame to point at giHistory when temporal
-    //   is active, or giBuffer when r_rtGITemporal is off.  The composite pass
-    //   and any future interaction-shader sampling should read from giReadView.
-    // giHistoryValid / giPrevCamPos / giPrevCamFwd: camera-cut detection state,
-    //   single instance alongside giHistory (same convention as AO's).
+    // giReadView: per-slot, repointed as the chain runs — the probe resolve aims
+    //   it at giBuffer, then the albedo-mod pass aims it at its own output. The
+    //   composite pass reads whatever it ends up at, so it never needs to know
+    //   which passes ran.
+    // giScratchA/B: RGBA16F per frame slot. The albedo-mod pass cannot write in
+    //   place (its source is a read-only sampler), so it writes to whichever of
+    //   the pair giReadView is NOT currently pointing at. Both are allocated so
+    //   that choice is always available.
     // --------------------------------------------------------------------------
-    vkRTImage_t giHistory; // RGBA16F accumulated GI history
-    bool giHistoryValid;
-    idVec3 giPrevCamPos;
-    idVec3 giPrevCamFwd;
     VkImageView giReadView[VK_MAX_FRAMES_IN_FLIGHT]; // composite reads from here
-
-    VkPipeline giTemporalPipeline;
-    VkPipelineLayout giTemporalPipelineLayout;
-    VkDescriptorSetLayout giTemporalDescLayout;
-    VkDescriptorPool giTemporalDescPool;
-    VkDescriptorSet giTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int giTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
-
-    // --------------------------------------------------------------------------
-    // GI À-trous spatial filter (Phase 6.3)
-    //
-    // Two ping-pong RGBA16F buffers per frame slot.  Three descriptor sets per
-    // slot handle the three possible read→write directions:
-    //   DS[slot][0]: giReadView (temporal history or raw GI) → giAtrousA
-    //   DS[slot][1]: giAtrousA → giAtrousB
-    //   DS[slot][2]: giAtrousB → giAtrousA
-    //
-    // After all passes, giReadView[slot] is updated to point at whichever
-    // buffer received the final write; the composite pass then reads it.
-    //
-    // DS[slot][0] is rebuilt each frame because giReadView may change
-    // (temporal on/off).  DS[slot][1] and DS[slot][2] are stable after init.
-    // --------------------------------------------------------------------------
-    vkRTImage_t giAtrousA[VK_MAX_FRAMES_IN_FLIGHT]; // ping
-    vkRTImage_t giAtrousB[VK_MAX_FRAMES_IN_FLIGHT]; // pong
-
-    VkPipeline giAtrousPipeline;
-    VkPipelineLayout giAtrousPipelineLayout;
-    VkDescriptorSetLayout giAtrousDescLayout;
-    VkDescriptorPool giAtrousDescPool;
-    // [slot][0..2]: first-pass (src→A), AtoB, BtoA
-    VkDescriptorSet giAtrousDescSets[VK_MAX_FRAMES_IN_FLIGHT][3];
-    int giAtrousDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    vkRTImage_t giScratchA[VK_MAX_FRAMES_IN_FLIGHT];
+    vkRTImage_t giScratchB[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
     // GI light list SSBO
@@ -482,7 +448,6 @@ struct vkRTState_t
 
     VkBuffer sbtGIBuffer;
     VkDeviceMemory sbtGIMemory;
-    VkStridedDeviceAddressRegionKHR giRgenRegion;
     VkStridedDeviceAddressRegionKHR giMissRegion;
     VkStridedDeviceAddressRegionKHR giHitRegion;
     VkStridedDeviceAddressRegionKHR giCallRegion;
@@ -549,7 +514,7 @@ struct vkRTState_t
     VkStridedDeviceAddressRegionKHR callRegion;
 
     // --------------------------------------------------------------------------
-    // Material table (Phase 5.4) — set=2 in RT shaders
+    // Material table  — set=2 in RT shaders
     //
     // Three persistently-mapped HOST_VISIBLE|HOST_COHERENT SSBOs:
     //   matTableSSBO  — VkMaterialEntry[], one per geometry slot, indexed by
@@ -716,8 +681,8 @@ struct vkRTState_t
     VkDescriptorSet giProbeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int giProbeDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // Second raygen record in the GI SBT — gi_probe_trace.rgen.  Same pipeline,
-    // same miss/hit regions; only the raygen region differs from giRgenRegion.
+    // The GI SBT's only raygen record — gi_probe_trace.rgen.  Shares the pipeline,
+    // and therefore the miss/hit regions, with gi_ray.rchit.
     VkStridedDeviceAddressRegionKHR giProbeRgenRegion;
 
     VkPipeline giProbeBlendPipeline;
@@ -794,12 +759,11 @@ struct vkRTState_t
     // Same vk.gbufferSupported gating and lifetime as gbufNormal.
     vkRTImage_t motionVectors[VK_MAX_FRAMES_IN_FLIGHT]; // R16G16_SFLOAT
 
-    // GI albedo modulate pass (gi_albedo_target.md): after temporal + à-trous,
-    // multiplies the denoised GI radiance by gbufAlbedo into whichever of
-    // giAtrousA/B is NOT the current giReadView (always allocated, otherwise
-    // idle this frame), then repoints giReadView at it. One descriptor set per
-    // frame slot, rewritten unconditionally every dispatch, since this
-    // pass runs exactly once per frame.
+    // GI albedo modulate pass (gi_albedo_target.md): multiplies the resolved GI
+    // radiance by gbufAlbedo into whichever of giScratchA/B is NOT the current
+    // giReadView, then repoints giReadView at it. One descriptor set per frame
+    // slot, rewritten unconditionally every dispatch, since this pass runs
+    // exactly once per frame.
     VkPipeline giAlbedoModPipeline;
     VkPipelineLayout giAlbedoModPipelineLayout;
     VkDescriptorSetLayout giAlbedoModDescLayout;
@@ -1213,7 +1177,7 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Composite the GI buffer onto the current framebuffer with additive blending.
 // Must be called INSIDE the main render pass, before the per-light interaction draws.
-// Reads from giReadView[currentFrame] (giHistory when temporal is active, else giBuffer).
+// Reads from giReadView[currentFrame] — wherever the GI chain last left it.
 // Does nothing when r_rtGI is off or the composite pipeline is not ready.
 // GI is multiplied by AO here (r_rtAOIndirectStrength).
 void VK_RT_CompositeGI(VkCommandBuffer cmd);
@@ -1226,23 +1190,21 @@ void VK_RT_CompositeGIDebug(VkCommandBuffer cmd);
 // GI receiver-albedo modulation (docs/plans/gi_albedo_target.md)
 // ---------------------------------------------------------------------------
 
-// Create the gi_albedo_mod.comp push-descriptor compute pipeline.
-// Called from VK_RT_InitGI after the à-trous pipeline is ready.
+// Create the gi_albedo_mod.comp compute pipeline and the giScratchA/B pair.
 void VK_RT_InitGIAlbedoMod(void);
 
-// Destroy the albedo-mod pipeline.  Device must be idle before calling.
+// Reallocate giScratchA/B at a new render resolution.
+void VK_RT_ResizeGIAlbedoMod(uint32_t width, uint32_t height);
+
+// Destroy the albedo-mod pipeline and scratch images.  Device must be idle.
 void VK_RT_ShutdownGIAlbedoMod(void);
 
-// Multiply the denoised GI (giReadView) by gbufAlbedo into whichever of
-// giAtrousA/B giReadView is NOT currently pointing at, then repoint giReadView
+// Multiply the resolved GI (giReadView) by gbufAlbedo into whichever of
+// giScratchA/B giReadView is NOT currently pointing at, then repoint giReadView
 // at the result.  Must be called outside a render pass, after
-// VK_RT_DispatchGIProbeResolve (and so after VK_RT_DispatchAtrousGI), while
-// gbufAlbedo is in SHADER_READ_ONLY_OPTIMAL (the backend's Stage-3.5 barrier
-// window).  It is last in the GI chain under BOTH sampling structures: probe
-// irradiance is albedo-free, so the resolve's output wants modulating too.
-// Not in-place: checkerboard keeps stale giBuffer pixels and temporal reuses
-// its resolve output as history, so both would compound the multiply across
-// frames if written back into their source.
+// VK_RT_DispatchGIProbeResolve, while gbufAlbedo is in SHADER_READ_ONLY_OPTIMAL
+// (the backend's Stage-3.5 barrier window).  Last in the GI chain: probe
+// irradiance is albedo-free, so the resolve's output wants modulating.
 // No-op when r_rtGIAlbedo is 0, a probe OVERLAY owns giBuffer (it is a
 // measurement, not radiance), or the G-buffer/scratch images don't exist.
 void VK_RT_DispatchGIAlbedoMod(VkCommandBuffer cmd, const viewDef_t *viewDef);
@@ -1472,10 +1434,6 @@ void VK_RT_ShutdownGIProbe(void);
 VkDescriptorSetLayout VK_RT_GIProbeDescLayout(void);
 VkDescriptorSet VK_RT_GIProbeDescSet(int frameIdx);
 
-// True when r_rtGIProbes selects the probe path and its whole chain is usable.
-// Stands the per-pixel rgen LAUNCH, the temporal EMA and the a-trous chain
-// down; VK_RT_DispatchGI itself still runs, because the probe trace is a second
-// raygen in that pipeline and needs the set 0 it builds.
 bool VK_RT_GIProbeActive(void);
 
 // r_rtGIProbeDebug, but 0 unless the probe resolve pipeline and atlases exist.
@@ -1492,10 +1450,8 @@ void VK_RT_DispatchGIProbeTrace(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // borders.  Must follow VK_RT_DispatchGIProbeTrace in the same frame.
 void VK_RT_DispatchGIProbeBlend(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
-// Probe atlases -> vkRT.giBuffer, and repoints giReadView at it.  Runs whenever
-// r_rtGIProbes selects the probe path (mode 0, the shipping G2 resolve) or
-// r_rtGIProbeDebug selects an overlay.  Runs AFTER temporal/a-trous — writing
-// an overlay before them would feed it into their history — and BEFORE
+// Probe atlases -> vkRT.giBuffer, and repoints giReadView at it.  Mode 0 is the
+// shipping resolve; any other r_rtGIProbeDebug value is an overlay.  Runs BEFORE
 // VK_RT_DispatchGIAlbedoMod, which is what modulates mode 0's output.
 // Must be called outside a render pass; depth must be in ATTACHMENT_OPTIMAL.
 void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef);

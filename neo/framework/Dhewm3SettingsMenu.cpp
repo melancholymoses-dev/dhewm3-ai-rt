@@ -2559,7 +2559,6 @@ struct RTCVars
 
     // Froxel and GI Probe Toggles
     idCVar *rtVolFroxel = nullptr;
-    idCVar *rtGIProbes = nullptr;
     idCVar *rtGIProbeHysteresis = nullptr;
 
     // Resolution scaling / upscaling (docs/plans/completed/20260918_fsr_upscaling.md)
@@ -2663,7 +2662,6 @@ static void InitRTOptionsMenu()
     rtCVars.rtBloomLitWeight = cvarSystem->Find("r_rtBloomLitWeight");
     rtCVars.rtBloomMips = cvarSystem->Find("r_rtBloomMips");
     rtCVars.rtVolFroxel = cvarSystem->Find("r_rtVolFroxel");
-    rtCVars.rtGIProbes = cvarSystem->Find("r_rtGIProbes");
     rtCVars.rtGIProbeHysteresis = cvarSystem->Find("r_rtGIProbeHysteresis");
     rtCVars.fsr = cvarSystem->Find("r_fsr");
     rtCVars.fsrRenderScale = cvarSystem->Find("r_fsrRenderScale");

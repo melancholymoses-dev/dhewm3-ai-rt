@@ -2217,7 +2217,6 @@ void VK_RT_BeginLevelLoad(void)
     }
     // Temporal history from the old level is meaningless for the new one.
     vkRT.aoHistoryValid = false;
-    vkRT.giHistoryValid = false;
     vkRT.volHistoryValid = false;
     // reflChain[].historyValid is deliberately not touched: a level load always trips
     // either the camera-cut test or !prevFrameValid on the first frame, so the reflection
