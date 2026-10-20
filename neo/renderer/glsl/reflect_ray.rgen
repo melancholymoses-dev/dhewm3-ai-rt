@@ -452,6 +452,9 @@ void main()
     // lobe is wide enough that it's approximating the same hemisphere probe GI already
     // integrates, so tracing both would sum two independent noisy estimates of the same
     // quantity instead of two distinct ones. 
+    // >= not >: a ceiling of exactly 0 must disqualify every opaque pixel, 
+    // whatever r_rtReflRoughnessFloor says.
+
     bool tooRoughForMode3 = (params.reflMode == 3) && (roughness >= params.roughnessMax);
 
     if (params.debugMode == 13)

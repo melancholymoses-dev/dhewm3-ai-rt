@@ -146,7 +146,7 @@ renders the normal image, not garbage; `cvarlist *Debug*` help matches what the 
 
 ---
 
-## Phase 2 — Reflection legacy mode
+## Phase 2 — Reflection legacy mode (Done)
 
 Unblocked after the specular refleciton work (2026-10-18). The old plan (remove F0,
 reclaim its G-buffer alpha) assumed glass-only reflections. **Opaque reflections are now

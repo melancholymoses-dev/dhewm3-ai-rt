@@ -124,7 +124,7 @@ idCVar r_rtReflectionMode("r_rtReflectionMode", "3", CVAR_RENDERER | CVAR_INTEGE
                           "    view's SURFTYPE_GLASS surfaces and skipped entirely when the view holds no glass;\n"
                           "    opaque geometry never reflects.\n"
                           "3 = glass + opaque-with-roughness (default).\n"
-                          "    Also allow rough specular reflection"
+                          "    Also allow rough specular reflection\n"
                           "Use r_rtReflections 0 to turn the feature off entirely.",
                           1, 3);
 
@@ -2318,15 +2318,14 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
     // exception, since it exists specifically to visualize that ceiling, so it forces
     // mode 3 regardless of what r_rtReflectionMode is actually set to.
     // Modes 14/15 keep the real mode so they classify the pixels normal play traces.
-    uint reflMode;
-    if (reflDebugActive && reflDebugMode != 14 && reflDebugMode != 15)
-        ubo.reflMode = 3;
-    else
-        reflMode = r_rtReflectionMode.GetInteger();
-    if (reflMode == 1 || reflMode == 3)
-        ubo.reflMode = reflMode;
-    else
-        common->Error("r_rtReflectionMode must be one of 1 or 3\n");
+    int reflMode = r_rtReflectionMode.GetInteger();
+    if (reflMode != 1 && reflMode != 3)
+    {
+        common->Warning("r_rtReflectionMode %d invalid (1 or 3); using 3", reflMode);
+        r_rtReflectionMode.SetInteger(3);
+        reflMode = 3;
+    }
+    ubo.reflMode = (reflDebugActive && reflDebugMode != 14 && reflDebugMode != 15) ? 3 : reflMode;
 
     ubo.roughnessMax = idMath::ClampFloat(0.0f, 1.0f, r_rtReflRoughnessMax.GetFloat());
     ubo.maxLuminance = Max(0.0f, r_rtReflMaxLuminance.GetFloat());
