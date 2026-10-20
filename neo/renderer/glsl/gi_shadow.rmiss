@@ -1,7 +1,7 @@
 /*
 ===========================================================================
 
-dhewm3-rt Vulkan — gi_shadow.rmiss — shadow miss shader for GI Option B.
+dhewm3-rt Vulkan — gi_shadow.rmiss — shadow miss shader for GI bounce lighting.
 
 Shadow rays are fired from secondary hit points toward each scene light.
 If the ray misses all geometry, this shader fires and clears occluded to

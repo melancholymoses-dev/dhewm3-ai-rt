@@ -87,7 +87,6 @@ Descriptors (set 0):
   binding 5 — depthSampler
   binding 6 — gbufNormalSampler
   binding 7 — TLAS (mode 3 only, but statically accessed, so always bound)
-  binding 8 — probe stats SSBO (modes 6/7), shared with gi_probe_blend.comp
 
 20260906_froxel_probe_gi.md Part B, chunks G0-G3.
 
@@ -112,18 +111,6 @@ layout(set = 0, binding = 4) uniform sampler2D distanceAtlas;
 layout(set = 0, binding = 5) uniform sampler2D depthSampler;
 layout(set = 0, binding = 6) uniform sampler2D gbufNormalSampler;
 layout(set = 0, binding = 7) uniform accelerationStructureEXT tlas;
-
-// Same declaration as gi_probe_blend.comp's binding 5, at a different binding
-// because this pipeline has its own layout.  Read-only here: modes 6 and 7 show
-// the RAW statistic, before the threshold and dead band turn it into a flag.
-struct GIProbeStats {
-    float backface;
-    float miss;
-};
-
-layout(set = 0, binding = 8, std430) readonly buffer GIProbeStatsBuf {
-    GIProbeStats probes[];
-} probeStats;
 
 // G5b mode 8 only — reads the containment fields and the FAST flag.
 //
@@ -150,10 +137,9 @@ layout(set = 0, binding = 9, std430) readonly buffer GIResolveLightBuf {
     float bounceScale;
     float giRadius;
     float emissiveScale;
-    float reflAmbientScale;
     int   falloffMode;   // unused here (no attenuation), mirrored for layout parity
     float falloffReach;  // used by the mode-8 containment test so the overlay matches
-    float _pad0[1];
+    float _pad0[2];
     RTLight lights[RT_LIGHT_MAX_LIGHTS];
     GIResolveCookie cookies[RT_LIGHT_MAX_LIGHTS];
 } giLights;
@@ -169,73 +155,6 @@ layout(set = 0, binding = 9, std430) readonly buffer GIResolveLightBuf {
 // at zero the interpolation goes discontinuous across the wall and the seam is
 // more objectionable than the residual leak. DDGI uses the same 0.05.
 #define GIPROBE_VIS_FLOOR 0.05
-
-// ---------------------------------------------------------------------------
-// Ray vs the probe lattice (sphere overlays only).
-//
-// Stepping the ray and testing the NEAREST lattice point at each step, rather
-// than iterating the whole grid: at spacing/2 steps no sphere of radius <
-// spacing/2 can be stepped over, and each test is an analytic ray-sphere so the
-// result is exact rather than a marched approximation.
-// ---------------------------------------------------------------------------
-// tRange   — how far to march (bounds cost).
-// tVisible — distance to the depth-buffer surface along this ray.
-// xrayMask — probe flags that are allowed to draw THROUGH geometry.
-//
-// The drawability test lives inside the loop on purpose. Returning the nearest
-// sphere of any class and rejecting it afterwards silently hides every probe
-// behind it: an ordinary probe one pixel past the wall would suppress the buried
-// probe the overlay exists to show. This returns the nearest DRAWABLE sphere.
-bool gip_TraceProbeSphere(vec3 ro, vec3 rd, float tRange, float tVisible, uint xrayMask, float radius,
-                          out ivec3 hitCell, out vec3 hitNormal, out float hitT)
-{
-    hitCell = ivec3(0);
-    hitNormal = vec3(0.0);
-    hitT = tRange;
-
-    float spacing = max(gp.gridOrigin.w, 1.0);
-    float step = spacing * 0.5;
-    float r2 = radius * radius;
-    float best = tRange;
-    bool found = false;
-
-    // 256 steps * spacing/2 covers 8192 units at the 64-unit default, well past
-    // any Doom 3 room; the loop exits on tRange long before that indoors.
-    for (int i = 0; i < 256; i++)
-    {
-        float t = float(i) * step;
-        if (t > tRange)
-            break;
-
-        vec3 p = ro + rd * t;
-        ivec3 cell = ivec3(round(p / spacing));
-        if (!gip_CellInGrid(cell))
-            continue;
-
-        int idx = gip_StorageIndex(cell);
-        vec3 c = gip_ProbePosAt(cell, idx);
-        vec3 oc = c - ro;
-        float tca = dot(oc, rd);
-        float d2 = dot(oc, oc) - tca * tca;
-        if (d2 > r2)
-            continue;
-
-        float t0 = tca - sqrt(max(0.0, r2 - d2));
-        if (t0 < 0.0 || t0 >= best)
-            continue;
-
-        if (t0 > tVisible && (probeState.probes[idx].flags & xrayMask) == 0u)
-            continue; // behind the world and not x-ray class
-
-        best = t0;
-        hitCell = cell;
-        hitNormal = normalize((ro + rd * t0) - c);
-        hitT = t0;
-        found = true;
-    }
-
-    return found;
-}
 
 // Blue -> cyan -> green -> yellow -> red over [0,1].  Overlay-only.
 vec3 gip_Ramp(float t)
@@ -393,7 +312,7 @@ GIProbeSite gip_Site(ivec2 coord, ivec2 fullSize)
 
     float depth = texelFetch(depthSampler, coord, 0).r;
     if (depth >= 1.0)
-        return s; // sky gets no GI, same as gi_ray.rgen
+        return s; // sky gets no GI
 
     s.worldPos = rt_ReconstructWorldPos(coord, fullSize, gp.invViewProj);
     vec3 toEye = gp.cameraPosW.xyz - s.worldPos;
@@ -499,9 +418,7 @@ void main()
         {
             outColour = irradiance * gp.tune.z;
 
-            // Same energy-neutral contrast push gi_ray.rgen applies, so an
-            // r_rtGIProbes A/B at matched r_rtGIStrength/r_rtGIContrast
-            // compares the sampling structure and nothing else.
+            // Energy-neutral contrast push, r_rtGIContrast
             if (gp.tune2.x > 0.0)
             {
                 vec3 grayRef = vec3(dot(outColour, vec3(1.0 / 3.0)));
@@ -564,179 +481,6 @@ void main()
                 // here would render the scene unmodified and read as "fine" —
                 // the total absence of GI is the worst case, not the best.
                 outColour = vec3(1.0, 0.0, 1.0);
-            }
-        }
-    }
-    else if (mode == 8)
-    {
-        // G5b. Green = how much of this pixel's GI is coming from the fast
-        // bucket; red = how many distinct fast lights reach the point, /3.
-        //
-        // The two are read together. Green bright and red dark is the healthy
-        // case and says K = 1 is exact here. Green bright and red bright says two
-        // or more fast lights share one gain at this point, so their individual
-        // flicker phases are being averaged — the only condition that argues for
-        // K = 2, and the reason this overlay exists before any tuning.
-        GIProbeSite s = gip_Site(fullCoord, fullSize);
-        if (s.valid)
-        {
-            vec3 irradiance, fastPart;
-            float wBefore, wAfter;
-            if (gip_SampleIrradiance(s, irradiance, fastPart, wBefore, wAfter))
-            {
-                float lumTotal = dot(irradiance, vec3(1.0 / 3.0));
-                float lumFast = dot(fastPart, vec3(1.0 / 3.0));
-                float frac = (lumTotal > 1e-6) ? clamp(lumFast / lumTotal, 0.0, 1.0) : 0.0;
-
-                // Containment only, no shadow ray: the question is which fast
-                // lights REACH this point and therefore share the bucket's one
-                // gain. A shadowed light still shares it.
-                int fastCount = 0;
-                int n = min(giLights.numLights, RT_LIGHT_MAX_LIGHTS);
-                for (int i = 0; i < n; i++)
-                {
-                    if ((giLights.lights[i].flags & GI_LIGHT_FLAG_FAST) == 0u)
-                        continue;
-
-                    vec3 lPos = giLights.lights[i].posRadius.xyz;
-                    vec4 bx = giLights.lights[i].boxExtents;
-                    vec3 toPoint = s.worldPos - lPos;
-
-                    if (giLights.lights[i].lightType == 0u)
-                    {
-                        vec3 nl = abs(toPoint) / max(bx.xyz, vec3(0.001));
-                        if (max(max(nl.x, nl.y), nl.z) < giLights.falloffReach)
-                            fastCount++;
-                    }
-                    else
-                    {
-                        vec4 cd = giLights.lights[i].coneDir;
-                        float along = dot(toPoint, cd.xyz);
-                        if (along > 0.0 && along <= bx.w &&
-                            along / max(length(toPoint), 0.001) >= cd.w)
-                            fastCount++;
-                    }
-                }
-
-                outColour = vec3(float(fastCount) / 3.0, frac, 0.0);
-            }
-            else
-            {
-                outColour = vec3(0.0, 0.0, 1.0); // no usable probe — same case mode 2 paints magenta
-            }
-        }
-    }
-    else if (mode == 1 || mode == 4 || mode == 5 || mode == 6 || mode == 7)
-    {
-        vec2 uv = (vec2(fullCoord) + 0.5) / vec2(fullSize);
-        vec3 ro = gp.cameraPosW.xyz;
-        vec3 rd = gip_RayDirForUV(uv);
-
-        // Spheres are occluded by the world: a probe behind a wall must not show
-        // through it, or the overlay reads as "probes everywhere" and says
-        // nothing about placement.
-        float depth = texelFetch(depthSampler, fullCoord, 0).r;
-        float tSurface = 1.0e6;
-        if (depth < 1.0)
-            tSurface = length(rt_ReconstructWorldPos(fullCoord, fullSize, gp.invViewProj) - ro);
-
-        // Mode 4 marches PAST the surface, because the probes it most needs to
-        // show are the unusable ones — depth-occluding a probe buried in a wall
-        // makes it invisible by construction, which is exactly the state G4
-        // classifies. The trace itself enforces drawability, so an ordinary
-        // probe behind the world cannot hide a buried one further along.
-        // Modes 6/7 read the raw statistic and are diagnosing exactly the probes
-        // the flags got wrong, so they x-ray on the same terms as mode 4.
-        const uint xray = GIPROBE_FLAG_UNUSABLE;
-        bool wide = (mode == 4 || mode == 6 || mode == 7);
-        float tRange = wide ? 1.0e6 : tSurface;
-        uint mask = wide ? xray : 0u;
-
-        ivec3 cell;
-        vec3 n;
-        float tHit;
-        if (gip_TraceProbeSphere(ro, rd, tRange, tSurface, mask, max(gp.debug.y, 0.25), cell, n, tHit))
-        {
-            int idx = gip_StorageIndex(cell);
-            uint flags = probeState.probes[idx].flags;
-
-            if (mode == 4)
-            {
-                if ((flags & GIPROBE_FLAG_OUTSIDE) != 0u)
-                    outColour = vec3(1.0, 0.8, 0.0); // void, outside the level hull
-                else if ((flags & GIPROBE_FLAG_INSIDE) != 0u)
-                    outColour = vec3(0.0, 0.3, 1.0); // buried in a solid brush
-                else if ((flags & GIPROBE_FLAG_TRACED) != 0u)
-                    outColour = vec3(0.0, 1.0, 0.0); // usable
-                else
-                    outColour = vec3(1.0, 0.0, 0.0); // never traced
-
-                // Cheap lambert against the view so the spheres read as spheres
-                // and a lattice is legible as a lattice.
-                outColour *= mix(0.35, 1.0, max(0.0, dot(n, -rd)));
-
-                // Halved when x-rayed through geometry, so "buried in that wall"
-                // stays distinguishable from "sitting in front of it" — without
-                // this a flagged sphere gives no depth cue at all, and a
-                // misclassified probe in open air reads identically to a
-                // correctly classified one inside the wall behind it.
-                if (tHit > tSurface)
-                    outColour *= 0.5;
-            }
-            else if (mode == 6 || mode == 7)
-            {
-                if ((flags & GIPROBE_FLAG_TRACED) == 0u)
-                {
-                    outColour = vec3(0.4, 0.0, 0.4); // never traced, nothing measured
-                }
-                else
-                {
-                    // The RAW statistic on the ramp, with no threshold applied.
-                    // Mode 4 can only say "flagged"; this says by how much, which
-                    // is the difference between a mistuned threshold and a
-                    // statistic that is measuring the wrong thing. The ramp is
-                    // blue(0) -> green(0.5) -> red(1), so an air probe reading
-                    // near 0 is blue and one reading near 1 is red.
-                    float v = (mode == 6) ? probeStats.probes[idx].backface : probeStats.probes[idx].miss;
-                    outColour = gip_Ramp(clamp(v, 0.0, 1.0));
-                }
-                outColour *= mix(0.35, 1.0, max(0.0, dot(n, -rd)));
-                if (tHit > tSurface)
-                    outColour *= 0.5;
-            }
-            else if (mode == 5)
-            {
-                if ((flags & GIPROBE_FLAG_TRACED) == 0u)
-                {
-                    outColour = vec3(0.4, 0.0, 0.4);
-                }
-                else
-                {
-                    // Both moments are already normalised by maxRayDist — see
-                    // gi_probe_blend.comp's header for why they have to be.
-                    vec2 m = texture(distanceAtlas, gip_AtlasUV(idx, n, gp.atlas.w)).rg;
-                    // Negative variance cannot happen for a real second moment;
-                    // if it does, the lobe weights or the EMA are wrong, not
-                    // merely mistuned.  Catches an fp16 overflow as NaN too.
-                    if (!(m.y >= m.x * m.x - 1e-3))
-                        outColour = vec3(1.0, 0.0, 1.0);
-                    else
-                        outColour = gip_Ramp(m.x);
-                    outColour *= mix(0.35, 1.0, max(0.0, dot(n, -rd)));
-                }
-            }
-            else
-            {
-                // Bucket 0 — the stable set. Mode 1 is "what has this probe
-                // stored", and adding a fast bucket scaled by a gain that moves
-                // every frame would make a steady overlay strobe.
-                vec2 auv = gip_IrrAtlasUV(idx, 0, n, gp.atlas.z);
-                outColour = texture(irradianceAtlas, auv).rgb * gp.debug.x;
-
-                // An untraced probe has nothing to show; magenta says "no data"
-                // rather than letting a black tile read as "this room is dark".
-                if ((flags & GIPROBE_FLAG_TRACED) == 0u)
-                    outColour = vec3(0.4, 0.0, 0.4);
             }
         }
     }

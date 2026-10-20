@@ -68,11 +68,14 @@ work that would use it has shipped.
 |---|---|
 | `r_rtAODebugGain`, `r_rtGIProbeDebugGain/Radius/Dump`, `r_rtVolDebugGain/Dump`, `r_rtVolFroxelDebugSlice/Gain/Dump`, `r_rtGILightDump`, `r_rtTlasDump` | `r_rtAODebug`, `r_rtGIProbeDebug`, `r_rtVolFroxelDebug` (hardcode the gains) |
 | `r_vkRTReflDataDiag`, `r_vkRTInterLogN`, `r_vkRTLogCaptureReset`, `r_vkRTDebugLightTextures`, `r_vkRTLightLogN`, `r_vkRTDebugLightFilter`, `r_vkRTDebugSurface`, `r_vkRTDebugMaxLogsPerFrame` | `r_vkRTProfile*`, `r_vkLogRT`, `r_vkLogSubmitInfo`, `r_vkLogTLASSlow`, `r_vkBLASPoolCheck` |
-| `r_vkShadowFlipOps`, `r_vkShadowFullScissor`, `r_vkLightFullScissor`, `r_vkSplitSubmitMask/Verbose`, `r_vkLowPerturbationMode`, `r_vkLogShadowBranch/Geom`, `r_vkVcCheck` | `r_vkSerializeFrames` (cheap stability bisect) |
+| `r_vkShadowFlipOps`, `r_vkShadowFullScissor`, `r_vkLightFullScissor`, `r_vkLogShadowBranch/Geom`, `r_vkVcCheck` | `r_vkSerializeFrames`, `r_vkSplitSubmitMask/Verbose`, `r_vkLowPerturbationMode` |
+
+**Correction 2026-10-18:** the split-submit trio was wrongly listed as **X**. The three
+answer different questions and none substitutes for another
 
 `r_rtBloomDebug` moves to 1d (mode 1 is a general HDR-range overlay, not bloom-only).
 
-### 1b — after optimization Stage S closes (closed 2026-10-13)
+### 1b — Shadow Cleanup (Done)
 
 | X | Because |
 |---|---|
@@ -82,7 +85,7 @@ work that would use it has shipped.
 
 `r_rtShadowDebugMode` stays (**C**), trimmed to 2 modes in 1d.
 
-### 1c — reflection arc closed 2026-10-18 (unblocked)
+### 1c — Reflection Cleanup (Done)
 
 8d, 8f and 8g Stages 1-4 all landed, so the reflection diagnostics are now judged against a
 settled pipeline. 24 reflection/GUI cvars exist that predate the Settings doc — §2 of that
@@ -92,17 +95,14 @@ doc now lists them with verdicts. Summary:
 |---|---|
 | **M** | `r_rtReflectionBlend` (strength), `r_rtReflMaxLuminance` (ceiling), `r_rtSpecF0Scale`, `r_rtSpecF0Gamma`, `r_rtReflOpaqueHalfRes`, `r_rtGuiReflections` |
 | **C** | `r_rtReflDenoise(+Alpha/AlphaGlass)`, `r_rtReflRoughness{Scale,Floor,Max}`, `r_rtReflRoughLumExp`, `r_rtReflShadowPicks`, `r_rtReflectionDistance`, `r_rtReflectionMinWeight`, `r_rtReflVol(+Gain/Steps)`, `r_rtReflGlow*`, `r_rtReflFlashGlow*`, `r_rtGlassNormalMode`, `r_rtGuiReflGain`, `r_rtGuiTexInterval/Radius`, `r_rtReflectionDebugMode` |
-| **X** | `r_rtReflAtrousSigmaPlane`, `r_rtReflAtrousNormalPower`, `r_rtReflAmbientScale`, `r_rtGlassCreaseRatio`, `r_rtReflGlowScale`, `r_rtReflGlowSmokeCell`, plus whatever 8g Stage 5 folds together |
+| **X** | `r_rtReflAmbientScale`, `r_rtReflGlowScale`, `r_rtReflGlowSmokeCell` |
 
 **F0 stays and is now a menu knob** — `r_rtSpecF0Scale/Gamma` drive opaque reflections
 (the arc's main win). The old "remove F0" plan is dead; see Phase 2.
 
-8g Stage 5 (knob consolidation) still owns folding `r_rtReflAtrousIterations` +
-`r_rtReflAtrousRoughnessGain` into one wash scale. Do that before writing the presets.
+### 1d — debug mode trim — **done 2026-10-18**
 
-### 1d — debug mode trim
-
-44 live modes across 8 cvars; target 18. Own section: [Phase 1d](#phase-1d--debug-mode-trim).
+44 live modes across 8 cvars → **13 across 7**. Own section: [Phase 1d](#phase-1d--debug-mode-trim).
 
 Check (each group): build, load Mars City, `cvarlist r_rt` and `r_vk` shrink; baseline
 screenshots identical (image diff). Also drops the matching `DebugMode` branches in
@@ -110,41 +110,45 @@ screenshots identical (image diff). Also drops the matching `DebugMode` branches
 
 ---
 
-## Phase 1d — Debug mode trim
+## Phase 1d — Debug mode trim — **done 2026-10-18**
 
 A debug mode earns its keep if it answers a question no other instrument answers **against
-the current pipeline**. Modes built to settle an arc go when the arc's conclusion lands in
-`../rt_engine_rules.md`. **Numbers stay stable** — retired modes become documented no-ops,
-as `r_rtReflectionDebugMode` already does, so plan docs and memories keep resolving.
+the current pipeline**. Modes built to settle an arc went once the arc's conclusion landed in
+`../rt_engine_rules.md`. **Numbers stay stable** — retired modes are documented no-ops, so
+plan docs and memories keep resolving.
 
-| Cvar | Live now | Keep | Retire | Why those |
+**44 modes across 8 cvars → 13 across 7.**
+
+| Cvar | Was | Kept | Retired | Why |
 |---|---|---|---|---|
-| `r_rtReflectionDebugMode` | 2,3,4,6,11,12,13,14,15 (9) | 2,3,11,12,13,15 | 4, 6, 14 | 4 = prepass coverage, settled. 6 = the B2/B3/B4 "dark subject vs weak interface" measurement, arc closed. 14 (à-trous branch) is subsumed by 15 (edge-stop weight) |
-| `r_rtShadowDebugMode` | 1,2,3,5,7,8,9,10,11 (9) | 9, 10 | 1,2,3,5,7,8,11 | 1/2/3/5 are bias-direction views from the A12 arc — settled. 7/8 (aniso cone) shipped. 9 is the bias-vs-depth-error budget, the recurring failure. 11 goes with `r_rtShadowVolumeCull` (1b) |
-| `r_rtGIProbeDebug` | 1-8 (8) | 1, 3, 4 | 2, 5, 6, 7, 8 | 1 = is there GI here, 3 = leak detector, 4 = probe classification. 2 is subsumed by 3/4. 6/7 existed to validate 4's verdict; 8 (G5b buckets) shipped. **Move mode 5's "impossible second moment" magenta into mode 4** before deleting 5 — that check is an earned rule |
-| `r_fsrDebug` | 1-7 (7) | 3, 7 | 1, 2, 4, 5, 6 | 3 = reactive/T&C mask overlay (both masks are live knobs), 7 = motion vectors (the recurring FSR bug class). 2 is verbose view logging → fold into `r_vkLogRT`. 1/4/5/6 are U0/U3 A-B switches from closed stages |
-| `r_rtVolFroxelDebug` | 1-4 (4) | 1, 2, 3 | 4 | 1 = slice, 2 = per-cell light count (cost attribution), 3 = grid-mapping error (the infinite-far-plane discriminator). 4 (blocked cone hits) is a one-off |
-| `r_rtAODebug` | 1-3 (3) | 1, 2, 3 | — | Three distinct views, all cheap, AO is still being tuned |
-| `r_rtVolDebugMode` | 1,2 (2) | — | both | Goes with the per-pixel march path in Phase 4 |
-| `r_rtBloomDebug` | 1,2 (2) | 1 | 2 | Mode 1 is an HDR-range band overlay useful well beyond bloom; rename it out of the bloom group. 2 (raw extract) is one-off |
+| `r_rtReflectionDebugMode` | 9 | 2, 3, 11, 12, 13, 15 | 4, 6, 14 | 4 = prepass coverage, settled. 6 = the B2/B3/B4 "dark subject vs weak interface" measurement, arc closed. 14 (à-trous branch) subsumed by 15 |
+| `r_rtShadowDebugMode` | 9 | 9, 10, 11 | 1, 2, 3, 5, 7, 8 | 1/2/3/5 are bias-direction views from the A12 arc. 7/8 (aniso cone) shipped. 9 is the bias-vs-depth-error budget, the recurring failure. **11 stays:** 1b hardcoded the cull always-on (`vk_shadows.cpp:1057`), so 11 is the only way left to check it |
+| `r_rtGIProbeDebug` | 8 | 2, 3 | 1, 4, 5, 6, 7, 8 | 2 is the cheap weight view, 3 the ray-traced ground truth it approximates. 1/4/5/6/7 shared a sphere-lattice renderer that **was already deleted** with `r_rtGIProbeDebugRadius` — all five rendered black. 8 (G5b buckets) shipped |
+| `r_fsrDebug` | 7 | 3, 7 | 1, 2, 4, 5, 6 | 3 = reactive/T&C masks (both are live knobs), 7 = motion vectors (the recurring FSR bug class). 2's per-view logging moved to `r_vkLogRT 2`. 1/4/6 are U0/U3 A/B switches; 5 (FSR2 bleed) was a whole pass, deleted |
+| `r_rtVolFroxelDebug` | 4 | 2, 3 | 1, 4 | 2 = per-cell light count (cost attribution), 3 = grid-mapping error (the infinite-far-plane discriminator). 1 had already lost its `…DebugSlice` cvar and rendered black; 4 was a one-off |
+| `r_rtAODebug` | 3 | 1, 2, 3 | — | Three distinct views, all cheap, AO still being tuned |
+| `r_rtBloomDebug` | 2 | 1 | 2 | 1 is an HDR-range band overlay useful well beyond bloom and reads the frame, not the chain. 2 (raw `bloomMip[0]`) was a whole pass, deleted |
+| `r_rtVolDebugMode` | 2 | — | cvar gone | Went with the per-pixel march path |
 
-Totals: 44 → **18**, cvars 8 → 7 (`r_rtVolDebugMode` goes entirely).
+**The validator is the load-bearing part.** Every one of the seven now reads through a
+`VK_RT_Valid*DebugMode()` that returns 0 for a retired number. Without it a dead value still
+satisfied the `!= 0` / `>= 2 && <= MAX` tests that mean "an overlay is active", and took the
+perturbed path — replace-blend composite, suppressed shadow blur, forced
+`r_rtReflectionMode 3`, a probe resolve dispatched with probes off — to draw an ordinary image.
+`REFL_DEBUG_MAX_MODE` is gone; the validator replaced it.
 
-| Step | Detail |
-|---|---|
-| 1d-a | Shaders first: delete the retired branches in `reflect_ray.rgen`, `refl_atrous.comp`, `shadow_ray.rgen`, `gi_probe_resolve.comp`, `fsr_rcas.comp`, `vol_froxel_fill.comp`. Lower `REFL_DEBUG_MAX_MODE` only if 15 is ever retired — it is not |
-| 1d-b | C++ clamps and the dispatch guards that mention specific modes (`vk_reflections.cpp:3161`, `vk_backend.cpp:1943`, `vk_vol_froxel.cpp:565/1095`) |
-| 1d-c | Rewrite each cvar help string as a one-line-per-live-mode list, ending with "retired no-ops: N, N, N" |
-| 1d-d | Probe mode 5 → 4 magenta merge (do before deleting 5) |
+Deleted outright, with shader + pipeline + push-constant struct + CMake entry: the probe
+sphere-lattice tracer, `fsr2_bleed_debug.comp`, `bloom_debug.comp`. `fsr_rcas.comp` lost its
+`debugMode` push constant entirely.
 
 Check: each kept mode still renders its documented colours at Mars City; each retired number
-renders the normal image, not garbage; `cvarlist *Debug*` help text matches what the shaders do.
+renders the normal image, not garbage; `cvarlist *Debug*` help matches what the shaders do.
 
 ---
 
-## Phase 2 — Reflection legacy mode
+## Phase 2 — Reflection legacy mode (Done)
 
-Rewritten 2026-10-17, unblocked 2026-10-18 (8g Stages 1-4 landed). The old plan (remove F0,
+Unblocked after the specular refleciton work (2026-10-18). The old plan (remove F0,
 reclaim its G-buffer alpha) assumed glass-only reflections. **Opaque reflections are now
 default (`r_rtReflectionMode 3`) and F0 is the arc's win — it drives the trace cull, the
 Fresnel weight, and 8g Stage 2's coarse G-buffer channel. F0, its remap and
@@ -161,32 +165,49 @@ Check: modes 1 and 3 screenshots identical; `grep -rn "reflMode == 2\|Reflection
 
 ---
 
-## Phase 3 — Remove screen-space GI
-
-Probes own GI (`VK_RT_GIProbeActive()`): `vk_temporal.cpp:1261` and the A-trous at `vk_gi.cpp:3401` already return early when probes are on.
+## Phase 3 — Remove screen-space GI ✅ done (2026-10-20), not yet validated in-game
 
 | Step | Detail |
 |---|---|
-| 3a. Map | List what `vk_gi.cpp` (3840 lines) provides to probes (light collection, area walk, stratify, upload) vs screen-space only (per-pixel bounce, checkerboard, A-trous, GI temporal) |
-| 3b. Split | Move shared light selection into `vk_gi_lights.cpp`; add to `CMakeLists.txt` |
-| 3c. Delete | `r_rtGISamples`, `r_rtGICheckerboard`, `r_rtGITemporal(+Alpha)`, `r_rtGIAtrous*`, `r_rtGIRadius` (if screen-only), `r_rtGIStochasticLights`, `r_rtGIProbes` toggle (probes always on), shaders for per-pixel GI + GI denoise, GI parts of `VK_RT_Temporal*` |
-| 3d. Keep | Probe resolve, `r_rtGIStrength/Contrast/FalloffMode/Reach`, AO temporal (separate path) |
+| 3a/3c. Deleted | `gi_ray.rgen`, `gi_temporal_resolve.comp`, `gi_atrous.comp`; `r_rtGISamples`, `r_rtGICheckerboard`, `r_rtGITemporal(+Alpha)`, `r_rtGIAtrous*`, the `r_rtGIProbes` toggle; the GI halves of `VK_RT_Temporal*`/`VK_RT_Atrous*`; `GIParamsUBO.numSamples`/`checker`/`checkerPhase` |
+| 3b. Not done | Shared light selection stays in `vk_gi.cpp`. Optional — track separately if the file is still unwieldy |
+| 3d. Kept | Probe resolve, `r_rtGIStrength/Contrast/FalloffMode/Reach`, AO temporal + à-trous (`vk_temporal.cpp` is now AO-only), the albedo-mod pass and its `giScratchA/B` pair |
 
-Check: GI screenshots identical (probes already active); GI GPU ms ≤ baseline; GPU memory drops by the GI history/denoise images (log VRAM before/after).
+Struck from 3c: `r_rtGIRadius` sizes light collection and the TLAS radius, and
+`r_rtGIStochasticLights` is read by `gi_ray.rchit`, which probe rays traverse. Neither was
+screen-space-only.
+
+Structural consequence: `gi_probe_trace.rgen` is now the GI pipeline's only raygen, so a
+missing `gi_probe_trace.rgen.spv` disables GI outright instead of falling back, and the SBT
+re-indexed to 4 groups / 6 records. `VK_RT_DispatchGI` survives as set-0 setup only — it
+traces nothing, and the probe trace depends on it having run.
+
+Check: GI screenshots identical; GI GPU ms ≤ baseline; `r_vkLogRT 1` shows `probe-rgen` in
+the SBT line and no "scratch images not ready" warning; VRAM drops by the GI history and
+one of the two denoise ping-pong pairs.
 
 ---
 
-## Phase 4 — Remove non-froxel volumetrics
-
-Froxel is default (`r_rtVolFroxel 1`, `vk_vol_froxel.cpp:1023`). `vk_vol.cpp` is 2237 lines and may still hold shared composite / upsample code.
+## Phase 4 — Remove non-froxel volumetrics ✅ done (2026-10-20), not yet validated in-game
 
 | Step | Detail |
 |---|---|
-| 4a. Map | Which `vk_vol.cpp` functions the froxel path calls (composite, upsample, light list) |
-| 4b. Delete | per-pixel ray-march pipeline + shader, `r_rtVolFroxel` toggle, `r_rtVolSamples`, `r_rtVolHalfRes`, `r_rtVolUpsampleDepthSigma`, `r_rtVolBilateral*`, `r_rtVolWhiteNoiseMix` (verify each is march-only) |
-| 4c. Rename | Remaining froxel + composite code into `vk_vol.cpp`; drop `vk_vol_froxel.cpp` name split if one file is clearer |
+| 4a/4b. Deleted | `vol_march.comp`, `vol_bilateral.comp`; the march pipeline, the vol temporal EMA (`volHistory`, `volPrevCam*`, `volHistoryValid`) and the bilateral upsample (`volBlurred`); `VolParamsUBO`, `BilateralPC`, the `s_volMarchScale` machinery; `r_rtVolFroxel`, `r_rtVolSamples`, `r_rtVolHalfRes`, `r_rtVolUpsampleDepthSigma`, `r_rtVolBilateral(+Sigma)`, `r_rtVolTemporal(+Alpha)`; the `Vol`/`VolTemporal`/`VolBilateral` profile phases |
+| 4c. Not done | The split stays. `vk_vol.cpp` is 711 lines (medium coefficients + `volBuffer` + composite) against `vk_vol_froxel.cpp`'s 1653; merging makes one 2.4k-line file, which is not clearer |
+| 4d. Kept | `r_rtVolWhiteNoiseMix` — `vol_froxel_fill.comp` reads it, so it was never march-only. `r_rtVolMaxDist` likewise bounds the grid and the vol light selection |
 
-Check: volumetric hall + flashlight screenshots identical; vol GPU ms ≤ baseline; shader list in `CMakeLists.txt` matches files in `glsl/`.
+Two consequences worth knowing:
+
+- **`volReadView` has one claimant.** The froxel resolve is now the only writer of
+  `volBuffer`, so `VK_RT_CompositeVolumetrics` gates on `VK_RT_VolFroxelActive()`. Without
+  that, a frame where the grid stood down composites a black-cleared buffer through the
+  attenuating pipeline (`dst = src.rgb + dst*src.a`) and blanks the screen.
+- **The vol EMA was already dead.** It loaded `gi_temporal_resolve.comp.spv`, which Phase 3
+  deleted, so it had been silently warning-and-disabling since then.
+
+Check: volumetric hall + flashlight screenshots identical; vol GPU ms ≤ baseline (phases are
+now `FroxelFill`/`FroxelIntegrate`/`FroxelResolve`/`VolComposite` only); shader list in
+`CMakeLists.txt` matches files in `glsl/`.
 
 ---
 
@@ -261,15 +282,15 @@ Reordered 2026-10-13. Two principles, both from measurement rather than taste:
 
 | Phase | Risk | Depends on | Status |
 |---|---|---|---|
-| 0 Regression refs + FP on | none | — | Screenshots and FP default outstanding |
-| 1a Debug clutter trim | low | 0 | Blocks nothing. **Runs first in this arc** |
-| 1b Shadow diagnostics | low | optimization Stage S | Unblocked — Stage S closed 2026-10-13 |
-| 5a Reset buttons | low | 0 | No cvar-set dependency; can land any time |
+| 0 Regression refs + FP on | none | — | Done |
+| 1a Debug clutter trim | low | 0 | Done|
+| 1b Shadow diagnostics | low | optimization Stage S | Closed 2026-10-13 |
 | 1c Reflection cvar verdicts | low | reflection arc | **Unblocked 2026-10-18** — 8d/8f/8g 1-4 all landed |
-| 1d Debug mode trim | low | 1a, 1b, 1c | Shader branches, so it wants the cvar verdicts settled first |
+| 1d Debug mode trim | low | 1a, 1b, 1c | Done |
 | 2 Reflection legacy mode 2 | low-med | 1c, 8g Stage 5 | Unblocked except for Stage 5's knob fold |
 | 3 Screen-space GI | med | 1a | Dead paths confirmed at 0.001 ms |
-| 4 Non-froxel vol | med | 1a | same. Takes `r_rtVolDebugMode` with it |
+| 4 Non-froxel vol | med | 1a | Done 2026-10-20, not yet validated in-game |
+| 5a Reset buttons | low | 0 | No cvar-set dependency; can land any time |
 | 5b Presets | low | 1c, 1d, 2, 3, 4 (final cvar set) | |
 | 7 Comments | none | all of the above | Last by design; `git diff -w` must show no code change |
 

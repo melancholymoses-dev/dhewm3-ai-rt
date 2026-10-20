@@ -78,7 +78,7 @@ static const char *rtDeviceExtensions[] = {
     VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
     VK_KHR_SPIRV_1_4_EXTENSION_NAME,
     VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
-    VK_KHR_RAY_QUERY_EXTENSION_NAME, // vol_march.comp uses rayQueryEXT
+    VK_KHR_RAY_QUERY_EXTENSION_NAME, // the froxel fill uses rayQueryEXT
 };
 static const int numRTDeviceExtensions = 10;
 
@@ -376,7 +376,7 @@ static void VKimp_CreateDevice(void)
     if (vk.rayTracingSupported && !supportedVk12.descriptorIndexing)
         common->Warning("Vulkan RT: descriptorIndexing not supported; bindless descriptors may fail.");
     if (vk.rayTracingSupported && !supportedRayQuery.rayQuery)
-        common->Warning("Vulkan RT: rayQuery not supported; vol_march.comp will fail.");
+        common->Warning("Vulkan RT: rayQuery not supported; volumetrics will fail.");
 
     // Device features
     VkPhysicalDeviceFeatures2 features2 = {};

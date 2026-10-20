@@ -48,8 +48,8 @@ opaque can be traced at different rates into separate images:
   REFL_POP_OPAQUE — full-screen; zeroes pixels glass owns, so the two never overlap.
                     Its glass probe fires only inside params.glassRect, which is the
                     saving: a glass-free view spends no probes at all.
-  REFL_POP_BOTH   — the pre-split single dispatch, still used by r_rtReflectionMode 2
-                    and every debug mode, which need one image to land in.
+  REFL_POP_BOTH   — the pre-split single dispatch, still used by every debug mode, 
+                    which need one image to land in.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
@@ -94,14 +94,14 @@ layout(set = 0, binding = 3) uniform ReflParams {
     float  minWeight;     // r_rtReflectionMinWeight — pre-trace Fresnel cull (R1)
     int    rectOriginX;   // R6 — launch-grid origin, added to gl_LaunchIDEXT below
     int    rectOriginY;
-    int    reflMode;      // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen, 3 glass+opaque (Stage 4)
+    int    reflMode;      // r_rtReflectionMode — 1 glass-only, 3 glass+opaque 
     int    emitterCount;  // projectile glow discs in emitterBuf (0 = r_rtReflGlow off)
     float  glowGain;      // r_rtReflGlowGain (0 when r_rtReflGlow is off)
     int    glowTriCount;  // additive translucent triangles in emitterBuf.tris
     float  roughLumExp;   // r_rtReflRoughLumExp — ceiling scales by (1 - roughness)^this
 
-    // Froxel scatter grid (20261013_reflection_volumetrics.md). viewProj is the
-    // grid's own, GL convention — the matrix its invViewProj inverts, jitter and all.
+    // Froxel scatter grid. viewProj is the grid's own, GL convention 
+    // — the matrix its invViewProj inverts, jitter and all.
     mat4   viewProj;
     vec4   froxelCamPos;
     vec4   froxelCamFwd;
@@ -111,22 +111,22 @@ layout(set = 0, binding = 3) uniform ReflParams {
     int    froxelNz;
     int    volSteps;      // 0 = no usable grid this frame; take no samples
     float  volGain;
-    float  volIsoMix;     // r_rtVolIsotropicMix — Stage 5, for rt_PhaseFromMeanDir
+    float  volIsoMix;     // r_rtVolIsotropicMix — for rt_PhaseFromMeanDir
     int    glassNormalMode; // r_rtGlassNormalMode — 0 interpolated, 1 face, 2 crease-aware
     float  glassCreaseRatio; // r_rtGlassCreaseRatio — mode 2 flattens when devRatio < this
     float  guiReflGain;   // r_rtGuiReflGain — scales live GUI screen hits
-    float  roughnessMax;  // r_rtReflRoughnessMax (Stage 4) — reflMode 3 only; above this an
+    float  roughnessMax;  // r_rtReflRoughnessMax  — reflMode 3 only; above this an
                            // opaque pixel skips the reflection ray and takes GI alone
-    float  maxLuminance;  // r_rtReflMaxLuminance (2026-10-16 addendum) — hard luminance
+    float  maxLuminance;  // r_rtReflMaxLuminance  — hard luminance
                            // ceiling on the final opaque radiance below. 0 = unbounded.
     int    shadowPicks;   // r_rtReflShadowPicks — opaque hits: 0 deterministic loop, 1-2 stochastic
 
-    int    population;    // Stage 4b — REFL_POP_*, which surfaces this dispatch owns
+    int    population;    // REFL_POP_*, which surfaces this dispatch owns
     int    glassRectX;    // union of the SURFTYPE_GLASS scissors; OPAQUE probes only inside it
     int    glassRectY;
     int    glassRectW;    // 0 = no glass in view
     int    glassRectH;
-    int    reflScale;     // Stage 4c — 1 full res, 2 half res (opaque only). reflImage is
+    int    reflScale;     // 1 full res, 2 half res (opaque only). reflImage is
                           // 1/reflScale the G-buffer's size; every full-res fetch below
                           // scales coord up by it, imageStore does not.
 } params;
@@ -362,15 +362,6 @@ void main()
         imageStore(reflImage, coord, vec4(vec3(f0Fine), 1.0));
         return;
     }
-    if (params.debugMode == 4)
-    {
-        // Prepass-coverage check: pixels the prepass never wrote (B still at the 1.0
-        // clear sentinel) tinted magenta; should be only sky/translucents once the
-        // prepass covers the scene. Can't test f0 here: black/absent specular maps
-        // legitimately write f0 == 0.
-        imageStore(reflImage, coord, GBuf_NormalValid(gbuf) ? vec4(0.0) : vec4(1.0, 0.0, 1.0, 1.0));
-        return;
-    }
     if (params.debugMode == 12)
     {
         // Stage 2 roughness as greyscale — rough concrete bright, polished trim and
@@ -448,7 +439,7 @@ void main()
         return;
     }
 
-    // Stage 4b opaque chain: glass owns this pixel and stores its radiance in the glass
+    // opaque chain: glass owns this pixel and stores its radiance in the glass
     // chain's image. Writing here too would composite the behind-glass surface's
     // reflection on top of the pane's, which the single-buffer path never did.
     if (params.population == REFL_POP_OPAQUE && glassProbe.hitT > 0.01)
@@ -457,12 +448,13 @@ void main()
         return;
     }
 
-    // Stage 4 roughness ceiling (r_rtReflRoughnessMax, mode 3 only): above it, the GGX
+    //  roughness ceiling (r_rtReflRoughnessMax, mode 3 only): above it, the GGX
     // lobe is wide enough that it's approximating the same hemisphere probe GI already
     // integrates, so tracing both would sum two independent noisy estimates of the same
-    // quantity instead of two distinct ones. >= so a ceiling of exactly 0 disqualifies
-    // every opaque pixel regardless of r_rtReflRoughnessFloor, making mode 3 reproduce
-    // mode 1 exactly rather than merely approximating it.
+    // quantity instead of two distinct ones. 
+    // >= not >: a ceiling of exactly 0 must disqualify every opaque pixel, 
+    // whatever r_rtReflRoughnessFloor says.
+
     bool tooRoughForMode3 = (params.reflMode == 3) && (roughness >= params.roughnessMax);
 
     if (params.debugMode == 13)
@@ -652,16 +644,6 @@ void main()
     // emissive along the segment, so it joins accum on the same footing as the glows
     // rather than being tinted by the reflector.
     accum += ReflVolumetrics(segOrigin, reflDir, segHitT, coord);
-
-    if (params.debugMode == 6)
-    {
-        // B0: raw traced radiance, before reflBlend and before any Fresnel/glass weight
-        // — the measurement that separates "dark subject" from "weak interface".
-        // Alpha is positive (not the glass sentinel) so refl_composite.frag displays it
-        // with blending off, same as modes 2-4.
-        imageStore(reflImage, coord, vec4(accum, 1.0));
-        return;
-    }
 
     if (isGlass)
     {

@@ -4,9 +4,9 @@
 dhewm3-rt Vulkan — vol_froxel_integrate.comp — froxel column integration.
 
 One invocation per grid COLUMN (x,y).  Walks the Z slices front to back
-accumulating Beer-Lambert transmittance and in-scattering — exactly the loop
-vol_march.comp runs per screen pixel, done once per column instead.  At the
-160x90 default that is 14400 columns against the march's ~500k pixels.
+accumulating Beer-Lambert transmittance and in-scattering — the integral a
+per-pixel march would run once per screen pixel, done once per column instead.
+At the 160x90 default that is 14400 columns against ~500k pixels.
 
 Output (rgba16f 3D image):
   rgb — in-scattering accumulated from the camera to the cell CENTRE
@@ -101,8 +101,7 @@ void main()
             float segLen    = max(dC - dA, 0.0) * invZFac;
             float transAfter = trans * exp(-sigma * segLen);
             // Geometric mean approximates the transmittance at the segment's
-            // midpoint rather than at either end — same approximation, and the
-            // same reason, as vol_march.comp's stepTransmittance.
+            // midpoint rather than at either end.
             accum += inscat * segLen * sqrt(trans * transAfter);
             trans = transAfter;
         }

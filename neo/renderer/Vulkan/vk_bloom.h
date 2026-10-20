@@ -14,7 +14,7 @@ what those stages emitted.
 
 Both dispatch points must be called OUTSIDE the HDR render pass.  Implemented:
 B0 (the tonemap's luminance bands, see vk_tonemap.cpp) and B1.  B2's blur chain and
-composite are not built yet, so nothing reaches the screen outside r_rtBloomDebug.
+composite are not built yet, so nothing reaches the screen.
 
 docs/plans/20260906_bloom_plan.md
 
@@ -73,8 +73,8 @@ void VK_RT_BloomPrepass(VkCommandBuffer cmd);
 void VK_RT_BloomExtract(VkCommandBuffer cmd);
 
 // B2: does the blur chain and composite want to run this frame?  Gated on r_rtBloom
-// alone, unlike VK_RT_BloomActive — r_rtBloomDebug 2 pulls the capture up by itself
-// and must not start compositing glow the user switched off.
+// alone, unlike VK_RT_BloomActive: it must not start compositing glow the user
+// switched off.
 bool VK_RT_BloomCompositeActive(void);
 
 // B2: the down/up blur chain followed by the additive composite into hdrScene.  Must
@@ -83,8 +83,3 @@ bool VK_RT_BloomCompositeActive(void);
 // the tonemap (and therefore the HUD's arrival in hdrScene) comes later.
 void VK_RT_DispatchBloom(VkCommandBuffer cmd);
 
-// r_rtBloomDebug 2: bloomMip[0] magnified over the display, replacing the frame.
-// Same slot as the FSR debug overlays — outside the render pass, after the resolve
-// and before the tonemap.
-bool VK_RT_BloomDebugActive(void);
-void VK_RT_DispatchBloomDebug(VkCommandBuffer cmd);

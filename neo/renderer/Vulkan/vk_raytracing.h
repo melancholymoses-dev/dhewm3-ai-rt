@@ -404,54 +404,20 @@ struct vkRTState_t
     VkSampler giSampler;                           // linear-clamp for interaction shader
 
     // --------------------------------------------------------------------------
-    // GI temporal EMA accumulation
+    // GI result view, and the scratch pair the chain hands it between.
     //
-    // giHistory: RGBA16F single shared accumulation buffer, NOT per-slot.
-    //   gi_temporal_resolve.comp blends giBuffer (raw current frame) into it.
-    // giReadView: per-slot; updated each frame to point at giHistory when temporal
-    //   is active, or giBuffer when r_rtGITemporal is off.  The composite pass
-    //   and any future interaction-shader sampling should read from giReadView.
-    // giHistoryValid / giPrevCamPos / giPrevCamFwd: camera-cut detection state,
-    //   single instance alongside giHistory (same convention as AO's).
+    // giReadView: per-slot, repointed as the chain runs — the probe resolve aims
+    //   it at giBuffer, then the albedo-mod pass aims it at its own output. The
+    //   composite pass reads whatever it ends up at, so it never needs to know
+    //   which passes ran.
+    // giScratchA/B: RGBA16F per frame slot. The albedo-mod pass cannot write in
+    //   place (its source is a read-only sampler), so it writes to whichever of
+    //   the pair giReadView is NOT currently pointing at. Both are allocated so
+    //   that choice is always available.
     // --------------------------------------------------------------------------
-    vkRTImage_t giHistory; // RGBA16F accumulated GI history
-    bool giHistoryValid;
-    idVec3 giPrevCamPos;
-    idVec3 giPrevCamFwd;
     VkImageView giReadView[VK_MAX_FRAMES_IN_FLIGHT]; // composite reads from here
-
-    VkPipeline giTemporalPipeline;
-    VkPipelineLayout giTemporalPipelineLayout;
-    VkDescriptorSetLayout giTemporalDescLayout;
-    VkDescriptorPool giTemporalDescPool;
-    VkDescriptorSet giTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int giTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
-
-    // --------------------------------------------------------------------------
-    // GI À-trous spatial filter (Phase 6.3)
-    //
-    // Two ping-pong RGBA16F buffers per frame slot.  Three descriptor sets per
-    // slot handle the three possible read→write directions:
-    //   DS[slot][0]: giReadView (temporal history or raw GI) → giAtrousA
-    //   DS[slot][1]: giAtrousA → giAtrousB
-    //   DS[slot][2]: giAtrousB → giAtrousA
-    //
-    // After all passes, giReadView[slot] is updated to point at whichever
-    // buffer received the final write; the composite pass then reads it.
-    //
-    // DS[slot][0] is rebuilt each frame because giReadView may change
-    // (temporal on/off).  DS[slot][1] and DS[slot][2] are stable after init.
-    // --------------------------------------------------------------------------
-    vkRTImage_t giAtrousA[VK_MAX_FRAMES_IN_FLIGHT]; // ping
-    vkRTImage_t giAtrousB[VK_MAX_FRAMES_IN_FLIGHT]; // pong
-
-    VkPipeline giAtrousPipeline;
-    VkPipelineLayout giAtrousPipelineLayout;
-    VkDescriptorSetLayout giAtrousDescLayout;
-    VkDescriptorPool giAtrousDescPool;
-    // [slot][0..2]: first-pass (src→A), AtoB, BtoA
-    VkDescriptorSet giAtrousDescSets[VK_MAX_FRAMES_IN_FLIGHT][3];
-    int giAtrousDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    vkRTImage_t giScratchA[VK_MAX_FRAMES_IN_FLIGHT];
+    vkRTImage_t giScratchB[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
     // GI light list SSBO
@@ -468,7 +434,7 @@ struct vkRTState_t
     // Same GILightBuffer layout as giLightSsbo above, but filled with a SEPARATE
     // selection: the same admitted-candidate pool, filtered to lights that can
     // possibly reach within r_rtVolMaxDist of the camera, capped at r_rtVolMaxLights.
-    // vol_march.comp reads this buffer, not giLightSsbo.
+    // vol_froxel_fill.comp reads this buffer, not giLightSsbo.
     VkBuffer volLightSsbo[VK_MAX_FRAMES_IN_FLIGHT];
     VkDeviceMemory volLightSsboMemory[VK_MAX_FRAMES_IN_FLIGHT];
     void *volLightSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
@@ -482,7 +448,6 @@ struct vkRTState_t
 
     VkBuffer sbtGIBuffer;
     VkDeviceMemory sbtGIMemory;
-    VkStridedDeviceAddressRegionKHR giRgenRegion;
     VkStridedDeviceAddressRegionKHR giMissRegion;
     VkStridedDeviceAddressRegionKHR giHitRegion;
     VkStridedDeviceAddressRegionKHR giCallRegion;
@@ -549,7 +514,7 @@ struct vkRTState_t
     VkStridedDeviceAddressRegionKHR callRegion;
 
     // --------------------------------------------------------------------------
-    // Material table (Phase 5.4) — set=2 in RT shaders
+    // Material table  — set=2 in RT shaders
     //
     // Three persistently-mapped HOST_VISIBLE|HOST_COHERENT SSBOs:
     //   matTableSSBO  — VkMaterialEntry[], one per geometry slot, indexed by
@@ -575,7 +540,7 @@ struct vkRTState_t
     VkDescriptorSetLayout matDescLayout; // set=2: mat SSBO + vtx/idx addr + bindless textures
     VkDescriptorPool matDescPool;
     VkDescriptorSet matDescSet[VK_MAX_FRAMES_IN_FLIGHT]; // bind matDescSet[vk.currentFrame]
-    VkSampler matSampler;                                 // bilinear-clamp, used for all bindless slots
+    VkSampler matSampler;                                // bilinear-clamp, used for all bindless slots
 
     bool matTableInitialized;
 
@@ -583,21 +548,16 @@ struct vkRTState_t
     // Volumetric Lighting
     //
     // volBuffer: RGBA16F per-slot scatter accumulation image (full resolution).
-    //   Written by vol_march.comp (compute + ray queries).
+    //   Written by the froxel resolve, its only writer.
     //   Read by the composite pass (additive blend onto framebuffer).
-    // volMarch*: compute pipeline for the ray-march dispatch.
     // volComposite*: graphics pipeline for additive composite (shares
     //   gi_composite.vert; separate vol_composite.frag).
+    // volReadView: what the composite samples — claimed by the froxel resolve each
+    //   frame, defaulting to volBuffer's own view.
     // --------------------------------------------------------------------------
     vkRTImage_t volBuffer[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F volumetric scatter
     VkSampler volSampler;                           // bilinear-clamp for composite
-
-    VkPipeline volMarchPipeline;
-    VkPipelineLayout volMarchPipelineLayout;
-    VkDescriptorSetLayout volMarchDescLayout;
-    VkDescriptorPool volMarchDescPool;
-    VkDescriptorSet volMarchDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int volMarchDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkImageView volReadView[VK_MAX_FRAMES_IN_FLIGHT];
 
     VkPipeline volCompositePipeline;
     VkPipeline volCompositeDebugPipeline;
@@ -607,37 +567,9 @@ struct vkRTState_t
     VkDescriptorPool volCompositeDescPool;
     VkDescriptorSet volCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // Volumetric temporal EMA (Phase 7.2 — step 8)
-    // volHistory is single shared, not per-slot — see the AO temporal comment above.
-    vkRTImage_t volHistory;
-    bool volHistoryValid;
-    idVec3 volPrevCamPos;
-    idVec3 volPrevCamFwd;
-    VkImageView volReadView[VK_MAX_FRAMES_IN_FLIGHT];
-
-    VkPipeline volTemporalPipeline;
-    VkPipelineLayout volTemporalPipelineLayout;
-    VkDescriptorSetLayout volTemporalDescLayout;
-    VkDescriptorPool volTemporalDescPool;
-    VkDescriptorSet volTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int volTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
-
-    // Volumetric bilateral filter
-    // Reads volHistory (storage image), writes filtered result to volBlurred.
-    // CompositeVolumetrics reads volBlurred.
-    vkRTImage_t volBlurred[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F filtered output
-
-    VkPipeline volBilateralPipeline;
-    VkPipelineLayout volBilateralPipelineLayout;
-    VkDescriptorSetLayout volBilateralDescLayout;
-    VkDescriptorPool volBilateralDescPool;
-    VkDescriptorSet volBilateralDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int volBilateralDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
-
     // --------------------------------------------------------------------------
-    // Volumetric froxel grid
+    // Volumetric froxel grid — the volumetric integrator.
     //
-    // World-space-cached replacement for the per-pixel march, selected by r_rtVolFroxel.
     //  froxelScatter holds per-cell in-scattering (rgb, per unit length) + extinction (a);
     //  froxelDir (Stage 5) holds the mean scattering direction, |xyz| = mean cosine g;
     //  froxelIntegrated (F2) holds the accumulated camera->cell integral.
@@ -716,8 +648,8 @@ struct vkRTState_t
     VkDescriptorSet giProbeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int giProbeDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // Second raygen record in the GI SBT — gi_probe_trace.rgen.  Same pipeline,
-    // same miss/hit regions; only the raygen region differs from giRgenRegion.
+    // The GI SBT's only raygen record — gi_probe_trace.rgen.  Shares the pipeline,
+    // and therefore the miss/hit regions, with gi_ray.rchit.
     VkStridedDeviceAddressRegionKHR giProbeRgenRegion;
 
     VkPipeline giProbeBlendPipeline;
@@ -794,12 +726,11 @@ struct vkRTState_t
     // Same vk.gbufferSupported gating and lifetime as gbufNormal.
     vkRTImage_t motionVectors[VK_MAX_FRAMES_IN_FLIGHT]; // R16G16_SFLOAT
 
-    // GI albedo modulate pass (gi_albedo_target.md): after temporal + à-trous,
-    // multiplies the denoised GI radiance by gbufAlbedo into whichever of
-    // giAtrousA/B is NOT the current giReadView (always allocated, otherwise
-    // idle this frame), then repoints giReadView at it. One descriptor set per
-    // frame slot, rewritten unconditionally every dispatch, since this
-    // pass runs exactly once per frame.
+    // GI albedo modulate pass (gi_albedo_target.md): multiplies the resolved GI
+    // radiance by gbufAlbedo into whichever of giScratchA/B is NOT the current
+    // giReadView, then repoints giReadView at it. One descriptor set per frame
+    // slot, rewritten unconditionally every dispatch, since this pass runs
+    // exactly once per frame.
     VkPipeline giAlbedoModPipeline;
     VkPipelineLayout giAlbedoModPipelineLayout;
     VkDescriptorSetLayout giAlbedoModDescLayout;
@@ -924,20 +855,19 @@ void VK_RT_DispatchReflTemporal(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // falls back to the temporal history (1) or the traced image (0).
 void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
-// Highest r_rtReflectionDebugMode handled inside reflect_ray.rgen. Modes 2-4 are the
-// G-buffer checks (docs/plans/gbuffer_normal_pass.md); 5-7 are B0
-// (docs/plans/20260918_reflection_brightness.md). Anything in 2..this forces the
-// full-screen launch grid, takes the replace-blend composite, and suppresses the
-// per-surface glass overlay.
-// 8 = projectile emitter discs (vk_rt_emitters.cpp); 9 = glass crease split; 10 = GUI hits;
-// 11 = reflection denoiser history age / rejection mask (VK_RT_DispatchReflTemporal)
-// 14 = à-trous branch view, 15 = à-trous edge-stop weight (refl_atrous.comp)
-const int REFL_DEBUG_MAX_MODE = 15;
+// Coerces r_rtReflectionDebugMode to a mode that still exists, 0 otherwise. Every
+// consumer must go through this: a nonzero return forces the full-screen launch grid,
+// the replace-blend composite and suppression of the per-surface glass overlay, so a
+// retired number reading as "active" would route an ordinary image down that path.
+// Live: 2/3 G-buffer normal + F0, 11 denoiser history (VK_RT_DispatchReflTemporal),
+// 12 roughness, 13 GI handoff, 15 à-trous edge stops (refl_atrous.comp).
+// Numbers are kept stable across retirements so plan docs keep resolving.
+int VK_RT_ValidReflDebugMode(void);
 
 // Additively composite reflBuffer onto the framebuffer (Step 8, see
 // docs/plans/gbuffer_normal_pass.md). Must be called INSIDE the main render
 // pass, after VK_RT_CompositeGI. No-op if vk.gbufferSupported is false.
-// Selects a blend-disabled variant when r_rtReflectionDebugMode is 2-7, so the
+// Selects a blend-disabled variant while VK_RT_ValidReflDebugMode is nonzero, so the
 // debug visualization replaces rather than adds onto the lit scene.
 void VK_RT_CompositeReflections(VkCommandBuffer cmd);
 
@@ -1193,13 +1123,13 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef);
 // G5b (20260906_froxel_probe_gi.md) — flicker factorization, owned by vk_gi.cpp's
 // classifier and consumed by vk_gi_probe.cpp when it builds GIProbeParams.
 //
-// A fast light is uploaded at its PEAK colour L̂ with s = current/peak alongside,
+// A fast light is uploaded at its PEAK colour Lhat with s = current/peak alongside,
 // so the probe fast bucket caches its transport time-invariantly and the resolve
 // multiplies the gain back in. Both are refreshed inside VK_RT_UploadGILights,
 // which vk_backend.cpp calls before any probe dispatch — reading them earlier in
 // the frame would hand the resolve the previous frame's flicker phase.
 //
-// Count is the clamped r_rtGIProbeFastBuckets (K). Gain is the L̂-luminance-
+// Count is the clamped r_rtGIProbeFastBuckets (K). Gain is the Lhat-luminance-
 // weighted mean of s over the bucket's uploaded lights, and is 0 — not 1 — when
 // the bucket holds no light, so its decaying atlas history cannot republish.
 int VK_RT_GIFastBucketCount(void);
@@ -1214,7 +1144,7 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Composite the GI buffer onto the current framebuffer with additive blending.
 // Must be called INSIDE the main render pass, before the per-light interaction draws.
-// Reads from giReadView[currentFrame] (giHistory when temporal is active, else giBuffer).
+// Reads from giReadView[currentFrame] — wherever the GI chain last left it.
 // Does nothing when r_rtGI is off or the composite pipeline is not ready.
 // GI is multiplied by AO here (r_rtAOIndirectStrength).
 void VK_RT_CompositeGI(VkCommandBuffer cmd);
@@ -1224,68 +1154,24 @@ void VK_RT_CompositeGI(VkCommandBuffer cmd);
 void VK_RT_CompositeGIDebug(VkCommandBuffer cmd);
 
 // ---------------------------------------------------------------------------
-// GI temporal EMA resolve (Phase 6.2)
-// ---------------------------------------------------------------------------
-
-// Initialize GI history images and the gi_temporal_resolve compute pipeline.
-// Called from VK_RT_InitGI after the GI ray pipeline is ready.
-void VK_RT_InitGITemporal(void);
-
-// Destroy all GI temporal resources.  Device must be idle before calling.
-void VK_RT_ShutdownGITemporal(void);
-
-// Resize GI history images when render resolution changes.
-void VK_RT_ResizeGITemporal(uint32_t width, uint32_t height);
-
-// Blend the raw GI buffer into the per-slot history using exponential moving average.
-// Must be called after VK_RT_DispatchGI (outside a render pass).
-// On entry giBuffer[currentFrame] is in GENERAL with a shader-write → shader-read barrier
-// already issued by VK_RT_DispatchGI.
-// On exit giHistory contains the blended result; giReadView[currentFrame]
-// is set to giHistory.view and a (COMPUTE_WRITE → FRAGMENT_READ) barrier is issued.
-void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewDef);
-
-// ---------------------------------------------------------------------------
-// GI À-trous spatial filter (Phase 6.3)
-// ---------------------------------------------------------------------------
-
-// Allocate ping-pong filter buffers and the gi_atrous.comp compute pipeline.
-// Called from VK_RT_InitGI after the ray pipeline is ready.
-void VK_RT_InitGIAtrous(void);
-
-// Destroy all À-trous resources.  Device must be idle before calling.
-void VK_RT_ShutdownGIAtrous(void);
-
-// Reallocate filter buffers when render resolution changes.
-void VK_RT_ResizeGIAtrous(uint32_t width, uint32_t height);
-
-// Run r_rtGIAtrousIterations filter passes over giReadView; updates giReadView
-// to point at the filtered result.  Must be called outside a render pass, after
-// VK_RT_DispatchTemporalResolveGI.  Issues a COMPUTE_WRITE → FRAGMENT_READ
-// barrier on exit.
-void VK_RT_DispatchAtrousGI(VkCommandBuffer cmd, const viewDef_t *viewDef);
-
-// ---------------------------------------------------------------------------
 // GI receiver-albedo modulation (docs/plans/gi_albedo_target.md)
 // ---------------------------------------------------------------------------
 
-// Create the gi_albedo_mod.comp push-descriptor compute pipeline.
-// Called from VK_RT_InitGI after the à-trous pipeline is ready.
+// Create the gi_albedo_mod.comp compute pipeline and the giScratchA/B pair.
 void VK_RT_InitGIAlbedoMod(void);
 
-// Destroy the albedo-mod pipeline.  Device must be idle before calling.
+// Reallocate giScratchA/B at a new render resolution.
+void VK_RT_ResizeGIAlbedoMod(uint32_t width, uint32_t height);
+
+// Destroy the albedo-mod pipeline and scratch images.  Device must be idle.
 void VK_RT_ShutdownGIAlbedoMod(void);
 
-// Multiply the denoised GI (giReadView) by gbufAlbedo into whichever of
-// giAtrousA/B giReadView is NOT currently pointing at, then repoint giReadView
+// Multiply the resolved GI (giReadView) by gbufAlbedo into whichever of
+// giScratchA/B giReadView is NOT currently pointing at, then repoint giReadView
 // at the result.  Must be called outside a render pass, after
-// VK_RT_DispatchGIProbeResolve (and so after VK_RT_DispatchAtrousGI), while
-// gbufAlbedo is in SHADER_READ_ONLY_OPTIMAL (the backend's Stage-3.5 barrier
-// window).  It is last in the GI chain under BOTH sampling structures: probe
-// irradiance is albedo-free, so the resolve's output wants modulating too.
-// Not in-place: checkerboard keeps stale giBuffer pixels and temporal reuses
-// its resolve output as history, so both would compound the multiply across
-// frames if written back into their source.
+// VK_RT_DispatchGIProbeResolve, while gbufAlbedo is in SHADER_READ_ONLY_OPTIMAL
+// (the backend's Stage-3.5 barrier window).  Last in the GI chain: probe
+// irradiance is albedo-free, so the resolve's output wants modulating.
 // No-op when r_rtGIAlbedo is 0, a probe OVERLAY owns giBuffer (it is a
 // measurement, not radiance), or the G-buffer/scratch images don't exist.
 void VK_RT_DispatchGIAlbedoMod(VkCommandBuffer cmd, const viewDef_t *viewDef);
@@ -1332,7 +1218,7 @@ void VK_RT_GetBindlessFrameStats(vkRTBindlessFrameStats_t *out);
 // Volumetric Lighting (Phase 7.2)
 // ---------------------------------------------------------------------------
 
-// Create the RGBA16F vol buffer, compute march pipeline, and composite pipeline.
+// Create the RGBA16F vol buffer, the composite pipeline and the froxel grid.
 // Called once from VK_InitVulkan after VK_RT_InitGI.
 void VK_RT_InitVolumetrics(void);
 
@@ -1343,16 +1229,10 @@ void VK_RT_ShutdownVolumetrics(void);
 // Calls vkDeviceWaitIdle internally; do not call from a hot path.
 void VK_RT_ResizeVolumetrics(uint32_t width, uint32_t height);
 
-// Dispatch the volumetric ray-march compute pass for the current view.
-// Must be called outside a render pass, after TLAS build and GI dispatch.
-// Depth must be in ATTACHMENT_OPTIMAL on entry; transitions to READ_ONLY
-// for the compute dispatch and restores to ATTACHMENT_OPTIMAL on exit.
-// Output: volBuffer[currentFrame] is ready for FRAGMENT sampling when done.
-void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef);
-
 // Composite the volumetric buffer onto the framebuffer with additive blending.
 // Must be called INSIDE the main render pass, after VK_RT_CompositeGI.
-// Does nothing when r_rtVol is off or the pipeline is not ready.
+// Does nothing when r_rtVol is off, the pipeline is not ready, or the froxel
+// resolve stood down (nothing else writes volBuffer).
 // Self-guards against compositing the same view twice in a frame (F6 gave it
 // two possible call sites).
 void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd);
@@ -1364,9 +1244,9 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd);
 // call site must additionally gate on a real camera; see the comment there.
 bool VK_RT_VolCompositeAfterSurfaces(void);
 
-// Medium coefficients (20260917_vol_transport_coefficients.md).  The march and the
-// froxel fill must be fed identical constants or an r_rtVolFroxel 0/1 A/B is
-// meaningless, so both read these rather than the cvars.
+// Medium coefficients (20260917_vol_transport_coefficients.md).  The froxel fill
+// and the reflection in-scatter march read these rather than the cvars, so the
+// clamping and the sigma_s = albedo * sigma_t fold live in one place.
 enum
 {
     VK_VOL_CLASS_POINT = 0,
@@ -1377,46 +1257,6 @@ enum
 float VK_RT_VolExtinction(void);             // sigma_t, per world unit
 float VK_RT_VolAlbedo(void);                 // sigma_s / sigma_t, [0,1]
 float VK_RT_VolScatterScale(int lightClass); // sigma_s * per-class radiance gain
-
-// Shared dump helper: prints sigma_t/albedo/sigma_s, the T=0.5 distance, and each
-// class's effective albedo, flagging any above 1 as energy-creating.
-void VK_RT_VolPrintMedium(float sigmaT, float albedo, float scatterPoint, float scatterDirected, float scatterFlash);
-
-// ---------------------------------------------------------------------------
-// Volumetric temporal EMA (Phase 7.2 — step 8)
-// ---------------------------------------------------------------------------
-
-// Initialise history images and EMA pipeline.  Called from VK_RT_InitVolumetrics.
-void VK_RT_InitVolTemporal(void);
-
-// Destroy all vol temporal resources.  Device must be idle before calling.
-void VK_RT_ShutdownVolTemporal(void);
-
-// Resize vol history images when render resolution changes.
-void VK_RT_ResizeVolTemporal(uint32_t width, uint32_t height);
-
-// Blend volBuffer into volHistory via EMA.  Sets volReadView[currentFrame] to
-// the accumulated history so VK_RT_CompositeVolumetrics reads the smooth result.
-// Must be called outside the render pass, immediately after VK_RT_DispatchVolumetrics.
-void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *viewDef);
-
-// ---------------------------------------------------------------------------
-// Volumetric bilateral filter (Phase 7.2 — step 10)
-// ---------------------------------------------------------------------------
-
-// Initialise bilateral filter images and pipeline.  Called from VK_RT_InitVolumetrics.
-void VK_RT_InitVolBilateral(void);
-
-// Destroy all bilateral filter resources.  Device must be idle before calling.
-void VK_RT_ShutdownVolBilateral(void);
-
-// Resize bilateral images when render resolution changes.
-void VK_RT_ResizeVolBilateral(uint32_t width, uint32_t height);
-
-// Apply cross-bilateral spatial filter to the temporal history.
-// Sets volReadView[currentFrame] to volBlurred when r_rtVolBilateral is on.
-// Must be called outside the render pass, immediately after DispatchTemporalResolveVol.
-void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // ---------------------------------------------------------------------------
 // Volumetric froxel grid (20260906_froxel_probe_gi.md Part A)
@@ -1429,13 +1269,12 @@ void VK_RT_InitVolFroxel(void);
 // Destroy all froxel resources.  Device must be idle before calling.
 void VK_RT_ShutdownVolFroxel(void);
 
-// True when r_rtVolFroxel selects the froxel path and its pipeline is usable.
-// The march/temporal/bilateral passes consult this to stand down.
+// True when volumetrics are on and the froxel pipelines and grid images are all
+// usable.  Every vol pass, the composite included, stands down when this is false.
 bool VK_RT_VolFroxelActive(void);
 
-// Fill the froxel grid: one invocation per cell, same light model as
-// vol_march.comp's per-step loop.  Must be called outside a render pass, after
-// the TLAS build.  Does not touch depth.
+// Fill the froxel grid: one invocation per cell.  Must be called outside a render
+// pass, after the TLAS build.  Does not touch depth.
 void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Accumulate the filled grid front-to-back, one thread per grid column.
@@ -1443,8 +1282,8 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef);
 void VK_RT_DispatchVolFroxelIntegrate(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Grid -> vkRT.volBuffer, and repoints volReadView at volBuffer so the composite
-// reads it.  One trilinear fetch per pixel when r_rtVolFroxel is 1; also hosts
-// the r_rtVolFroxelDebug overlays.
+// reads it.  One trilinear fetch per pixel; also hosts the r_rtVolFroxelDebug
+// overlays.
 // Must be called outside a render pass; depth must be in ATTACHMENT_OPTIMAL.
 void VK_RT_DispatchVolFroxelResolve(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
@@ -1490,9 +1329,6 @@ VkImageView VK_RT_GetFroxelDirView(void);
 // Trilinear + clamp, shared with the resolve pass.
 VkSampler VK_RT_GetFroxelSampler(void);
 
-// r_rtVolFroxelDebug, but 0 unless the froxel path and its resolve pipeline are
-// actually usable.  vk_vol.cpp reads this to switch the volumetric composite to
-// its replace (non-additive) pipeline while an overlay is up.
 int VK_RT_VolFroxelDebugMode(void);
 
 // ---------------------------------------------------------------------------
@@ -1518,10 +1354,6 @@ void VK_RT_ShutdownGIProbe(void);
 VkDescriptorSetLayout VK_RT_GIProbeDescLayout(void);
 VkDescriptorSet VK_RT_GIProbeDescSet(int frameIdx);
 
-// True when r_rtGIProbes selects the probe path and its whole chain is usable.
-// Stands the per-pixel rgen LAUNCH, the temporal EMA and the a-trous chain
-// down; VK_RT_DispatchGI itself still runs, because the probe trace is a second
-// raygen in that pipeline and needs the set 0 it builds.
 bool VK_RT_GIProbeActive(void);
 
 // r_rtGIProbeDebug, but 0 unless the probe resolve pipeline and atlases exist.
@@ -1538,10 +1370,8 @@ void VK_RT_DispatchGIProbeTrace(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // borders.  Must follow VK_RT_DispatchGIProbeTrace in the same frame.
 void VK_RT_DispatchGIProbeBlend(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
-// Probe atlases -> vkRT.giBuffer, and repoints giReadView at it.  Runs whenever
-// r_rtGIProbes selects the probe path (mode 0, the shipping G2 resolve) or
-// r_rtGIProbeDebug selects an overlay.  Runs AFTER temporal/a-trous — writing
-// an overlay before them would feed it into their history — and BEFORE
+// Probe atlases -> vkRT.giBuffer, and repoints giReadView at it.  Mode 0 is the
+// shipping resolve; any other r_rtGIProbeDebug value is an overlay.  Runs BEFORE
 // VK_RT_DispatchGIAlbedoMod, which is what modulates mode 0's output.
 // Must be called outside a render pass; depth must be in ATTACHMENT_OPTIMAL.
 void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef);

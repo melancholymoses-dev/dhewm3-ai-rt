@@ -43,7 +43,7 @@ layout(set = 0, binding = 3) uniform ShadowParams {
     uint  frameIndex;           // for temporal jitter
     float rayBias;              // ray origin bias (world units)
     uint  rayCullMask;          // instance mask for traceRayEXT (0xFD excludes player body)
-    int   debugMode;            // 0=normal 1=biasDir.y 2=got-surface-normal 3=dot(biasDir,lightDir)
+    int   debugMode;            // 0=normal 9=bias budget 10=player exclusion 11=light-volume cull
     ivec2 scissorOffset;        // screen-space origin of this dispatch (light scissor rect offset)
     ivec2 screenSize;           // full framebuffer size (for UV reconstruction)
     int   shadowLayer;          // P1b: array layer this light writes (0..VK_RT_SHADOW_LAYERS-1)
@@ -226,13 +226,6 @@ void main() {
     float sinConeU = clamp( coneRadiusU / max( dist, 0.001 ), 0.0, 1.0 );
     float sinConeV = clamp( coneRadiusV / max( dist, 0.001 ), 0.0, 1.0 );
 
-    // Debug modes 7/8: visualize the two cone half-angles directly (single-channel
-    // R8 mask, so U and V are separate modes rather than packed into R/G).
-    // A spherical point light shows identical 7/8 output; an elongated fixture or
-    // a projected-light aperture shows visibly different 7 vs 8.
-    if ( params.debugMode == 7 ) { storeShadow( coord, sinConeU ); return; }
-    if ( params.debugMode == 8 ) { storeShadow( coord, sinConeV ); return; }
-
     float baseBias = clamp(params.rayBias, 0.01, 8.0);
 
     // ---------------------------------------------------------------------------
@@ -293,7 +286,6 @@ void main() {
     else                   dY = vec3(0.0);
 
     vec3  biasDir;
-    bool  gotSurfaceNormal;
     vec3  crossed   = cross( dX, dY );
     float crossLen  = length( crossed );
     if ( crossLen > 1e-4 ) {
@@ -302,13 +294,11 @@ void main() {
         // screen-space sign changes near dot(n,lightDir) ~= 0, which shows up as
         // black line striping when lights move close to surfaces.
         if ( dot(n, toCamera) < 0.0 ) n = -n;
-        biasDir          = n;
-        gotSurfaceNormal = true;
+        biasDir = n;
     } else {
-        // surface is edge-on or all neighbours are on different surfaces. 
+        // surface is edge-on or all neighbours are on different surfaces.
         // Camera-facing is the most stable fallback for visible geometry.
         biasDir = toCamera;
-        gotSurfaceNormal = false;
     }
 
     // Adaptive bias: scale up when light is nearly tangent to the surface.
@@ -361,18 +351,6 @@ void main() {
     float tMax = dist - adaptBias;
     if ( tMax <= 0.0 ) {
         storeShadow( coord, 1.0 );
-        return;
-    }
-
-    // ---------------------------------------------------------------------------
-    // Debug mode 5: raw nDotL (before max(0.2,...) clamp).
-    // Dark pixels = surface nearly perpendicular to the light = highest self-shadow
-    // risk.  Useful for catching shadow stripe regressions — stripes on a dark
-    // surface here confirm the bias is failing at grazing angles.
-    // ---------------------------------------------------------------------------
-    if ( params.debugMode == 5 ) {
-        float rawNDotL = abs( dot( biasDir, lightDir ) );
-        storeShadow( coord, rawNDotL );
         return;
     }
 
@@ -438,23 +416,6 @@ void main() {
     }
 
     float shadow = 1.0 - (occluded / float(N));
-
-    // ---------------------------------------------------------------------------
-    // Debug visualisation (r_rtShadowDebugMode) — modes 1-3 run post-trace.
-    //   1 = biasDir.y  (horizontal surface = 1.0, vertical wall = ~0.5, inverted = 0.0)
-    //   2 = gotSurfaceNormal  (white = reconstructed from depth, black = camera fallback)
-    //   3 = dot(biasDir, lightDir) mapped to [0,1]  (white = bias aligned with light)
-    // Modes 4-8 (pre-trace) already returned above.
-    // ---------------------------------------------------------------------------
-    if ( params.debugMode != 0 ) {
-        float dbg;
-        if      ( params.debugMode == 1 ) dbg = biasDir.y * 0.5 + 0.5;
-        else if ( params.debugMode == 2 ) dbg = gotSurfaceNormal ? 1.0 : 0.0;
-        else if ( params.debugMode == 3 ) dbg = dot( biasDir, lightDir ) * 0.5 + 0.5;
-        else                              dbg = shadow;
-        storeShadow( coord, dbg );
-        return;
-    }
 
     storeShadow( coord, shadow );
 }

@@ -86,14 +86,11 @@ void main()
         if (reflPayload.lightPicks > 0)
             direct = rt_EvalDirectLightingStochastic(hitPos, hitNorm, RT_LIGHT_MAX_LIGHTS,
                                                      reflPayload.lightPicks, REFL_SHADOW_BIAS, 1.0,
-                                                     reflPayload.lightSeed,
-                                                     rtLightBuf.reflAmbientScale, REFL_SELF_SHADOW_MASK);
+                                                     reflPayload.lightSeed, REFL_SELF_SHADOW_MASK);
         else
             direct = rt_EvalDirectLighting(hitPos, hitNorm, RT_LIGHT_MAX_LIGHTS,
                                            REFL_MAX_SHADOW_LIGHTS, REFL_SHADOW_BIAS,
-                                           1.0, REFL_SHADOW_MIN_LUM,
-                                           rtLightBuf.reflAmbientScale,
-                                           REFL_SELF_SHADOW_MASK);
+                                           1.0, REFL_SHADOW_MIN_LUM, REFL_SELF_SHADOW_MASK);
         reflPayload.colour = diffuse.rgb * (vec3(REFL_AMBIENT) + direct);
     }
     else

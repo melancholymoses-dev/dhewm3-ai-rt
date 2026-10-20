@@ -12,13 +12,10 @@
   coordinate is a scalar function of its linear depth, with no per-pixel ray
   length involved.
 
-  NOTE this is deliberately NOT the same distribution vol_march.comp steps with
-  (8 steps over [0, r_rtVolMaxDist]).  The march's last step spans ~300 units at
-  the default maxDist and misses lights inside it; anchoring both ends and
-  spending all Nz slices on the range that actually scatters is most of why the
-  froxel path integrates more accurately.  An A/B against the march therefore
-  compares two different integrators, not one sampling rate against another —
-  expect a brightness difference at identical tuning constants.
+  Anchoring both ends and spending all Nz slices on the range that actually
+  scatters is why this integrates more accurately than a uniform march over
+  [0, r_rtVolMaxDist], whose last step spanned ~300 units and missed lights inside
+  it.
 
   Includer contract: declares the set=0 binding=2 params UBO below, so every
   froxel pass must place its params block there.  Needs no other bindings — in
@@ -40,8 +37,8 @@ Code release.
 #include "vol_froxel_sample.glsl"
 
 // std140 — offsets must match VolFroxelParamsUBO in vk_vol_froxel.cpp exactly.
-// Deliberately vec4-packed rather than scalar-packed: the scalar layout in
-// VolParamsUBO has already cost two offset-mismatch debugging sessions.
+// Deliberately vec4-packed rather than scalar-packed: scalar std140 layouts have
+// already cost two offset-mismatch debugging sessions in this renderer.
 layout(set = 0, binding = 2, std140) uniform VolFroxelParams {
     mat4  invViewProj;  //   0  GL-convention clip Z, see vf_RayDirForUV
     vec4  cameraPosW;   //  64  xyz = camera world position
@@ -57,7 +54,7 @@ layout(set = 0, binding = 2, std140) uniform VolFroxelParams {
     // slot now carries the two-lobe phase blend (rt_PhaseFunction, rt_phase.glsl).
     vec4  strengths;    // 160  xyz=sigma_s*gain per class  w=isotropicMix
     vec4  anisos;       // 176  x=point y=directed z=flashlight w=unused
-    ivec4 misc;         // 192  x=frameIndex y=maxLights z=debugMode w=debugSlice
+    ivec4 misc;         // 192  x=frameIndex y=maxLights z=debugMode w=unused
     ivec4 screen;       // 208  x=screenW y=screenH z=outW w=outH  (resolve target)
     ivec4 rect;         // 224  resolve dispatch rect, resolve-target space
     mat4  prevViewProj; // 240  F4 reprojection; identity until then
@@ -102,9 +99,8 @@ float vf_DistToTexW(float dist)  { return vfs_DistToTexW(vf_Slices(), dist); }
 float vf_DistToSlice(float dist) { return vf_DistToTexW(dist) * float(max(fp.gridDim.z, 1)); }
 
 // ---------------------------------------------------------------------------
-// Depth buffer -> planar view distance.  Same idiom as BilateralPC's
-// linNum/linAdd in vk_vol.cpp: the projection matrix is GL-convention, so the
-// Vulkan [0,1] depth is un-remapped to NDC with 2*d - 1 first.
+// Depth buffer -> planar view distance.  The projection matrix is GL-convention,
+// so the Vulkan [0,1] depth is un-remapped to NDC with 2*d - 1 first.
 // ---------------------------------------------------------------------------
 float vf_LinearDepth(float depth)
 {
@@ -159,11 +155,10 @@ vec3 vf_CellWorldPos(ivec3 cell, vec3 jitter, out vec3 rayDir)
 // ---------------------------------------------------------------------------
 // Per-cell, per-frame sub-cell jitter.
 //
-// Interleaved Gradient Noise over the cell's XY (spatially coherent — the same
-// property that stopped vol_march.comp's beams reading as noise), decorrelated
-// per Z slice, rotated per frame by the golden ratio, with a little white noise
-// blended in to break the diagonal grid (r_rtVolWhiteNoiseMix, same trade-off
-// as the march's jitter).
+// Interleaved Gradient Noise over the cell's XY (spatially coherent, which is what
+// stops the beams reading as noise), decorrelated per Z slice, rotated per frame by
+// the golden ratio, with a little white noise blended in to break up the diagonal
+// grid (r_rtVolWhiteNoiseMix).
 //
 // XY is returned as the exact cell centre for now: jittering XY only pays off
 // once the froxel-space EMA (F4) can average the variance away, and without it

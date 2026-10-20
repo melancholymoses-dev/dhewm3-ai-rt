@@ -23,7 +23,6 @@ Descriptors (set 0):
 
 Push constants:
   sharpness — RCAS attenuation in stops; 0 = sharpest, larger = softer
-  debugMode — r_fsrDebug (1 = cyan border, 6 = EASU only, no sharpening)
 
 FSR upscaling arc U1 — docs/plans/completed/20260918_fsr_upscaling.md.
 
@@ -49,7 +48,6 @@ layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D dstHdr;
 
 layout(push_constant) uniform PC {
     float sharpness;
-    int   debugMode;
 } pc;
 
 // The 3x3 ring reaches one texel outside the image on every border; texelFetch
@@ -75,16 +73,9 @@ void main()
         return;
 
     AF3 c;
-    if (pc.debugMode == 6)
-    {
-        c = FsrRcasLoadF(ASU2(p)).rgb; // EASU only — what did RCAS actually add?
-    }
-    else
-    {
-        AU4 con;
-        FsrRcasCon(con, pc.sharpness);
-        FsrRcasF(c.r, c.g, c.b, AU2(p), con);
-    }
+    AU4 con;
+    FsrRcasCon(con, pc.sharpness);
+    FsrRcasF(c.r, c.g, c.b, AU2(p), con);
 
     // Undo fsr_prepare.comp: gamma 2.0, then the reversible tonemapper.
     // Sharpening can push a channel past 1.0, which would flip the sign of the
@@ -93,13 +84,6 @@ void main()
     c = c * c;
     AF1 m = min(max(max(c.r, c.g), c.b), 1.0 - (1.0 / 1024.0));
     c *= 1.0 / (1.0 - m);
-
-    if (pc.debugMode == 1)
-    {
-        // Cyan, not U0's green: says the FSR 1 chain ran, not the bilinear blit.
-        if (p.x < 2 || p.y < 2 || p.x >= dstSize.x - 2 || p.y >= dstSize.y - 2)
-            c = AF3(0.0, 1.0, 1.0);
-    }
 
     imageStore(dstHdr, p, AF4(c, 1.0));
 }

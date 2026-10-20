@@ -13,8 +13,8 @@ by how well each ray's direction agrees with the texel's own direction:
 
   irradiance — weight = max(0, dot(texelDir, rayDir)).  The stored value is the
       cosine-weighted MEAN incoming radiance, i.e. E/pi, not E.  That is the
-      same quantity gi_ray.rgen's per-pixel average produces, so r_rtGIStrength
-      keeps its meaning across the r_rtGIProbes A/B instead of needing a
+      same quantity a per-pixel hemisphere average produces, so r_rtGIStrength
+      keeps its meaning at the same value instead of needing a
       silent factor of pi.  Back-face hits are excluded: the inside of a wall
       is not a light source.
   distance  — weight = pow(max(0, dot), distSharpness), a much tighter lobe
@@ -42,7 +42,7 @@ this test can be made here.
 G5b — the irradiance atlas now holds 1 + K buckets of tiles and this pass fills
 each of them from its own scratch image, at the SAME hysteresis.  That is the
 whole trick: the fast bucket's rays were traced with every flickering light held
-at its peak L̂, so its content is time-invariant and a slow EMA is exactly right
+at its peak Lhat, so its content is time-invariant and a slow EMA is exactly right
 for it.  The flicker is reapplied in gi_probe_resolve.comp from a gain the CPU
 refreshes every frame, which is why the ~9 s EMA no longer low-passes it away.
 

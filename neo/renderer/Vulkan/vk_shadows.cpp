@@ -30,24 +30,24 @@ of the original Doom 3 GPL Source Code release.
 
 struct ShadowParamsUBO
 {
-    float invViewProj[16];    // column-major 4x4,  offset   0
-    float lightOrigin[4];     // xyz = pos, w = legacy isotropic radius (max axis), offset  64
-    float _pad0;              // was lightFalloffRadius (r_rtShadowDistanceCutoff, replaced by lightPlanes) // offset  80
-    int numSamples;           // offset  84
-    uint32_t frameIndex;      // offset  88
-    float rayBias;            // offset  92
-    uint32_t rayCullMask;     // 0xFD excludes player     // offset  96
-    int debugMode;            // 0=normal 1..3=diag        // offset 100
-    int32_t scissorOffsetX;   // dispatch rect origin X // offset 104
-    int32_t scissorOffsetY;   // dispatch rect origin Y // offset 108
-    int32_t screenWidth;      // full framebuffer width  // offset 112
-    int32_t screenHeight;     // full framebuffer height // offset 116
-    int32_t shadowLayer;      // P1b: shadow mask array layer for this light // offset 120
-    float biasErrCoeff;       // was _pad0 — depth-reconstruction bias floor, margin*ulp/znear // offset 124
+    float invViewProj[16];  // column-major 4x4,  offset   0
+    float lightOrigin[4];   // xyz = pos, w = legacy isotropic radius (max axis), offset  64
+    float _pad0;            // was lightFalloffRadius (r_rtShadowDistanceCutoff, replaced by lightPlanes) // offset  80
+    int numSamples;         // offset  84
+    uint32_t frameIndex;    // offset  88
+    float rayBias;          // offset  92
+    uint32_t rayCullMask;   // 0xFD excludes player     // offset  96
+    int debugMode;          // 0=normal 1..3=diag        // offset 100
+    int32_t scissorOffsetX; // dispatch rect origin X // offset 104
+    int32_t scissorOffsetY; // dispatch rect origin Y // offset 108
+    int32_t screenWidth;    // full framebuffer width  // offset 112
+    int32_t screenHeight;   // full framebuffer height // offset 116
+    int32_t shadowLayer;    // P1b: shadow mask array layer for this light // offset 120
+    float biasErrCoeff;     // was _pad0 — depth-reconstruction bias floor, margin*ulp/znear // offset 124
 
     // --- Phase 9 / Stage 1: anisotropic soft-shadow light shape ---
     // Point lights: world-axis-aligned ellipsoid semi-axes (matches the box-extents
-    // convention already used by vol_march.comp / vk_gi.cpp — light.axis rotation is
+    // convention already used by the froxel fill / vk_gi.cpp — light.axis rotation is
     // intentionally ignored for point lights, consistent with those passes).
     // Projected lights: aperture half-extents along the light's own right/up axes,
     // scaled to the near-clip ("start") plane so softness reflects the physical
@@ -120,25 +120,9 @@ static idCVar r_rtShadowSoftRadiusMin("r_rtShadowSoftRadiusMin", "0.0", CVAR_REN
                                       "minimum RT soft-shadow source radius after scaling");
 static idCVar r_rtShadowSoftRadiusMax("r_rtShadowSoftRadiusMax", "6.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                       "maximum RT soft-shadow source radius after scaling");
-static idCVar r_rtShadowMinSamples(
-    "r_rtShadowMinSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-    "minimum RT shadow rays per pixel (default 1 keeps baseline behavior; raise only for diagnostics)");
-static idCVar r_rtShadowVolumeCull(
-    "r_rtShadowVolumeCull", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-    "skip RT shadow rays for pixels outside the light volume (1); 0 traces every pixel in the "
-    "light scissor, for A/B. r_rtShadowDebugMode 11 shows what is culled");
 // World units the light volume is grown by before culling, so the plane test can never
 // clip a pixel the falloff/projection textures still light.
 static const float VK_RT_SHADOW_CULL_PAD = 4.0f;
-static idCVar r_rtShadowTemporalJitter(
-    "r_rtShadowTemporalJitter", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-    "vary RT shadow sampling pattern per frame (0 = stable pattern for shimmer diagnostics)");
-static idCVar r_rtShadowStablePattern(
-    "r_rtShadowStablePattern", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-    "use stable per-light spatial jitter seed (reduces temporal shimmer; can retain static speckle)");
-static idCVar r_rtShadowTemporalJitterMinSamples(
-    "r_rtShadowTemporalJitterMinSamples", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-    "minimum effective RT shadow samples required before enabling per-frame temporal jitter");
 static idCVar r_rtShadowBlurEnable("r_rtShadowBlurEnable", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                                    "enable RT shadow blur pass (diagnostic: 0 bypasses blur)");
 static idCVar r_rtShadowBlurDepthAware("r_rtShadowBlurDepthAware", "1",
@@ -153,11 +137,6 @@ static idCVar r_rtShadowBlurMinRect(
     "(P1a perf: tiny lights don't visibly benefit; 0 = always blur)");
 static idCVar r_vkRTDebugLights("r_vkRTDebugLights", "0", CVAR_RENDERER | CVAR_INTEGER,
                                 "log Vulkan RT shadow dispatch state (0=off, 1=filtered lights)");
-static idCVar r_vkRTLightLogN("r_vkRTLightLogN", "0", CVAR_RENDERER | CVAR_INTEGER,
-                              "limit Vulkan RT light debug logging to N frames after enable (0 = unlimited)");
-static idCVar r_vkRTDebugLightFilter(
-    "r_vkRTDebugLightFilter", "", CVAR_RENDERER | CVAR_ARCHIVE,
-    "substring filter for r_vkRTDebugLights using light shader name (empty = all lights)");
 
 static idCVar r_rtShadowPlayerExcludeDist(
     "r_rtShadowPlayerExcludeDist", "30", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
@@ -174,10 +153,9 @@ static idCVar r_rtShadowPlayerExcludeDist(
 // are standing against — both land in the same band — so the sphere also cancelled the
 // player's shadow on that wall, punching a hole in it.  Doubles as the off switch: 0 here
 // (or pm_showFirstPersonBody 0) disables the exclusion on both paths.
-idCVar r_rtPlayerExcludeRadius(
-    "r_rtPlayerExcludeRadius", "40", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
-    "fallback radius for culling the player body from shadow/GI rays, used only when the "
-    "G-buffer surface class is unavailable; 0 disables the exclusion entirely");
+idCVar r_rtPlayerExcludeRadius("r_rtPlayerExcludeRadius", "40", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                               "fallback radius for culling the player body from shadow/GI rays, used only when the "
+                               "G-buffer surface class is unavailable; 0 disables the exclusion entirely");
 
 /*
 ===============
@@ -209,9 +187,7 @@ extern bool VK_RT_PlayerSuppressesLight(int lightId);
 static idCVar r_rtShadowDebugMode(
     "r_rtShadowDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
     "visualize RT shadow pass internals in the shadow mask: "
-    "0=normal, 1=biasDir.y (floor=white/wall=grey), 2=got-surface-normal (white) vs camera-fallback (black), "
-    "3=dot(biasDir,lightDir) mapped 0..1; "
-    "5=raw nDotL before clamp (dark=grazing angle=heavy bias pressure), "
+    "0=normal, "
     "9=bias budget (black=base rayBias/nDotL in charge, grey-to-white=the A12 depth-error floor in "
     "charge with brightness = bias / pixel footprint; white means the bias has reached a full pixel "
     "and raising r_rtShadowBiasErrMargin further will start detaching contact shadows), "
@@ -219,21 +195,17 @@ static idCVar r_rtShadowDebugMode(
     "rays; should cover the first-person body and nothing else — view it with "
     "r_rtShadowBlurEnable 0 so the blur doesn't soften the boundary), "
     "11=light-volume cull (traced pixels black, culled pixels lit: every RT-shadowed light should "
-    "vanish; any light still visible is a pixel the cull skipped but the light reaches), "
-    "7=anisotropic cone half-angle sin(U) (tangent-plane 'right' axis), "
-    "8=anisotropic cone half-angle sin(V) (tangent-plane 'up/fwd' axis) — 7/8 together show the "
-    "elliptical soft-shadow cone shape (Phase 9 Stage 1); a spherical point light shows 7==8, an "
-    "elongated fixture or projected-light aperture shows 7!=8.");
+    "vanish; any light still visible is a pixel the cull skipped but the light reaches). The cull "
+    "is unconditional now, so 11 is the only way to check it. "
+    "Retired, now no-ops (numbers kept stable): 1, 2, 3, 5, 7, 8.");
 
-extern idCVar r_vkRTLogCaptureReset;
-
-static bool VK_RTDebugLightMatch(const viewLight_t *vLight)
+// One place decides which modes exist.  Without this a retired number would still
+// read as "a debug view is active" and suppress the blur, giving an unblurred
+// normal shadow mask that looks like a rendering bug rather than a dead cvar value.
+static int VK_RT_ValidShadowDebugMode(void)
 {
-    const char *filter = r_vkRTDebugLightFilter.GetString();
-    if (!filter || !filter[0])
-        return true;
-    const char *lightName = (vLight && vLight->lightShader) ? vLight->lightShader->GetName() : "";
-    return idStr::FindText(lightName, filter, false) >= 0;
+    const int mode = r_rtShadowDebugMode.GetInteger();
+    return (mode == 9 || mode == 10 || mode == 11) ? mode : 0;
 }
 
 static bool VK_RTDebugLightFrameAllowed(bool debugEnabled)
@@ -241,14 +213,6 @@ static bool VK_RTDebugLightFrameAllowed(bool debugEnabled)
     static bool s_wasEnabled = false;
     static int s_startFrame = -1;
     static int s_lastResetToken = -1;
-
-    const int resetToken = r_vkRTLogCaptureReset.GetInteger();
-    if (s_lastResetToken != resetToken)
-    {
-        s_lastResetToken = resetToken;
-        s_wasEnabled = false;
-        s_startFrame = -1;
-    }
 
     if (!debugEnabled)
     {
@@ -263,11 +227,7 @@ static bool VK_RTDebugLightFrameAllowed(bool debugEnabled)
         s_startFrame = tr.frameCount;
     }
 
-    const int frameBudget = Max(0, r_vkRTLightLogN.GetInteger());
-    if (frameBudget <= 0)
-        return true;
-
-    return (tr.frameCount - s_startFrame) < frameBudget;
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1047,7 +1007,7 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         {
             // World-axis-aligned ellipsoid semi-axes — same simplification (axis
             // rotation ignored) already used for point-light box tests in
-            // vol_march.comp and vk_gi.cpp, kept consistent here.
+            // vol_froxel_fill.comp and vk_gi.cpp, kept consistent here.
             axisRightHalf = ScaleClampSoft(light.lightRadius.x);
             axisUpHalf = ScaleClampSoft(light.lightRadius.y);
             axisFwdHalf = ScaleClampSoft(light.lightRadius.z);
@@ -1099,7 +1059,7 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         // Stage S2: the same 6 planes the frontend culls interactions with, built from the
         // lightProject the interaction attenuates by, so point and projected lights agree.
         // Cull off writes (0,0,0,-1): every pixel is then 1 unit inside every plane.
-        const bool volumeCull = r_rtShadowVolumeCull.GetBool();
+        const bool volumeCull = true;
         for (int p = 0; p < 6; p++)
         {
             const idPlane &pl = vLight->lightDef->frustum[p];
@@ -1109,32 +1069,9 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
             ubo.lightPlanes[p][3] = volumeCull ? pl[3] - VK_RT_SHADOW_CULL_PAD : -1.0f;
         }
         const int requestedSamples = Max(1, r_rtShadowSamples.GetInteger());
-        const int minSamples = Max(1, r_rtShadowMinSamples.GetInteger());
         ubo.numSamples = requestedSamples;
-        const int jitterMinSamples = Max(1, r_rtShadowTemporalJitterMinSamples.GetInteger());
-        const bool allowTemporalJitter =
-            r_rtShadowTemporalJitter.GetBool() &&
-            (ubo.numSamples >= jitterMinSamples || (r_rtShadowBlurEnable.GetBool() && r_rtShadowBlur.GetInteger() > 0));
-        if (allowTemporalJitter)
-        {
-            if (r_rtShadowStablePattern.GetBool())
-            {
-                // Stable per-light seed derived from quantized light origin.
-                const int sx = idMath::FtoiFast(shadowOrigin.x * 16.0f);
-                const int sy = idMath::FtoiFast(shadowOrigin.y * 16.0f);
-                const int sz = idMath::FtoiFast(shadowOrigin.z * 16.0f);
-                ubo.frameIndex = (uint32_t)(sx * 73856093) ^ (uint32_t)(sy * 19349663) ^ (uint32_t)(sz * 83492791) ^
-                                 (uint32_t)(light.pointLight ? 0x9e3779b9u : 0x85ebca6bu);
-            }
-            else
-            {
-                ubo.frameIndex = (uint32_t)(vk.currentFrame * 100 + tr.frameCount);
-            }
-        }
-        else
-        {
-            ubo.frameIndex = 0u;
-        }
+        ubo.frameIndex = 0u;
+
         ubo.rayBias = r_rtShadowRayBias.GetFloat();
         // A12: worldPos reconstruction error is d^2*ulp/znear; without this floor the
         // bias is swamped at range and the origin self-shadows.  ulp ~6e-8; the margin
@@ -1155,7 +1092,7 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
             const float w = (float)Max(1, (int)vk.renderExtent.width);
             ubo.biasFootprintCoeff = (projXX > 1e-6f) ? (2.0f / (projXX * w)) : 0.0f;
         }
-        ubo.debugMode = r_rtShadowDebugMode.GetInteger();
+        ubo.debugMode = VK_RT_ValidShadowDebugMode();
         ubo.scissorOffsetX = (int32_t)dispatchRect.offset.x;
         ubo.scissorOffsetY = (int32_t)dispatchRect.offset.y;
         // NDC denominator for depth->world reconstruction, so it must be the extent
@@ -1193,22 +1130,21 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         // protect, and the rgen must not spend a fetch deciding that per pixel.
         ubo.playerClassValid = (VK_RT_ShadowClassValid() && ubo.playerExcludeRadius > 0.0f) ? 1 : 0;
 
-        if (VK_RTDebugLightFrameAllowed(r_vkRTDebugLights.GetInteger() > 0) && VK_RTDebugLightMatch(vLight))
+        if (VK_RTDebugLightFrameAllowed(r_vkRTDebugLights.GetInteger() > 0))
         {
             const char *lightName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
             common->Printf("VK RT LIGHT DBG: frame=%d light='%s' point=%d origin=(%.2f,%.2f,%.2f) rad=(%.2f,%.2f,%.2f) "
-                           "volCull=%d samples=%d reqSamples=%d minSamples=%d bias=%.4f jitter=%d effJitter=%d "
-                           "jitterMinSamples=%d stable=%d seed=%u softRadius=%.3f kind=%u axisHalf=(%.3f,%.3f,%.3f) "
+                           "volCull=%d samples=%d reqSamples=%d  bias=%.4f  "
+                           "seed=%u softRadius=%.3f kind=%u axisHalf=(%.3f,%.3f,%.3f) "
                            "blurEn=%d blurRad=%d depthAware=%d depthTh=%.5f "
                            "mask=%ux%u layer=%d\n",
                            tr.frameCount, lightName, light.pointLight ? 1 : 0, shadowOrigin.x, shadowOrigin.y,
                            shadowOrigin.z, light.lightRadius.x, light.lightRadius.y, light.lightRadius.z,
-                           volumeCull ? 1 : 0, ubo.numSamples, requestedSamples, minSamples, ubo.rayBias,
-                           r_rtShadowTemporalJitter.GetBool() ? 1 : 0, allowTemporalJitter ? 1 : 0, jitterMinSamples,
-                           r_rtShadowStablePattern.GetBool() ? 1 : 0, ubo.frameIndex, softRadius, ubo.lightKind,
-                           axisRightHalf, axisUpHalf, axisFwdHalf, r_rtShadowBlurEnable.GetBool() ? 1 : 0,
-                           r_rtShadowBlur.GetInteger(), r_rtShadowBlurDepthAware.GetBool() ? 1 : 0,
-                           r_rtShadowBlurDepthThreshold.GetFloat(), sm.width, sm.height, (int)ubo.shadowLayer);
+                           volumeCull ? 1 : 0, ubo.numSamples, requestedSamples, ubo.rayBias, ubo.frameIndex,
+                           softRadius, ubo.lightKind, axisRightHalf, axisUpHalf, axisFwdHalf,
+                           r_rtShadowBlurEnable.GetBool() ? 1 : 0, r_rtShadowBlur.GetInteger(),
+                           r_rtShadowBlurDepthAware.GetBool() ? 1 : 0, r_rtShadowBlurDepthThreshold.GetFloat(),
+                           sm.width, sm.height, (int)ubo.shadowLayer);
         }
 
         memcpy(uboMapped, &ubo, sizeof(ShadowParamsUBO));
@@ -1227,10 +1163,9 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         if (r_vkLogRT.GetInteger() >= 1)
         {
             common->Printf(
-                "VK RT TRACE: frame=%u uboOff=%u dims=%ux%u (scissor=%d,%d) layer=%d bias=%.4f fIdx=%u samples=%d "
-                "jitter=%d\n",
+                "VK RT TRACE: frame=%u uboOff=%u dims=%ux%u (scissor=%d,%d) layer=%d bias=%.4f fIdx=%u samples=%d\n",
                 frameIdx, uboOff, dispatchW, dispatchH, dispatchRect.offset.x, dispatchRect.offset.y,
-                (int)ubo.shadowLayer, ubo.rayBias, ubo.frameIndex, ubo.numSamples, allowTemporalJitter ? 1 : 0);
+                (int)ubo.shadowLayer, ubo.rayBias, ubo.frameIndex, ubo.numSamples);
             fflush(NULL);
         }
 
@@ -1254,9 +1189,9 @@ static int VK_RT_ShadowBlurRadius(void)
         vkRT.shadowMask[vk.currentFrame].blurTempImage == VK_NULL_HANDLE)
         return 0;
     // Every r_rtShadowDebugMode writes its diagnostic INTO the shadow mask, so the blur
-    // was filtering the instrument as well as the signal — which is why the binary
-    // 0/1 of mode 2 read as a smooth gradient.  A blurred debug view is a lie.
-    if (r_rtShadowDebugMode.GetInteger() != 0)
+    // was filtering the instrument as well as the signal, turning mode 10's binary 0/1
+    // into a smooth gradient.  A blurred debug view is a lie.
+    if (VK_RT_ValidShadowDebugMode() != 0)
         return 0;
     return Min(8, Max(0, r_rtShadowBlur.GetInteger()));
 }
@@ -1553,9 +1488,8 @@ void VK_RT_ShadowBatchClearLayers(VkCommandBuffer cmd)
 
 static bool VK_RT_ShadowBatchUsable(void)
 {
-    return vkRT.isInitialized && vkRT.tlas[vk.currentFrame].isValid &&
-           r_useRayTracing.GetBool() && r_rtShadows.GetBool() &&
-           vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE;
+    return vkRT.isInitialized && vkRT.tlas[vk.currentFrame].isValid && r_useRayTracing.GetBool() &&
+           r_rtShadows.GetBool() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE;
 }
 
 // Trace + blur one batch.  inLoop: called between vkCmdEndRenderPass and the resume

@@ -269,28 +269,9 @@ idCVar r_flareSize("r_flareSize", "1", CVAR_RENDERER | CVAR_FLOAT, "scale the fl
 idCVar r_useExternalShadows("r_useExternalShadows", "1", CVAR_RENDERER | CVAR_INTEGER,
                             "1 = skip drawing caps when outside the light volume, 2 = force to no caps for testing", 0,
                             2, idCmdSystem::ArgCompletion_Integer<0, 2>);
-idCVar r_vkLogShadowBranch("r_vkLogShadowBranch", "0", CVAR_RENDERER | CVAR_INTEGER,
-                           "Vulkan shadow branch debug: 0=off, 1=basic per-light, 2=detailed per-surface", 0, 2,
-                           idCmdSystem::ArgCompletion_Integer<0, 2>);
-idCVar r_vkShadowFlipOps(
-    "r_vkShadowFlipOps", "0", CVAR_RENDERER | CVAR_BOOL,
-    "Vulkan shadow debug: swap non-mirror/mirror stencil-op pipeline selection to test face-op polarity", 0, 1,
-    idCmdSystem::ArgCompletion_Integer<0, 1>);
 idCVar r_vkShadowStableMode(
     "r_vkShadowStableMode", "0", CVAR_RENDERER | CVAR_BOOL,
     "Vulkan shadow stabilization: force full-volume Z-fail path to reduce view-dependent popping/flicker", 0, 1,
-    idCmdSystem::ArgCompletion_Integer<0, 1>);
-idCVar r_vkLogShadowGeom(
-    "r_vkLogShadowGeom", "0", CVAR_RENDERER | CVAR_INTEGER,
-    "Vulkan shadow geometry debug: 0=off, 1=log per-surface geometry/source signature changes, 2=log every shadow draw",
-    0, 2, idCmdSystem::ArgCompletion_Integer<0, 2>);
-idCVar r_vkShadowFullScissor(
-    "r_vkShadowFullScissor", "0", CVAR_RENDERER | CVAR_BOOL,
-    "Vulkan shadow debug: 1 = draw shadow volumes with full-frame scissor (interactions still use light scissor)", 0, 1,
-    idCmdSystem::ArgCompletion_Integer<0, 1>);
-idCVar r_vkLightFullScissor(
-    "r_vkLightFullScissor", "0", CVAR_RENDERER | CVAR_BOOL,
-    "Vulkan shadow debug: 1 = force full-frame scissor for each whole light pass (clear+shadows+interactions)", 0, 1,
     idCmdSystem::ArgCompletion_Integer<0, 1>);
 idCVar r_vkInsideLightHysteresisEnter(
     "r_vkInsideLightHysteresisEnter", "0.50", CVAR_RENDERER | CVAR_FLOAT,

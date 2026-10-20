@@ -1,6 +1,6 @@
 /* gi_payload.glsl — shared ray payload for the GI ray pipeline.
 
-  Included by gi_ray.rgen, gi_ray.rchit, gi_ray.rahit, gi_ray.rmiss and
+  Included by gi_probe_trace.rgen, gi_ray.rchit, gi_ray.rahit, gi_ray.rmiss and
   gi_probe_trace.rgen before the rayPayloadEXT/rayPayloadInEXT declaration.
 
   Layout (must match across all GI shader stages):
@@ -21,10 +21,9 @@
                       flickering light: the probe wants its transport cached at
                       s = 1 in a separate bucket, the per-pixel path wants the
                       light exactly as it looks this frame, summed as before.
-                 OUT  the fast bucket's radiance, packed.  Zero in per-pixel
-                      mode, which is what keeps r_rtGIProbes 0 unchanged.
+                 OUT  the fast bucket's radiance, packed. 
 
-  20 bytes.  20260906_froxel_probe_gi.md B.2 and G5b.
+  20 bytes.  
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -43,7 +42,7 @@ struct GIPayload {
     uint  fast;     // in: mode bits.  out: packed fast-bucket radiance
 };
 
-// Set by gi_probe_trace.rgen only.  gi_ray.rgen leaves `fast` at 0, so the
+// Set by gi_probe_trace.rgen, the only raygen that traces these rays.  The
 // per-pixel path takes the "sum both buckets into colour" branch by default —
 // the safe direction if a future rgen forgets to initialise the field.
 #define GI_PAYLOAD_PROBE_MODE 0x1u

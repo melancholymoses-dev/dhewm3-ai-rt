@@ -660,41 +660,6 @@ viewLight_t *R_SetLightDefViewLight(idRenderLightLocal *light)
         }
     }
 
-    if (r_vkLogShadowBranch.GetInteger() >= 2)
-    {
-        float shadowDMin = idMath::INFINITY;
-        float shadowDMax = -idMath::INFINITY;
-        for (int i = 0; i < light->numShadowFrustums; i++)
-        {
-            const float d = light->shadowFrustums[i].planes[5].Distance(tr.viewDef->renderView.vieworg);
-            if (d < shadowDMin)
-            {
-                shadowDMin = d;
-            }
-            if (d > shadowDMax)
-            {
-                shadowDMax = d;
-            }
-        }
-        if (light->numShadowFrustums <= 0)
-        {
-            shadowDMin = 0.0f;
-            shadowDMax = 0.0f;
-        }
-
-        const bool changed = !firstSeen && (track.viewInsideLight != vLight->viewInsideLight);
-        if (changed && track.lastLoggedFrame != tr.frameCount)
-        {
-            common->Printf(
-                "VK LIGHT INSIDE CHANGE: lightDef=%p frame=%d %d->%d outsideMask=0x%02X maxPlane=%d maxD=%.3f "
-                "seesBits=0x%X frustums=%d shadowD=[%.3f,%.3f] hyst=[%.3f,%.3f] rawInside=%d\n",
-                light, tr.frameCount, track.viewInsideLight ? 1 : 0, vLight->viewInsideLight ? 1 : 0, outsideMask,
-                maxPlane, maxD, vLight->viewSeesShadowPlaneBits, light->numShadowFrustums, shadowDMin, shadowDMax,
-                hystEnter, hystExit, rawInside ? 1 : 0);
-            track.lastLoggedFrame = tr.frameCount;
-        }
-    }
-
     track.lightDef = light;
     track.viewInsideLight = vLight->viewInsideLight;
     track.maxD = maxD;

@@ -44,7 +44,7 @@ Code release.
 // vec4-packed for the same reason VolFroxelParams is: every member is 16-byte
 // aligned by construction, so std140 has nothing left to surprise us with.
 layout(set = GIPROBE_SET, binding = 2, std140) uniform GIProbeParams {
-    mat4  invViewProj; //   0  GL-convention clip Z, see gip_RayDirForUV
+    mat4  invViewProj; //   0  GL-convention clip Z, like rt_ReconstructWorldPos
     vec4  cameraPosW;  //  64  xyz = eye world position
     vec4  gridOrigin;  //  80  xyz = world pos of baseCell, w = probe spacing
     ivec4 gridDim;     //  96  xyz = Nx,Ny,Nz   w = total probe count
@@ -55,7 +55,7 @@ layout(set = GIPROBE_SET, binding = 2, std140) uniform GIProbeParams {
     ivec4 misc;        // 176  x=debugMode y=useGbufNormal z=visibility w=irradiance buckets (1+K)
     ivec4 screen;      // 192  x=screenW y=screenH z=outW w=outH
     ivec4 rect;        // 208  resolve dispatch rect, output-image space
-    vec4  debug;       // 224  x=debugGain y=probeRadius z=distSharpness w=unused
+    vec4  debug;       // 224  x=unused y=unused z=distSharpness w=unused  TODO:Shrink
     vec4  tune2;       // 240  x=giContrast y=viewBias z=fastGain[0] w=fastGain[1]
 } gp;
 
@@ -151,11 +151,9 @@ bool gip_CellInGrid(ivec3 absCell)
 
 // Round-robin schedule (G1).  updateBase comes from a PER-SLOT counter on the
 // CPU, never tr.frameCount — a frameCount-derived index advances in lockstep
-// with vk.currentFrame and pins each slot to one fixed subset forever, which is
-// the bug that cost the GI checkerboard a session.
+// with vk.currentFrame and pins each slot to one fixed subset forever.
 //
-// The trace rgen and the blend pass must agree on this exactly, so it lives
-// here rather than being open-coded twice.
+// The trace rgen and the blend pass must agree on this exactly
 ivec3 gip_ScheduledCell(int slot)
 {
     int li = (gp.rays.z + slot) % gip_ProbeCount();
@@ -389,23 +387,6 @@ mat3 gip_RandomRotation(uint seed)
     return mat3(t * a.x * a.x + c,       t * a.x * a.y + s * a.z, t * a.x * a.z - s * a.y,
                 t * a.x * a.y - s * a.z, t * a.y * a.y + c,       t * a.y * a.z + s * a.x,
                 t * a.x * a.z + s * a.y, t * a.y * a.z - s * a.x, t * a.z * a.z + c);
-}
-
-// ---------------------------------------------------------------------------
-// Screen ray, for the resolve and its overlays.
-//
-// Same near-plane-minus-EYE construction as vf_RayDirForUV: Doom 3's far plane
-// is infinite (proj[10] = -0.999), so unprojecting at ndcZ = +1 lands thousands
-// of units BEHIND the eye and a near-minus-far direction points backwards.
-// Clip Z is GL-convention [-1,1] and the viewport has negative height, hence
-// the Y flip — mirror rt_ReconstructWorldPos, do not assume Vulkan [0,1] Z.
-// ---------------------------------------------------------------------------
-vec3 gip_RayDirForUV(vec2 uv)
-{
-    vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - 2.0 * uv.y);
-    vec4 nearH = gp.invViewProj * vec4(ndc, -1.0, 1.0);
-    vec3 pNear = nearH.xyz / nearH.w;
-    return normalize(pNear - gp.cameraPosW.xyz);
 }
 
 #endif // GI_PROBE_COMMON_GLSL

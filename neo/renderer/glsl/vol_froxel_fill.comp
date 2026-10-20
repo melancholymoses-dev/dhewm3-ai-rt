@@ -3,11 +3,10 @@
 
 dhewm3-rt Vulkan — vol_froxel_fill.comp — froxel grid in-scattering fill.
 
-One invocation per froxel cell.  Evaluates the same light model as
-vol_march.comp's per-step loop (sphere pre-cull, box/cone containment,
-Henyey-Greenstein phase, cookie/gobo, rayQueryEXT occlusion against the TLAS)
-at the cell's jittered centre, and writes the result as a scattering
-coefficient per unit length — the path integral itself belongs to
+One invocation per froxel cell.  Evaluates the full light model (sphere pre-cull,
+box/cone containment, Henyey-Greenstein phase, cookie/gobo, rayQueryEXT occlusion
+against the TLAS) at the cell's jittered centre, and writes the result as a
+scattering coefficient per unit length — the path integral itself belongs to
 vol_froxel_integrate.comp, not here.
 
 Output — froxelScatter (rgba16f 3D image):
@@ -72,8 +71,7 @@ layout(set = 0, binding = 4, rgba8_snorm) uniform writeonly image3D froxelDir;
 // set=1 binding=3: the shared bindless array. Deliberately NOT
 // `#include "rt_material.glsl"` — that file's rt_InterpolateNormal uses
 // gl_WorldToObjectEXT, a ray-tracing-PIPELINE-only built-in that does not exist
-// in a compute shader. Same reasoning (and the same one-binding declaration) as
-// vol_march.comp.
+// in a compute shader.
 layout(set = 1, binding = 3) uniform sampler2D matTextures[4096];
 
 #include "rt_light_cookie.glsl"
@@ -83,10 +81,9 @@ layout(set = 0, binding = 3, std430) readonly buffer GILightBuf {
     float  bounceScale;
     float  giRadius;
     float  emissiveScale;
-    float  reflAmbientScale;
     int    falloffMode;
     float  falloffReach;
-    float  _pad0[1];
+    float  _pad0[2];
     RTLight lights[RT_LIGHT_MAX_LIGHTS];
     RTLightCookie cookies[RT_LIGHT_MAX_LIGHTS];
 } giLightBuf;
@@ -132,7 +129,6 @@ void main()
     // cull AND the occlusion ray). Written to alpha in place of extinction — see
     // the imageStore at the end.
     int litCount = 0;
-    int occludedProjCount = 0; // debug mode 4: projected-light cone hits killed by the shadow ray
 
     for (int li = 0; li < maxLights; li++)
     {
@@ -142,8 +138,8 @@ void main()
         vec3  lightPos    = giLightBuf.lights[li].posRadius.xyz;
         vec3  emitPos     = giLightBuf.lights[li].emitPos.xyz;
         float sphereRad   = giLightBuf.lights[li].posRadius.w;
-        // G5b: colorIntensity.rgb is L̂ (the running peak) for a flickering light,
-        // so the current colour is L̂ * s. Folded in here rather than at the
+        // G5b: colorIntensity.rgb is Lhat (the running peak) for a flickering light,
+        // so the current colour is Lhat * s. Folded in here rather than at the
         // contrib line so nothing downstream — cookie, phase, class gain — can be
         // reached without it. Missing this makes fan-blade shafts go steady under
         // a strobing fixture while the fixture itself still flickers.
@@ -240,8 +236,6 @@ void main()
         if (rayQueryGetIntersectionTypeEXT(rq, true) !=
             gl_RayQueryCommittedIntersectionNoneEXT)
         {
-            if (lt != 0u)
-                occludedProjCount++;
             continue; // occluded
         }
 
@@ -274,9 +268,7 @@ void main()
     // Alpha is sigma_t, the extinction coefficient the integrate pass
     // exponentiates — except under debug mode 2 where it carries the light count
     // instead (uniform branch, no divergence cost).
-    float alphaOut = (fp.misc.z == 2) ? float(litCount)
-                   : (fp.misc.z == 4) ? float(occludedProjCount)
-                                      : fp.densities.x;
+    float alphaOut = (fp.misc.z == 2) ? float(litCount) : fp.densities.x;
 
     imageStore(froxelScatter, cell, vec4(scatter, alphaOut));
 
