@@ -3,23 +3,17 @@
 
 dhewm3-rt Vulkan — vol_composite.frag — Volumetric scatter composite.
 
-Samples the RGBA16F volumetric scatter buffer built by vol_march.comp and
-outputs it for additive blending onto the main framebuffer.  This pass runs
+Samples the RGBA16F volumetric scatter buffer built by vol_froxel_resolve.comp
+and outputs it for additive blending onto the main framebuffer.  This pass runs
 once per view (after GI composite, before per-light interaction draws).
 
-The vol_march.comp compute shader already applies density and strength
-multipliers when storing, so this shader is a simple passthrough in normal
-mode. r_rtVolDebugMode (0/2) switches to a replace-blend debug pipeline
-(vkRT.volCompositeDebugPipeline, see vk_vol.cpp) so these visualizations
-aren't muddied by additively blending onto the already-lit scene.
+The resolve already applies density and strength multipliers when storing, so
+this shader is a passthrough in normal mode.  debugMode 2 is selected when a
+r_rtVolFroxelDebug overlay is active: the composite binds a replace-blend
+pipeline so the visualization isn't muddied by adding onto the already-lit scene.
 
 Uses the same fullscreen triangle vertex shader as the GI composite pass
 (gi_composite.vert).
-
-Phase 7.2 — Volumetric Lighting. Debug modes added 2026-08-23 alongside the
-self-attenuation fix (see vol_march.comp) to make the per-pixel path
-transmittance inspectable directly instead of only visible as a change in
-the final composited brightness.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -46,12 +40,9 @@ layout(location = 0) out vec4 fragColor;
 
 void main()
 {
-    // UV must come from the SCREEN size, not textureSize(u_VolMap): since P8 the
-    // sampled image may be the half-res march buffer (r_rtVolHalfRes 1 with
-    // r_rtVolBilateral 0), in which case dividing by its own dimensions would put
-    // gl_FragCoord into [0,2] and sample edge-clamped garbage over most of the
-    // screen.  The vol image always covers the full view, just at its own
-    // resolution, so the sampler's LINEAR filter does the upsample.
+    // UV comes from the SCREEN size, not textureSize(u_VolMap): the vol image is
+    // display-sized and written identity-mapped into the render sub-rect, which is
+    // not necessarily the whole image.
     vec2 uv  = gl_FragCoord.xy * pc.invScreenSize;
     vec4 vol = texture(u_VolMap, uv);
 
@@ -64,7 +55,7 @@ void main()
         return;
     }
 
-    // .a is path transmittance (see vol_march.comp), not coverage/opacity.
+    // .a is path transmittance, not coverage/opacity.
     // With r_rtVolAttenuateBackground the composite binds a pipeline whose
     // dstColorBlendFactor is SRC_ALPHA, giving dst = airlight + T*dst — the
     // attenuating half of the transport equation, with the same sigma_t the

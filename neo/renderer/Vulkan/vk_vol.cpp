@@ -1,23 +1,22 @@
 /*
 ===========================================================================
 
-dhewm3-rt Vulkan — vk_vol.cpp — Volumetric light scattering pipeline.
+dhewm3-rt Vulkan — vk_vol.cpp — Volumetric medium parameters and composite.
 
-Phase 7.2: single-scatter ray-marched volumetrics using GL_EXT_ray_query
-in a compute shader.  Each view-ray is stepped from the camera to the
-depth-reconstructed surface, firing occlusion queries toward nearby lights
-and accumulating in-scattering with a Henyey-Greenstein phase function.
+Owns the single-scatter medium coefficients (extinction, albedo, per-class
+radiance gains and phase parameters), the screen-sized `volBuffer` the
+in-scattering lands in, and the fullscreen pass that blends it onto the frame.
+The integrator itself is the froxel grid in vk_vol_froxel.cpp, which is the only
+thing that writes volBuffer — the per-pixel ray march it replaced was deleted in
+Phase 4 of 20261010_cleanup_polish.md, along with its temporal EMA and bilateral
+upsample.
 
 Dispatch order in the RT frame (outside render pass):
   ... VK_RT_DispatchGIAlbedoMod ...
-  VK_RT_DispatchVolumetrics  ← this file
+  VK_RT_DispatchVolFroxel{Fill,Integrate,Resolve}  ← vk_vol_froxel.cpp
   (resume render pass)
   VK_RT_CompositeGI
   VK_RT_CompositeVolumetrics ← this file (inside render pass, additive)
-
-Architecture:
-  volMarch*    — compute pipeline (vol_march.comp + ray queries via TLAS)
-  volComposite* — graphics pipeline (gi_composite.vert + vol_composite.frag)
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -31,7 +30,6 @@ Code release.
 
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
-#include "renderer/RenderWorld_local.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_profile.h"
 #include "renderer/Vulkan/vk_raytracing.h"
@@ -46,42 +44,22 @@ Code release.
 idCVar r_rtVol("r_rtVol", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                "Enable volumetric light scattering (Phase 7.2). On by default.");
 
-// P8 (rt_optimization_tuning.md): march the volumetric medium at reduced resolution
-// and resolve back to full res with a depth-aware upsample.  Volumetric fog is
-// inherently low-frequency, so the march is the one pass where dropping resolution
-// costs almost nothing visually — and it is ~4x the cost of everything downstream.
-static idCVar r_rtVolHalfRes("r_rtVolHalfRes", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-                             "March volumetrics at half resolution and bilateral-upsample (1), or at full "
-                             "resolution like before (0).  Takes effect on the next frame; the switch costs one "
-                             "device-idle stall to reallocate the vol images.");
-
-static idCVar r_rtVolUpsampleDepthSigma(
-    "r_rtVolUpsampleDepthSigma", "24.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
-    "Depth falloff (world units) for the volumetric bilateral upsample when r_rtVolHalfRes is 1. "
-    "Lower = stricter edge preservation but blockier fog near silhouettes; higher = smoother but "
-    "fog can bleed across depth discontinuities. Ignored at full res.");
-
-static idCVar r_rtVolSamples("r_rtVolSamples", "8", CVAR_RENDERER | CVAR_INTEGER,
-                             "Ray-march steps per pixel (safe default: 8; high-end: 16)");
-
 // NOT static, from here down through the flashlight block: vk_vol_froxel.cpp externs
-// every medium/phase/strength knob so the froxel fill evaluates the identical light
-// model as the march.
+// every medium/phase/strength knob so the froxel fill reads them directly.
 
-// Interleaved Gradient Noise (see the jitter comment in vol_march.comp) is a fixed,
-// low-discrepancy diagonal pattern — spatially coherent by design, which is exactly
-// what fixed the original "volumetric beams read as noise" problem, but that same
-// regularity reads as visible diagonal striping/fringing along march edges once the
-// eye locks onto the grid. Blending in a little decorrelated white noise (wang_hash,
-// same per-pixel/per-frame seed idiom used elsewhere in the RT shaders) breaks up the
-// periodic pattern without fully reintroducing the beam-decorrelation problem, as
-// long as the mix stays small. 0 = pure IGN (original striping), 1 = pure white noise
-// (original beam-decorrelation problem) — default is a soften, not a replacement.
+// Interleaved Gradient Noise is a fixed, low-discrepancy diagonal pattern —
+// spatially coherent by design, which is what fixed the original "volumetric beams
+// read as noise" problem, but that same regularity reads as diagonal striping once
+// the eye locks onto the grid.  A little decorrelated white noise breaks the
+// periodic pattern up without fully reintroducing beam decorrelation, as long as the
+// mix stays small.  0 = pure IGN (striping), 1 = pure white noise.
 idCVar r_rtVolWhiteNoiseMix("r_rtVolWhiteNoiseMix", "0.025", CVAR_RENDERER | CVAR_FLOAT,
-                            "Fraction of white noise blended into the IGN march-step jitter to soften visible "
-                            "dither stripes/fringes (0 = pure IGN, 1 = pure white noise). See vol_march.comp.");
+                            "Fraction of white noise blended into the IGN sampling jitter to soften visible "
+                            "dither stripes/fringes (0 = pure IGN, 1 = pure white noise).");
 
-idCVar r_rtVolMaxDist("r_rtVolMaxDist", "512.0", CVAR_RENDERER | CVAR_FLOAT, "Max ray-march distance in world units");
+idCVar r_rtVolMaxDist("r_rtVolMaxDist", "512.0", CVAR_RENDERER | CVAR_FLOAT,
+                      "Far cap on the volumetric medium's reach in world units.  Also bounds the froxel grid "
+                      "and the vol light selection.");
 
 idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_INTEGER,
                         "Max lights in the dedicated volumetric light selection (separate from "
@@ -145,8 +123,8 @@ idCVar r_rtVolFlashlightAnisotropy("r_rtVolFlashlightAnisotropy", "0.7", CVAR_RE
                                    "Henyey-Greenstein g parameter for the flashlight (0=isotropic, 1=full forward).");
 
 // ---------------------------------------------------------------------------
-// Medium coefficient helpers — shared by the march (this file) and the froxel
-// fill, so both integrators are fed identical constants.
+// Medium coefficient helpers.  Defined here rather than in vk_vol_froxel.cpp so the
+// composite and the integrator read one source for the same constants.
 // ---------------------------------------------------------------------------
 
 bool VK_RT_VolCompositeAfterSurfaces(void)
@@ -187,172 +165,14 @@ float VK_RT_VolScatterScale(int lightClass)
     return sigmaS * Max(0.0f, gain);
 }
 
-// Shared by both dumps.
-//
-// Albedo is the ONLY energy-conservation constraint, and it is the global
-// sigma_s/sigma_t — the per-class gains are not part of it.  A gain scales the
-// LIGHT's radiance, and a brighter light creates nothing; only a medium that
-// scatters more than it extinguishes does.  So `scatterScale/sigma_t` is albedo
-// times gain and means nothing on its own: at a perfectly conservative albedo 0.75
-// with a directed gain of 60 it reads 45, which is not a warning about anything.
-//
-// What IS worth seeing is the RATIO between class gains.  The medium cannot know
-// what kind of light is shining through it, so differing gains are pure art
-// direction — legitimate, but only if it is a deliberate choice rather than a
-// leftover.  That is what the spread line reports.
-void VK_RT_VolPrintMedium(float sigmaT, float albedo, float scatterPoint, float scatterDirected, float scatterFlash)
-{
-    const float halfDist = (sigmaT > 1e-9f) ? (idMath::Log(2.0f) / sigmaT) : 0.0f;
-    common->Printf("  medium: sigma_t=%.6f  sigma_s=%.6f  albedo=%.3f%s   T=0.5 at %.0f units\n", sigmaT,
-                   sigmaT * albedo, albedo, (albedo > 1.0f) ? " <-- >1, CREATES ENERGY" : "", halfDist);
-
-    const float sigmaS = sigmaT * albedo;
-    const float scales[3] = {scatterPoint, scatterDirected, scatterFlash};
-    const char *names[3] = {"point     ", "directed  ", "flashlight"};
-    float minGain = 1e30f, maxGain = 0.0f;
-    for (int i = 0; i < 3; i++)
-    {
-        const float gain = (sigmaS > 1e-12f) ? (scales[i] / sigmaS) : 0.0f;
-        minGain = Min(minGain, gain);
-        maxGain = Max(maxGain, gain);
-        common->Printf("  %s: scatterScale=%.6f  radiance gain=%.1fx\n", names[i], scales[i], gain);
-    }
-    if (minGain > 1e-4f)
-        common->Printf("  class gain spread: %.1fx (medium is identical for all three — pure art direction)\n",
-                       maxGain / minGain);
-}
-
-// ---------------------------------------------------------------------------
-// VolParamsUBO — must match the std140 VolParams block in vol_march.comp.
-//
-//   mat4  invViewProj       offset   0  size 64
-//   vec4  cameraPosW        offset  64  size 16  (xyz = camera pos, w unused)
-//   uint  frameIndex        offset  80  size  4
-//   int   numSamples        offset  84  size  4
-//   int   maxLights         offset  88  size  4
-//   float extinction        offset  92  size  4  (sigma_t — Beer-Lambert, medium-wide)
-//   float anisotropy        offset  96  size  4  (point lights HG)
-//   float maxDist           offset 100  size  4
-//   float scatterPoint      offset 104  size  4  (sigma_s * point gain)
-//   int   scissorOffX       offset 108  size  4
-//   int   scissorOffY       offset 112  size  4
-//   int   scissorExtX       offset 116  size  4
-//   int   scissorExtY       offset 120  size  4
-//   int   screenWidth       offset 124  size  4
-//   int   screenHeight      offset 128  size  4
-//   float scatterFlash         offset 132  size  4  (sigma_s * flashlight gain)
-//   float flashlightAniso      offset 136  size  4
-//   float albedo               offset 140  size  4  (dump/diagnostic only)
-//   float scatterDirected      offset 144  size  4  (sigma_s * directed gain)
-//   float directedAnisotropy   offset 148  size  4
-//   float _pad                 offset 152  size  4
-//   float isotropicMix         offset 156  size  4  (two-lobe phase blend)
-//   total: 160 bytes
-//   --- P8: half-res march ---
-//   int   marchWidth           offset 160  size  4
-//   int   marchHeight          offset 164  size  4
-//   int   marchScale           offset 168  size  4
-//   float whiteNoiseMix        offset 172  size  4  (repurposed former pad)
-//   total: 176 bytes
-// ---------------------------------------------------------------------------
-
-struct VolParamsUBO
-{
-    float invViewProj[16];      // 0
-    float cameraPosX;           // 64
-    float cameraPosY;           // 68
-    float cameraPosZ;           // 72
-    float cameraPad;            // 76 — pads vec4 cameraPosW in GLSL
-    uint32_t frameIndex;        // 80
-    int32_t numSamples;         // 84
-    int32_t maxLights;          // 88
-    float extinction;           // 92  sigma_t
-    float anisotropy;           // 96
-    float maxDist;              // 100
-    float scatterPoint;         // 104 sigma_s * point gain
-    int32_t scissorOffsetX;     // 108
-    int32_t scissorOffsetY;     // 112
-    int32_t scissorExtentX;     // 116
-    int32_t scissorExtentY;     // 120
-    int32_t screenWidth;        // 124
-    int32_t screenHeight;       // 128
-    float scatterFlash;         // 132 sigma_s * flashlight gain
-    float flashlightAnisotropy; // 136
-    float albedo;               // 140 diagnostic only
-    float scatterDirected;      // 144 sigma_s * directed gain
-    float directedAnisotropy;   // 148
-    float _uboPad;              // 152
-    float isotropicMix;         // 156 — repurposed former pad, see r_rtVolIsotropicMix
-    // --- P8: half-res march ---
-    // screenWidth/Height above stay FULL res (depth fetch + NDC reconstruction);
-    // these describe the volBuf the march actually writes.
-    int32_t marchWidth;  // 160
-    int32_t marchHeight; // 164
-    int32_t marchScale;  // 168  1 = full res, 2 = half res
-    // Repurposed former pad float (was _uboPad2, always 0) — same offset, no size
-    // change, no descriptor/assert change needed. See r_rtVolWhiteNoiseMix.
-    float whiteNoiseMix; // 172
-};
-static_assert(sizeof(VolParamsUBO) == 176, "VolParamsUBO size mismatch");
-
-// ---------------------------------------------------------------------------
-// Push-constant block for vol_bilateral.comp.  All scalars — no vec/ivec types —
-// so the layout is a plain 4-byte-packed struct with no alignment surprises.
-// ---------------------------------------------------------------------------
-struct BilateralPC
-{
-    int32_t offX, offY, extX, extY; // dispatch rect, FULL res (output space)
-    int32_t screenW, screenH;       // full-res output dimensions
-    float sigma;                    // Gaussian sigma in full-res pixels
-    int32_t marchScale;             // 1 = input is full res, 2 = half res (P8)
-    int32_t marchW, marchH;         // input (volIn) dimensions
-    float depthSigma;               // depth falloff, world units
-    float linNum;                   // -proj[14] \  viewDist = |linNum / (2*d - 1 + linAdd)|
-    float linAdd;                   //  proj[10] /
-};
-static_assert(sizeof(BilateralPC) == 52, "BilateralPC must match vol_bilateral.comp's push block");
-
 // ---------------------------------------------------------------------------
 // Forward declarations from other vk_*.cpp modules
 // ---------------------------------------------------------------------------
 
-extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memProps,
-                            VkBuffer *outBuffer, VkDeviceMemory *outMemory);
 extern VkShaderModule VK_LoadSPIRV(const char *path);
-extern bool VK_AllocUBOForShadow(VkBuffer *outBuf, uint32_t *outOffset, void **outMapped);
 
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
-
-// ---------------------------------------------------------------------------
-// P8 — march resolution
-//
-// The march (volBuffer) and the temporal history live at full/marchScale; the
-// bilateral pass upsamples back to full res, so everything downstream of it —
-// including the compositor — is unchanged.  s_volMarchScale caches what the images
-// were actually built at, so a mid-session r_rtVolHalfRes flip can be detected and
-// the images reallocated instead of silently running with a mismatched scale.
-// ---------------------------------------------------------------------------
-
-static int s_volMarchScale = 1;
-
-static int VK_RT_VolRequestedScale(void)
-{
-    // Froxel mode forces full res: its resolve is a single trilinear fetch per
-    // pixel, so marching at half res saves nothing, and the bilateral upsample a
-    // half-res buffer would need is exactly what the grid's own trilinear filter
-    // replaces. Toggling r_rtVolFroxel therefore triggers the same one-frame
-    // realloc that toggling r_rtVolHalfRes does.
-    if (VK_RT_VolFroxelActive())
-        return 1;
-    return r_rtVolHalfRes.GetBool() ? 2 : 1;
-}
-
-static uint32_t VK_RT_VolScaleDim(uint32_t dim, int scale)
-{
-    // Round up: a 1079-tall viewport must still be fully covered at half res.
-    return Max(1u, (dim + (uint32_t)scale - 1u) / (uint32_t)scale);
-}
 
 // ---------------------------------------------------------------------------
 // Image helpers
@@ -473,7 +293,7 @@ static void VK_RT_CreateVolImages(uint32_t width, uint32_t height)
             vkDestroyFence(vk.device, fence, NULL);
             vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
         }
-        // Default: composite reads raw volBuffer; updated by DispatchTemporalResolveVol each frame.
+        // Default read view; the froxel resolve re-claims it each frame.
         vkRT.volReadView[i] = vkRT.volBuffer[i].view;
     }
 }
@@ -505,133 +325,6 @@ static void VK_RT_DestroyVolImages(void)
 }
 
 // ---------------------------------------------------------------------------
-// VK_RT_InitVolMarchPipeline
-// Compute pipeline for vol_march.comp — reads TLAS + depth, writes volBuf.
-// Descriptor layout mirrors vol_march.comp bindings:
-//   set 0, binding 0: ACCELERATION_STRUCTURE_KHR (TLAS)
-//   set 0, binding 1: STORAGE_IMAGE              (volBuf write)
-//   set 0, binding 2: COMBINED_IMAGE_SAMPLER     (depth)
-//   set 0, binding 3: UNIFORM_BUFFER_DYNAMIC     (VolParamsUBO)
-//   set 0, binding 4: STORAGE_BUFFER             (VolLightBuf SSBO -- vol's own selection,
-//                                                  NOT vkRT.giLightSsbo, see vk_raytracing.h)
-//   set 1: vkRT.matDescLayout — shared material table (rt_material.glsl), same set
-//          every RT hit shader binds. Stage 3 (rt_projected_light_cookies.md) added
-//          this so vol_march.comp can sample a light's cookie image; only its
-//          bindless matTextures[4096] is actually used here.
-// ---------------------------------------------------------------------------
-
-static void VK_RT_InitVolMarchPipeline(void)
-{
-    // --- Descriptor set layout ---
-    VkDescriptorSetLayoutBinding bindings[5] = {};
-
-    bindings[0].binding = 0;
-    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    bindings[1].binding = 1;
-    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    bindings[1].descriptorCount = 1;
-    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    bindings[2].binding = 2;
-    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[2].descriptorCount = 1;
-    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    bindings[3].binding = 3;
-    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-    bindings[3].descriptorCount = 1;
-    bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    bindings[4].binding = 4;
-    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[4].descriptorCount = 1;
-    bindings[4].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    VkDescriptorSetLayoutCreateInfo layoutInfo = {};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 5;
-    layoutInfo.pBindings = bindings;
-    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.volMarchDescLayout));
-
-    // --- Pipeline layout ---
-    // set=1 is the shared material table (matDescLayout) — see VK_RT_InitMaterialTable,
-    // which vk_backend.cpp guarantees runs before VK_RT_InitVolumetrics.
-    VkDescriptorSetLayout volMarchLayouts[2] = {vkRT.volMarchDescLayout, vkRT.matDescLayout};
-    VkPipelineLayoutCreateInfo plInfo = {};
-    plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plInfo.setLayoutCount = 2;
-    plInfo.pSetLayouts = volMarchLayouts;
-    VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.volMarchPipelineLayout));
-
-    // --- Compute shader module ---
-    VkShaderModule compMod = VK_LoadSPIRV("glprogs/glsl/vol_march.comp.spv");
-    if (compMod == VK_NULL_HANDLE)
-    {
-        common->Warning("VK RT Vol: failed to load vol_march.comp.spv — volumetrics disabled");
-        return;
-    }
-
-    VkPipelineShaderStageCreateInfo stage = {};
-    stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    stage.module = compMod;
-    stage.pName = "main";
-
-    VkComputePipelineCreateInfo pipelineInfo = {};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipelineInfo.stage = stage;
-    pipelineInfo.layout = vkRT.volMarchPipelineLayout;
-    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.volMarchPipeline));
-
-    vkDestroyShaderModule(vk.device, compMod, NULL);
-
-    // --- Descriptor pool ---
-    VkDescriptorPoolSize poolSizes[5] = {};
-    poolSizes[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
-    poolSizes[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
-    poolSizes[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
-    poolSizes[3] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
-    poolSizes[4] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
-
-    VkDescriptorPoolCreateInfo poolInfo = {};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
-    poolInfo.poolSizeCount = 5;
-    poolInfo.pPoolSizes = poolSizes;
-    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.volMarchDescPool));
-
-    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-        layouts[i] = vkRT.volMarchDescLayout;
-
-    VkDescriptorSetAllocateInfo dsAlloc = {};
-    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool = vkRT.volMarchDescPool;
-    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
-    dsAlloc.pSetLayouts = layouts;
-    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.volMarchDescSets));
-
-    // Create the bilinear-clamp sampler shared with the composite pass.
-    if (vkRT.volSampler == VK_NULL_HANDLE)
-    {
-        VkSamplerCreateInfo si = {};
-        si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        si.magFilter = VK_FILTER_LINEAR;
-        si.minFilter = VK_FILTER_LINEAR;
-        si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-        si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        VK_CHECK(vkCreateSampler(vk.device, &si, NULL, &vkRT.volSampler));
-    }
-
-    common->Printf("VK RT Vol: march pipeline initialized\n");
-}
-
-// ---------------------------------------------------------------------------
 // VK_RT_InitVolCompositePipeline
 // Fullscreen additive pipeline blending volBuf onto the framebuffer.
 // Mirrors the GI composite pipeline exactly; uses:
@@ -655,10 +348,9 @@ static void VK_RT_InitVolCompositePipeline(void)
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.volCompositeDescLayout));
 
     // --- Pipeline layout ---
-    // P8: the sampled vol image is no longer guaranteed to be screen-sized (with
-    // r_rtVolBilateral 0 the compositor reads the march-res image directly), so the
-    // fragment shader can no longer derive its UV from textureSize().  Push the
-    // screen size instead.
+    // The fragment shader takes the screen size by push constant rather than
+    // textureSize(): the vol image is written identity-mapped into the render
+    // sub-rect, which is not necessarily the whole image.
     VkPushConstantRange compPush = {};
     compPush.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     compPush.offset = 0;
@@ -787,9 +479,9 @@ static void VK_RT_InitVolCompositePipeline(void)
     VK_CHECK(
         vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.volCompositeAttenPipeline));
 
-    // --- Debug variant: blend disabled (replace), so r_rtVolDebugMode's
-    // transmittance/scatter visualization isn't muddied by additive blending onto
-    // the already-lit scene. Mirrors reflCompositeDebugPipeline in vk_reflections.cpp. ---
+    // --- Debug variant: blend disabled (replace), so a froxel overlay isn't muddied
+    // by additive blending onto the already-lit scene.  Mirrors
+    // reflCompositeDebugPipeline in vk_reflections.cpp. ---
     VkPipelineColorBlendAttachmentState replaceBlend = {};
     replaceBlend.blendEnable = VK_FALSE;
     replaceBlend.colorWriteMask =
@@ -830,855 +522,22 @@ static void VK_RT_InitVolCompositePipeline(void)
     dsAlloc.pSetLayouts = compLayouts;
     VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.volCompositeDescSets));
 
+    // Bilinear-clamp sampler.  Created here because this is now the first vol pass
+    // to initialise; the froxel resolve assumes it already exists.
+    if (vkRT.volSampler == VK_NULL_HANDLE)
+    {
+        VkSamplerCreateInfo si = {};
+        si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        si.magFilter = VK_FILTER_LINEAR;
+        si.minFilter = VK_FILTER_LINEAR;
+        si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        VK_CHECK(vkCreateSampler(vk.device, &si, NULL, &vkRT.volSampler));
+    }
+
     common->Printf("VK RT Vol: composite pipeline initialized\n");
-}
-
-// ===========================================================================
-// Volumetric temporal EMA (Phase 7.2 — step 8)
-//
-// Reuses gi_temporal_resolve.comp.spv — the shader is identical (rgba16f
-// storage images, same push-constant layout).  No new shader file needed.
-// ===========================================================================
-
-static idCVar r_rtVolTemporal("r_rtVolTemporal", "1", CVAR_RENDERER | CVAR_BOOL,
-                              "Enable temporal EMA accumulation for volumetrics (requires r_rtVol 1).");
-
-static idCVar r_rtVolTemporalAlpha("r_rtVolTemporalAlpha", "0.5", CVAR_RENDERER | CVAR_FLOAT,
-                                   "Vol EMA blend factor: 0=history only, 1=current only. "
-                                   "0.1-0.2 recommended; lower = smoother but more ghosting.");
-
-static VkRect2D s_volTemporalDispatchRect[VK_MAX_FRAMES_IN_FLIGHT] = {};
-
-// Mirrors VK_RT_ComputeViewDispatchRect from vk_temporal.cpp (static there, duplicated here).
-//
-// P8: `scale` divides the rect down into march space for the passes that operate on
-// the reduced-resolution images (march, temporal).  The offset floors and the extent
-// is grown to cover the rounding, so the scaled rect always covers at least the
-// full-res rect — a march pixel that any full-res pixel maps into must be written,
-// or the upsample reads a texel this frame never touched.
-static VkRect2D VK_RT_Vol_ComputeDispatchRect(const viewDef_t *viewDef, int scale = 1)
-{
-    const int w = (int)vk.renderExtent.width;
-    const int h = (int)vk.renderExtent.height;
-    const idScreenRect &s = viewDef->scissor;
-
-    VkRect2D r;
-    r.offset.x = idMath::ClampInt(0, w - 1, s.x1);
-    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - s.y2);
-
-    const int rw = s.x2 - s.x1 + 1;
-    const int rh = s.y2 - s.y1 + 1;
-    if (rw <= 0 || rh <= 0)
-        return VkRect2D{{0, 0}, {0, 0}};
-
-    r.extent.width = (uint32_t)idMath::ClampInt(1, w - r.offset.x, rw);
-    r.extent.height = (uint32_t)idMath::ClampInt(1, h - r.offset.y, rh);
-
-    if (scale > 1)
-    {
-        const int32_t x0 = r.offset.x / scale;
-        const int32_t y0 = r.offset.y / scale;
-        const int32_t x1 = ((int32_t)r.offset.x + (int32_t)r.extent.width + scale - 1) / scale;
-        const int32_t y1 = ((int32_t)r.offset.y + (int32_t)r.extent.height + scale - 1) / scale;
-
-        const int32_t mw = (int32_t)VK_RT_VolScaleDim((uint32_t)w, scale);
-        const int32_t mh = (int32_t)VK_RT_VolScaleDim((uint32_t)h, scale);
-
-        r.offset.x = x0;
-        r.offset.y = y0;
-        r.extent.width = (uint32_t)idMath::ClampInt(1, mw - x0, x1 - x0);
-        r.extent.height = (uint32_t)idMath::ClampInt(1, mh - y0, y1 - y0);
-    }
-    return r;
-}
-
-// ---------------------------------------------------------------------------
-// History image lifecycle
-// ---------------------------------------------------------------------------
-
-static bool VK_RT_AllocVolHistoryImage(vkRTImage_t &img, uint32_t width, uint32_t height)
-{
-    img.width = width;
-    img.height = height;
-
-    VkImageCreateInfo imgCI = {};
-    imgCI.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imgCI.imageType = VK_IMAGE_TYPE_2D;
-    imgCI.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-    imgCI.extent = {width, height, 1};
-    imgCI.mipLevels = 1;
-    imgCI.arrayLayers = 1;
-    imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
-    imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imgCI.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    VK_CHECK(vkCreateImage(vk.device, &imgCI, NULL, &img.image));
-
-    VkMemoryRequirements memReq;
-    vkGetImageMemoryRequirements(vk.device, img.image, &memReq);
-    VkPhysicalDeviceMemoryProperties memProps;
-    vkGetPhysicalDeviceMemoryProperties(vk.physicalDevice, &memProps);
-    uint32_t memTypeIdx = UINT32_MAX;
-    for (uint32_t m = 0; m < memProps.memoryTypeCount; m++)
-    {
-        if ((memReq.memoryTypeBits & (1u << m)) &&
-            (memProps.memoryTypes[m].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
-        {
-            memTypeIdx = m;
-            break;
-        }
-    }
-    if (memTypeIdx == UINT32_MAX)
-    {
-        common->Warning("VK RT Vol Temporal: no device-local memory for history image");
-        vkDestroyImage(vk.device, img.image, NULL);
-        img.image = VK_NULL_HANDLE;
-        return false;
-    }
-
-    VkMemoryAllocateInfo allocI = {};
-    allocI.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocI.allocationSize = memReq.size;
-    allocI.memoryTypeIndex = memTypeIdx;
-    VK_CHECK(vkAllocateMemory(vk.device, &allocI, NULL, &img.memory));
-    VK_CHECK(vkBindImageMemory(vk.device, img.image, img.memory, 0));
-
-    VkImageViewCreateInfo viewCI = {};
-    viewCI.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewCI.image = img.image;
-    viewCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewCI.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-    viewCI.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    VK_CHECK(vkCreateImageView(vk.device, &viewCI, NULL, &img.view));
-
-    // Transition UNDEFINED → GENERAL and clear to black.
-    {
-        VkCommandBufferAllocateInfo cbAlloc = {};
-        cbAlloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        cbAlloc.commandPool = vk.commandPool;
-        cbAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        cbAlloc.commandBufferCount = 1;
-        VkCommandBuffer tmpCmd = VK_NULL_HANDLE;
-        VK_CHECK(vkAllocateCommandBuffers(vk.device, &cbAlloc, &tmpCmd));
-
-        VkCommandBufferBeginInfo beginI = {};
-        beginI.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        beginI.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(tmpCmd, &beginI);
-
-        VkImageSubresourceRange subRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        VkImageMemoryBarrier b1 = {};
-        b1.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        b1.srcAccessMask = 0;
-        b1.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        b1.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        b1.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-        b1.image = img.image;
-        b1.subresourceRange = subRange;
-        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0,
-                             NULL, 1, &b1);
-
-        VkClearColorValue clearBlack = {};
-        vkCmdClearColorImage(tmpCmd, img.image, VK_IMAGE_LAYOUT_GENERAL, &clearBlack, 1, &subRange);
-
-        VkImageMemoryBarrier b2 = {};
-        b2.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        b2.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        b2.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        b2.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-        b2.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-        b2.image = img.image;
-        b2.subresourceRange = subRange;
-        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL,
-                             0, NULL, 1, &b2);
-
-        vkEndCommandBuffer(tmpCmd);
-        VkFenceCreateInfo fenceCI = {};
-        fenceCI.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        VkFence fence = VK_NULL_HANDLE;
-        VK_CHECK(vkCreateFence(vk.device, &fenceCI, NULL, &fence));
-        VkSubmitInfo submitI = {};
-        submitI.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submitI.commandBufferCount = 1;
-        submitI.pCommandBuffers = &tmpCmd;
-        vkQueueSubmit(vk.graphicsQueue, 1, &submitI, fence);
-        VK_Prof_WaitForFences(VKPROF_WAIT_VOL, 1, &fence, VK_TRUE, UINT64_MAX);
-        vkDestroyFence(vk.device, fence, NULL);
-        vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
-    }
-    return true;
-}
-
-static void VK_RT_FreeVolHistoryImage(vkRTImage_t &img)
-{
-    if (img.view != VK_NULL_HANDLE)
-    {
-        vkDestroyImageView(vk.device, img.view, NULL);
-        img.view = VK_NULL_HANDLE;
-    }
-    if (img.image != VK_NULL_HANDLE)
-    {
-        vkDestroyImage(vk.device, img.image, NULL);
-        img.image = VK_NULL_HANDLE;
-    }
-    if (img.memory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(vk.device, img.memory, NULL);
-        img.memory = VK_NULL_HANDLE;
-    }
-    img.width = img.height = 0;
-}
-
-static void VK_RT_CreateVolHistoryImages(uint32_t width, uint32_t height)
-{
-    // Single shared history image now (see vk_raytracing.h) — both frame-in-flight
-    // slots' descriptor sets and volReadView entries point at the same image.
-    if (!VK_RT_AllocVolHistoryImage(vkRT.volHistory, width, height))
-        common->Warning("VK RT Vol Temporal: failed to allocate history image");
-    vkRT.volHistoryValid = false;
-    vkRT.volPrevCamPos.Zero();
-    vkRT.volPrevCamFwd.Zero();
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-        vkRT.volReadView[i] = vkRT.volHistory.view;
-}
-
-static void VK_RT_DestroyVolHistoryImages(void)
-{
-    VK_RT_FreeVolHistoryImage(vkRT.volHistory);
-    vkRT.volHistoryValid = false;
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-        // Fall back to raw volBuffer so composite doesn't reference freed history.
-        vkRT.volReadView[i] = vkRT.volBuffer[i].view;
-}
-
-// ---------------------------------------------------------------------------
-// VK_RT_InitVolTemporalPipeline
-// ---------------------------------------------------------------------------
-
-static void VK_RT_InitVolTemporalPipeline(void)
-{
-    VkDescriptorSetLayoutBinding bindings[2] = {};
-    bindings[0].binding = 0;
-    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    bindings[1].binding = 1;
-    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    bindings[1].descriptorCount = 1;
-    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    VkDescriptorSetLayoutCreateInfo layoutCI = {};
-    layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutCI.bindingCount = 2;
-    layoutCI.pBindings = bindings;
-    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.volTemporalDescLayout));
-
-    VkPushConstantRange pushRange = {};
-    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pushRange.offset = 0;
-    pushRange.size = 32; // alpha(4)+pad(12)+scissorOffset(8)+scissorExtent(8)
-
-    VkPipelineLayoutCreateInfo plCI = {};
-    plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plCI.setLayoutCount = 1;
-    plCI.pSetLayouts = &vkRT.volTemporalDescLayout;
-    plCI.pushConstantRangeCount = 1;
-    plCI.pPushConstantRanges = &pushRange;
-    VK_CHECK(vkCreatePipelineLayout(vk.device, &plCI, NULL, &vkRT.volTemporalPipelineLayout));
-
-    // Reuse gi_temporal_resolve.comp.spv — identical rgba16f EMA logic.
-    VkShaderModule compModule = VK_LoadSPIRV("glprogs/glsl/gi_temporal_resolve.comp.spv");
-    if (compModule == VK_NULL_HANDLE)
-    {
-        common->Warning("VK RT Vol Temporal: failed to load gi_temporal_resolve.comp.spv — temporal disabled");
-        return;
-    }
-
-    VkPipelineShaderStageCreateInfo stageCI = {};
-    stageCI.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stageCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    stageCI.module = compModule;
-    stageCI.pName = "main";
-
-    VkComputePipelineCreateInfo pipeCI = {};
-    pipeCI.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipeCI.stage = stageCI;
-    pipeCI.layout = vkRT.volTemporalPipelineLayout;
-    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipeCI, NULL, &vkRT.volTemporalPipeline));
-    vkDestroyShaderModule(vk.device, compModule, NULL);
-
-    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * VK_MAX_FRAMES_IN_FLIGHT};
-    VkDescriptorPoolCreateInfo poolCI = {};
-    poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolCI.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
-    poolCI.poolSizeCount = 1;
-    poolCI.pPoolSizes = &poolSize;
-    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &vkRT.volTemporalDescPool));
-
-    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-        layouts[i] = vkRT.volTemporalDescLayout;
-    VkDescriptorSetAllocateInfo dsAlloc = {};
-    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool = vkRT.volTemporalDescPool;
-    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
-    dsAlloc.pSetLayouts = layouts;
-    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.volTemporalDescSets));
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-        vkRT.volTemporalDescSetLastUpdatedFrameCount[i] = -1;
-
-    common->Printf("VK RT Vol Temporal: EMA pipeline initialized (reusing gi_temporal_resolve.comp.spv)\n");
-}
-
-// ---------------------------------------------------------------------------
-// Public entry points — vol temporal
-// ---------------------------------------------------------------------------
-
-void VK_RT_InitVolTemporal(void)
-{
-    VK_RT_InitVolTemporalPipeline();
-    // P8: the EMA runs on the march result, so the history matches the march
-    // resolution, not the screen.  VK_RT_ResizeVolumetrics ran before this and has
-    // already set s_volMarchScale.
-    VK_RT_CreateVolHistoryImages(VK_RT_VolScaleDim(vk.swapchainExtent.width, s_volMarchScale),
-                                 VK_RT_VolScaleDim(vk.swapchainExtent.height, s_volMarchScale));
-}
-
-void VK_RT_ShutdownVolTemporal(void)
-{
-    VK_RT_DestroyVolHistoryImages();
-    if (vkRT.volTemporalPipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(vk.device, vkRT.volTemporalPipeline, NULL);
-        vkRT.volTemporalPipeline = VK_NULL_HANDLE;
-    }
-    if (vkRT.volTemporalPipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(vk.device, vkRT.volTemporalPipelineLayout, NULL);
-        vkRT.volTemporalPipelineLayout = VK_NULL_HANDLE;
-    }
-    if (vkRT.volTemporalDescPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(vk.device, vkRT.volTemporalDescPool, NULL);
-        vkRT.volTemporalDescPool = VK_NULL_HANDLE;
-    }
-    if (vkRT.volTemporalDescLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(vk.device, vkRT.volTemporalDescLayout, NULL);
-        vkRT.volTemporalDescLayout = VK_NULL_HANDLE;
-    }
-}
-
-void VK_RT_ResizeVolTemporal(uint32_t width, uint32_t height)
-{
-    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_VOL);
-    VK_RT_DestroyVolHistoryImages();
-    VK_RT_CreateVolHistoryImages(width, height);
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-        vkRT.volTemporalDescSetLastUpdatedFrameCount[i] = -1;
-    vkRT.volHistoryValid = false;
-}
-
-// ---------------------------------------------------------------------------
-// VK_RT_DispatchTemporalResolveVol
-// ---------------------------------------------------------------------------
-
-void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *viewDef)
-{
-    if (!vkRT.isInitialized)
-        return;
-
-    // Froxel path: skip. A screen-space EMA on top of a froxel resolve would
-    // double-smooth and re-import exactly the motion ghosting this arc exists to
-    // remove — froxel-space accumulation is F4's job. The resolve points
-    // volReadView at volBuffer itself, so nothing downstream is left dangling.
-    if (VK_RT_VolFroxelActive())
-        return;
-
-    const int frameIdx = vk.currentFrame;
-
-    if (!r_useRayTracing.GetBool() || !r_rtVol.GetBool() || !r_rtVolTemporal.GetBool())
-    {
-        if (vkRT.volBuffer[frameIdx].view != VK_NULL_HANDLE)
-            vkRT.volReadView[frameIdx] = vkRT.volBuffer[frameIdx].view;
-        return;
-    }
-    if (vkRT.volTemporalPipeline == VK_NULL_HANDLE)
-    {
-        common->Warning("VK RT Vol Temporal: pipeline is NULL, skipping dispatch");
-        return;
-    }
-
-    // P8: the history image lives at march resolution, so this rect must too.
-    const VkRect2D dispatchRect = VK_RT_Vol_ComputeDispatchRect(viewDef, s_volMarchScale);
-    s_volTemporalDispatchRect[frameIdx] = dispatchRect;
-    if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
-        return;
-
-    vkRTImage_t &current = vkRT.volBuffer[frameIdx];
-    vkRTImage_t &history = vkRT.volHistory; // single shared image — see vk_raytracing.h
-    if (current.image == VK_NULL_HANDLE || history.image == VK_NULL_HANDLE)
-    {
-        if (r_vkLogRT.GetInteger() >= 1)
-            common->Printf("VK RT Vol Temporal: skip — images not ready (slot %d)\n", frameIdx);
-        return;
-    }
-
-    // History is shared across both frame-in-flight slots — see the identical
-    // barrier in VK_RT_DispatchTemporalResolveAO (vk_temporal.cpp) for why this
-    // is needed.
-    {
-        VkMemoryBarrier mb = {};
-        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        mb.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
-    }
-
-    // --- Camera-cut detection ---
-    vkRTCameraCutResult_t cut =
-        VK_RT_DetectCameraCut(viewDef, vkRT.volPrevCamPos, vkRT.volPrevCamFwd, vkRT.volHistoryValid, "Vol");
-
-    float effectiveAlpha = 1.0f;
-    if (vkRT.volHistoryValid)
-    {
-        if (!cut.isCut)
-            effectiveAlpha = idMath::ClampFloat(0.0f, 1.0f, r_rtVolTemporalAlpha.GetFloat());
-        else if (r_vkLogRT.GetInteger() >= 1)
-            common->Printf("VK RT Vol Temporal: camera cut slot=%d posDelta=%.3f angleDelta=%.3f — resetting history\n",
-                           frameIdx, cut.posDelta, cut.angleDelta);
-    }
-    vkRT.volHistoryValid = true;
-
-    // --- Update descriptor set ---
-    if (vkRT.volTemporalDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount)
-    {
-        VkDescriptorImageInfo currInfo = {};
-        currInfo.imageView = current.view;
-        currInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-        VkDescriptorImageInfo histInfo = {};
-        histInfo.imageView = history.view;
-        histInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-        VkWriteDescriptorSet writes[2] = {};
-        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].dstSet = vkRT.volTemporalDescSets[frameIdx];
-        writes[0].dstBinding = 0;
-        writes[0].descriptorCount = 1;
-        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[0].pImageInfo = &currInfo;
-        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet = vkRT.volTemporalDescSets[frameIdx];
-        writes[1].dstBinding = 1;
-        writes[1].descriptorCount = 1;
-        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[1].pImageInfo = &histInfo;
-
-        vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
-        vkRT.volTemporalDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
-    }
-
-    // --- Push constants ---
-    struct
-    {
-        float alpha;
-        float pad[3];
-        int32_t sx, sy, ex, ey;
-    } pc;
-    pc.alpha = effectiveAlpha;
-    pc.pad[0] = pc.pad[1] = pc.pad[2] = 0.0f;
-    pc.sx = (int32_t)dispatchRect.offset.x;
-    pc.sy = (int32_t)dispatchRect.offset.y;
-    pc.ex = (int32_t)dispatchRect.extent.width;
-    pc.ey = (int32_t)dispatchRect.extent.height;
-
-    // --- Dispatch ---
-    const uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
-    const uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volTemporalPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volTemporalPipelineLayout, 0, 1,
-                            &vkRT.volTemporalDescSets[frameIdx], 0, NULL);
-    vkCmdPushConstants(cmd, vkRT.volTemporalPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 32, &pc);
-    vkCmdDispatch(cmd, groupsX, groupsY, 1);
-
-    if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Vol Temporal: dispatch slot=%d alpha=%.3f rect=(%d,%d %u,%u)\n", frameIdx, effectiveAlpha,
-                       dispatchRect.offset.x, dispatchRect.offset.y, (unsigned int)dispatchRect.extent.width,
-                       (unsigned int)dispatchRect.extent.height);
-
-    // --- Barrier: volHistory compute write → fragment read (for composite) ---
-    {
-        VkMemoryBarrier mb = {};
-        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
-                             &mb, 0, NULL, 0, NULL);
-    }
-
-    vkRT.volReadView[frameIdx] = history.view;
-}
-
-// ===========================================================================
-// Volumetric bilateral filter (Phase 7.2 — step 10)
-//
-// Spatial Gaussian filter applied after temporal EMA.
-// Reads volHistory (storage image), writes to volBlurred.
-// CompositeVolumetrics reads volBlurred when this pass is active.
-// ===========================================================================
-
-static idCVar r_rtVolBilateral("r_rtVolBilateral", "1", CVAR_RENDERER | CVAR_BOOL,
-                               "Enable spatial Gaussian filter on volumetric result (reduces grain).");
-
-static idCVar r_rtVolBilateralSigma("r_rtVolBilateralSigma", "2.0", CVAR_RENDERER | CVAR_FLOAT,
-                                    "Gaussian sigma in pixels for the vol spatial filter. "
-                                    "Higher = smoother but softer. Radius = ceil(2*sigma); default 2.0 → 9×9 kernel.");
-
-// ---------------------------------------------------------------------------
-// VK_RT_InitVolBilateralPipeline
-// Descriptor layout mirrors vol_bilateral.comp:
-//   binding 0: STORAGE_IMAGE readonly     (volHistory / volIn — march res)
-//   binding 1: STORAGE_IMAGE              (volBlurred / volOut — full res)
-//   binding 2: COMBINED_IMAGE_SAMPLER     (depth — joint bilateral weights, P8)
-// Push constants: sizeof(BilateralPC)
-// ---------------------------------------------------------------------------
-
-static void VK_RT_InitVolBilateralPipeline(void)
-{
-    VkDescriptorSetLayoutBinding bindings[3] = {};
-
-    bindings[0].binding = 0;
-    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    bindings[1].binding = 1;
-    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    bindings[1].descriptorCount = 1;
-    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    bindings[2].binding = 2;
-    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[2].descriptorCount = 1;
-    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    VkDescriptorSetLayoutCreateInfo layoutCI = {};
-    layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutCI.bindingCount = 3;
-    layoutCI.pBindings = bindings;
-    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.volBilateralDescLayout));
-
-    VkPushConstantRange pushRange = {};
-    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pushRange.offset = 0;
-    pushRange.size = sizeof(BilateralPC);
-
-    VkPipelineLayoutCreateInfo plCI = {};
-    plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plCI.setLayoutCount = 1;
-    plCI.pSetLayouts = &vkRT.volBilateralDescLayout;
-    plCI.pushConstantRangeCount = 1;
-    plCI.pPushConstantRanges = &pushRange;
-    VK_CHECK(vkCreatePipelineLayout(vk.device, &plCI, NULL, &vkRT.volBilateralPipelineLayout));
-
-    VkShaderModule compMod = VK_LoadSPIRV("glprogs/glsl/vol_bilateral.comp.spv");
-    if (compMod == VK_NULL_HANDLE)
-    {
-        common->Warning("VK RT Vol Bilateral: failed to load vol_bilateral.comp.spv — filter disabled");
-        return;
-    }
-
-    VkPipelineShaderStageCreateInfo stageCI = {};
-    stageCI.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stageCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    stageCI.module = compMod;
-    stageCI.pName = "main";
-
-    VkComputePipelineCreateInfo pipeCI = {};
-    pipeCI.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipeCI.stage = stageCI;
-    pipeCI.layout = vkRT.volBilateralPipelineLayout;
-    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipeCI, NULL, &vkRT.volBilateralPipeline));
-    vkDestroyShaderModule(vk.device, compMod, NULL);
-
-    VkDescriptorPoolSize poolSizes[2] = {
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2u * (uint32_t)VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT},
-    };
-
-    VkDescriptorPoolCreateInfo poolCI = {};
-    poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolCI.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
-    poolCI.poolSizeCount = 2;
-    poolCI.pPoolSizes = poolSizes;
-    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &vkRT.volBilateralDescPool));
-
-    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-        layouts[i] = vkRT.volBilateralDescLayout;
-
-    VkDescriptorSetAllocateInfo dsAlloc = {};
-    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool = vkRT.volBilateralDescPool;
-    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
-    dsAlloc.pSetLayouts = layouts;
-    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.volBilateralDescSets));
-
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-        vkRT.volBilateralDescSetLastUpdatedFrameCount[i] = -1;
-
-    common->Printf("VK RT Vol Bilateral: pipeline initialized\n");
-}
-
-// ---------------------------------------------------------------------------
-// Public entry points — vol bilateral
-// ---------------------------------------------------------------------------
-
-void VK_RT_InitVolBilateral(void)
-{
-    VK_RT_InitVolBilateralPipeline();
-    // Allocate blurred output images at current swapchain size.
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        if (!VK_RT_AllocVolHistoryImage(vkRT.volBlurred[i], vk.swapchainExtent.width, vk.swapchainExtent.height))
-            common->Warning("VK RT Vol Bilateral: failed to allocate volBlurred slot %d", i);
-    }
-}
-
-void VK_RT_ShutdownVolBilateral(void)
-{
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-        VK_RT_FreeVolHistoryImage(vkRT.volBlurred[i]);
-
-    if (vkRT.volBilateralPipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(vk.device, vkRT.volBilateralPipeline, NULL);
-        vkRT.volBilateralPipeline = VK_NULL_HANDLE;
-    }
-    if (vkRT.volBilateralPipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(vk.device, vkRT.volBilateralPipelineLayout, NULL);
-        vkRT.volBilateralPipelineLayout = VK_NULL_HANDLE;
-    }
-    if (vkRT.volBilateralDescPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(vk.device, vkRT.volBilateralDescPool, NULL);
-        vkRT.volBilateralDescPool = VK_NULL_HANDLE;
-    }
-    if (vkRT.volBilateralDescLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(vk.device, vkRT.volBilateralDescLayout, NULL);
-        vkRT.volBilateralDescLayout = VK_NULL_HANDLE;
-    }
-}
-
-void VK_RT_ResizeVolBilateral(uint32_t width, uint32_t height)
-{
-    VK_Prof_DeviceWaitIdle(VKPROF_WAIT_VOL);
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        VK_RT_FreeVolHistoryImage(vkRT.volBlurred[i]);
-        VK_RT_AllocVolHistoryImage(vkRT.volBlurred[i], width, height);
-        vkRT.volBilateralDescSetLastUpdatedFrameCount[i] = -1;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// VK_RT_DispatchVolBilateral
-// ---------------------------------------------------------------------------
-
-void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
-{
-    if (!vkRT.isInitialized)
-        return;
-    if (!r_useRayTracing.GetBool() || !r_rtVol.GetBool())
-        return;
-    // Froxel path: skip. This pass is a depth-aware upsample, and the grid's own
-    // trilinear filter already does that job in XY — running both would just blur
-    // an already-full-res image.
-    if (VK_RT_VolFroxelActive())
-        return;
-    if (vkRT.volBilateralPipeline == VK_NULL_HANDLE)
-        return;
-
-    // With r_rtVolBilateral 0 the pass is skipped entirely.  At half res that leaves
-    // volReadView pointing at the march-res image; the compositor handles that (it
-    // derives UV from the pushed screen size, not the image size) and the sampler's
-    // LINEAR filter gives a plain bilinear upsample.  Useful as the "no filter at
-    // all" reference — it shows what the joint bilateral is actually buying.
-    if (!r_rtVolBilateral.GetBool())
-        return;
-
-    const int frameIdx = vk.currentFrame;
-
-    vkRTImage_t &histImg = vkRT.volHistory; // single shared image — see vk_raytracing.h
-    vkRTImage_t &blurredImg = vkRT.volBlurred[frameIdx];
-
-    if (histImg.image == VK_NULL_HANDLE || blurredImg.image == VK_NULL_HANDLE)
-        return;
-
-    // Input is whatever the temporal pass left as the current result: the history
-    // image when temporal is on, otherwise the raw march output.  Both are at march
-    // resolution, so the upsample source dimensions come from the image itself.
-    vkRTImage_t &srcImg = r_rtVolTemporal.GetBool() ? histImg : vkRT.volBuffer[frameIdx];
-    if (srcImg.image == VK_NULL_HANDLE)
-        return;
-
-    // This pass writes at FULL resolution (it is the upsample), so its rect is the
-    // unscaled one even when the source is half res.
-    const VkRect2D dispatchRect = VK_RT_Vol_ComputeDispatchRect(viewDef);
-    if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
-        return;
-
-    const bool depthAware = (s_volMarchScale > 1);
-
-    VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
-    if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
-        vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
-        depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
-
-    // Barrier: ensure the temporal (or march) compute write is visible to our read.
-    {
-        VkMemoryBarrier mb = {};
-        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb,
-                             0, NULL, 0, NULL);
-    }
-
-    // P8: this pass now samples depth, so it needs the same ATTACHMENT → READ_ONLY
-    // round-trip every other depth-reading RT pass does.  Only when the weights are
-    // actually used — at full res the descriptor is still bound but never read, so
-    // there is no reason to pay the transition.
-    if (depthAware)
-    {
-        VkImageMemoryBarrier depthToRead = {};
-        depthToRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        depthToRead.srcAccessMask =
-            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        depthToRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        depthToRead.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        depthToRead.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        depthToRead.image = vk.depthImage;
-        depthToRead.subresourceRange = {depthAspect, 0, 1, 0, 1};
-        vkCmdPipelineBarrier(cmd,
-                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &depthToRead);
-    }
-
-    // Update descriptor set when resources change.  srcImg flips between the history
-    // and the raw march buffer with r_rtVolTemporal, so key on the view, not just the
-    // frame count.
-    static VkImageView s_lastBilateralSrc[VK_MAX_FRAMES_IN_FLIGHT] = {};
-    if (vkRT.volBilateralDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount ||
-        s_lastBilateralSrc[frameIdx] != srcImg.view)
-    {
-        VkDescriptorImageInfo inInfo = {};
-        inInfo.imageView = srcImg.view;
-        inInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-        VkDescriptorImageInfo outInfo = {};
-        outInfo.imageView = blurredImg.view;
-        outInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-        VkDescriptorImageInfo depthInfo = {};
-        depthInfo.sampler = vkRT.depthSampler;
-        depthInfo.imageView = vk.depthSampledView;
-        depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-
-        VkWriteDescriptorSet writes[3] = {};
-
-        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].dstSet = vkRT.volBilateralDescSets[frameIdx];
-        writes[0].dstBinding = 0;
-        writes[0].descriptorCount = 1;
-        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[0].pImageInfo = &inInfo;
-
-        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet = vkRT.volBilateralDescSets[frameIdx];
-        writes[1].dstBinding = 1;
-        writes[1].descriptorCount = 1;
-        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[1].pImageInfo = &outInfo;
-
-        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[2].dstSet = vkRT.volBilateralDescSets[frameIdx];
-        writes[2].dstBinding = 2;
-        writes[2].descriptorCount = 1;
-        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[2].pImageInfo = &depthInfo;
-
-        vkUpdateDescriptorSets(vk.device, 3, writes, 0, NULL);
-        vkRT.volBilateralDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
-        s_lastBilateralSrc[frameIdx] = srcImg.view;
-    }
-
-    // Push constants.
-    BilateralPC pc = {};
-    pc.offX = (int32_t)dispatchRect.offset.x;
-    pc.offY = (int32_t)dispatchRect.offset.y;
-    pc.extX = (int32_t)dispatchRect.extent.width;
-    pc.extY = (int32_t)dispatchRect.extent.height;
-    pc.screenW = (int32_t)vk.renderExtent.width;
-    pc.screenH = (int32_t)vk.renderExtent.height;
-    pc.sigma = idMath::ClampFloat(0.5f, 8.0f, r_rtVolBilateralSigma.GetFloat());
-    pc.marchScale = s_volMarchScale;
-    pc.marchW = (int32_t)srcImg.width;
-    pc.marchH = (int32_t)srcImg.height;
-    pc.depthSigma = Max(0.01f, r_rtVolUpsampleDepthSigma.GetFloat());
-
-    // Coefficients to invert the depth buffer back to view distance:
-    //   ndcZ = 2*d - 1,  viewZ = -proj[14] / (ndcZ + proj[10]),  dist = |viewZ|
-    // Taken from this view's projection so it tracks r_znear / fov changes.
-    pc.linNum = -viewDef->projectionMatrix[14];
-    pc.linAdd = viewDef->projectionMatrix[10];
-
-    // Dispatch (full-res output).
-    const uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
-    const uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
-
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volBilateralPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volBilateralPipelineLayout, 0, 1,
-                            &vkRT.volBilateralDescSets[frameIdx], 0, NULL);
-    vkCmdPushConstants(cmd, vkRT.volBilateralPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(BilateralPC), &pc);
-    vkCmdDispatch(cmd, groupsX, groupsY, 1);
-
-    // Barrier: bilateral write → fragment read (for composite).
-    {
-        VkMemoryBarrier mb = {};
-        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
-                             &mb, 0, NULL, 0, NULL);
-    }
-
-    // Depth barrier: restore ATTACHMENT_OPTIMAL for the render pass that follows.
-    if (depthAware)
-    {
-        VkImageMemoryBarrier depthRestore = {};
-        depthRestore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        depthRestore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        depthRestore.dstAccessMask =
-            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        depthRestore.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        depthRestore.image = vk.depthImage;
-        depthRestore.subresourceRange = {depthAspect, 0, 1, 0, 1};
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0,
-                             0, NULL, 0, NULL, 1, &depthRestore);
-    }
-
-    // Composite now reads the filtered, full-res result.
-    vkRT.volReadView[frameIdx] = blurredImg.view;
-
-    if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Vol Bilateral: slot=%d rect=(%d,%d %u,%u) src=%dx%d scale=%d depthAware=%d\n", frameIdx,
-                       pc.offX, pc.offY, (unsigned)pc.extX, (unsigned)pc.extY, pc.marchW, pc.marchH, pc.marchScale,
-                       depthAware ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1687,43 +546,17 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
 void VK_RT_InitVolumetrics(void)
 {
-    VK_RT_InitVolMarchPipeline();
     VK_RT_InitVolCompositePipeline();
     VK_RT_ResizeVolumetrics(vk.swapchainExtent.width, vk.swapchainExtent.height);
-    VK_RT_InitVolTemporal();
-    VK_RT_InitVolBilateral();
     // Froxel grid (20260906_froxel_probe_gi.md Part A). Last, so it can assume
-    // volSampler and the march resources exist; its own images are screen-size
-    // independent and so take no part in VK_RT_ResizeVolumetrics.
+    // volSampler and volBuffer exist; its own images are screen-size independent
+    // and so take no part in VK_RT_ResizeVolumetrics.
     VK_RT_InitVolFroxel();
 }
 
 void VK_RT_ShutdownVolumetrics(void)
 {
     VK_RT_ShutdownVolFroxel();
-    VK_RT_ShutdownVolBilateral();
-    VK_RT_ShutdownVolTemporal();
-
-    if (vkRT.volMarchDescPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(vk.device, vkRT.volMarchDescPool, NULL);
-        vkRT.volMarchDescPool = VK_NULL_HANDLE;
-    }
-    if (vkRT.volMarchDescLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(vk.device, vkRT.volMarchDescLayout, NULL);
-        vkRT.volMarchDescLayout = VK_NULL_HANDLE;
-    }
-    if (vkRT.volMarchPipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(vk.device, vkRT.volMarchPipeline, NULL);
-        vkRT.volMarchPipeline = VK_NULL_HANDLE;
-    }
-    if (vkRT.volMarchPipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(vk.device, vkRT.volMarchPipelineLayout, NULL);
-        vkRT.volMarchPipelineLayout = VK_NULL_HANDLE;
-    }
 
     if (vkRT.volCompositeDescPool != VK_NULL_HANDLE)
     {
@@ -1768,326 +601,11 @@ void VK_RT_ResizeVolumetrics(uint32_t width, uint32_t height)
 {
     VK_Prof_DeviceWaitIdle(VKPROF_WAIT_VOL);
 
-    // P8: march + temporal history at march res; the bilateral output stays full res
-    // because it is what the compositor samples.
-    s_volMarchScale = VK_RT_VolRequestedScale();
-    const uint32_t marchW = VK_RT_VolScaleDim(width, s_volMarchScale);
-    const uint32_t marchH = VK_RT_VolScaleDim(height, s_volMarchScale);
-
     VK_RT_DestroyVolImages();
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-        vkRT.volMarchDescSetLastUpdatedFrameCount[i] = -1;
-    VK_RT_CreateVolImages(marchW, marchH);
-    if (vkRT.volTemporalPipeline != VK_NULL_HANDLE)
-        VK_RT_ResizeVolTemporal(marchW, marchH);
-    if (vkRT.volBilateralPipeline != VK_NULL_HANDLE)
-        VK_RT_ResizeVolBilateral(width, height);
+    VK_RT_CreateVolImages(width, height);
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Vol: resize full=%ux%u march=%ux%u (scale=%d)\n", width, height, marchW, marchH,
-                       s_volMarchScale);
-}
-
-// ---------------------------------------------------------------------------
-// VK_RT_DispatchVolumetrics (public)
-// Runs vol_march.comp to accumulate in-scattering for the current view.
-// Must be called outside a render pass; depth must be in ATTACHMENT_OPTIMAL.
-// On exit volBuffer[currentFrame] is in GENERAL, readable by fragment shaders.
-// ---------------------------------------------------------------------------
-
-void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
-{
-    if (!vkRT.isInitialized)
-        return;
-    if (!vkRT.tlas[vk.currentFrame].isValid)
-        return;
-    if (!r_useRayTracing.GetBool() || !r_rtVol.GetBool())
-        return;
-    if (vkRT.volMarchPipeline == VK_NULL_HANDLE)
-        return;
-
-    const int frameIdx = vk.currentFrame;
-
-    static int s_lastVolDispatchFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
-    if (s_lastVolDispatchFrame[frameIdx] == tr.frameCount)
-        return;
-    s_lastVolDispatchFrame[frameIdx] = tr.frameCount;
-
-    // P8: r_rtVolHalfRes changed since the images were built — reallocate before we
-    // record anything that references them.  vkDeviceWaitIdle mid-recording is safe
-    // (this command buffer is not submitted yet) and only happens on the frame the
-    // CVar is toggled, which is the price of making the A/B switchable at runtime
-    // instead of behind a vid_restart.
-    if (VK_RT_VolRequestedScale() != s_volMarchScale)
-    {
-        if (r_vkLogRT.GetInteger() >= 1)
-            common->Printf("VK RT Vol: march scale %d -> %d, reallocating vol images\n", s_volMarchScale,
-                           VK_RT_VolRequestedScale());
-        VK_RT_ResizeVolumetrics(vk.swapchainExtent.width, vk.swapchainExtent.height);
-    }
-
-    // Froxel path owns volBuffer this frame (20260906_froxel_probe_gi.md F2).
-    // Placed AFTER the scale-realloc block above on purpose: that check is what
-    // reallocates the images back to full res on the frame r_rtVolFroxel flips,
-    // and it has to run even though the march itself is about to stand down.
-    if (VK_RT_VolFroxelActive())
-        return;
-
-    vkRTImage_t &vb = vkRT.volBuffer[frameIdx];
-    if (vb.image == VK_NULL_HANDLE)
-        return;
-
-    if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Vol: dispatch frame=%d slot=%d size=%ux%u\n", tr.frameCount, frameIdx, vb.width,
-                       vb.height);
-
-    // --- Depth aspect flags ---
-    VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
-    if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
-        vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
-        depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
-
-    // --- Depth barrier: ATTACHMENT → READ_ONLY for compute shader sampling ---
-    {
-        VkImageMemoryBarrier depthToRead = {};
-        depthToRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        depthToRead.srcAccessMask =
-            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        depthToRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        depthToRead.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        depthToRead.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        depthToRead.image = vk.depthImage;
-        depthToRead.subresourceRange = {depthAspect, 0, 1, 0, 1};
-        vkCmdPipelineBarrier(cmd,
-                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &depthToRead);
-    }
-
-    // --- Build UBO ---
-    VkBuffer uboBuf;
-    uint32_t uboOff;
-    void *uboMapped;
-    VK_AllocUBOForShadow(&uboBuf, &uboOff, &uboMapped);
-
-    VolParamsUBO ubo = {};
-
-    // Compute invViewProj (same as GI dispatch).
-    {
-        const float *proj = viewDef->projectionMatrix;
-        const float *mv = viewDef->worldSpace.modelViewMatrix;
-        float vp[16];
-        for (int r = 0; r < 4; r++)
-            for (int c = 0; c < 4; c++)
-            {
-                vp[c * 4 + r] = 0.0f;
-                for (int k = 0; k < 4; k++)
-                    vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
-            }
-        idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
-                     idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
-        idMat4 invVP = vpMat.Inverse();
-        memcpy(ubo.invViewProj, invVP.ToFloatPtr(), 16 * sizeof(float));
-    }
-
-    // Guard against NaN (singular VP on degenerate frame).
-    {
-        bool hasNaN = false;
-        for (int i = 0; i < 16; i++)
-            if (ubo.invViewProj[i] != ubo.invViewProj[i])
-            {
-                hasNaN = true;
-                break;
-            }
-        if (hasNaN)
-        {
-            common->Warning("VK RT Vol: invViewProj NaN — skipping dispatch");
-            VkImageMemoryBarrier restore = {};
-            restore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            restore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            restore.dstAccessMask =
-                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-            restore.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-            restore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            restore.image = vk.depthImage;
-            restore.subresourceRange = {depthAspect, 0, 1, 0, 1};
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-                                 0, 0, NULL, 0, NULL, 1, &restore);
-            return;
-        }
-    }
-
-    const idVec3 camPos = viewDef->renderView.vieworg;
-    ubo.cameraPosX = camPos.x;
-    ubo.cameraPosY = camPos.y;
-    ubo.cameraPosZ = camPos.z;
-    ubo.cameraPad = 0.0f;
-    ubo.frameIndex = (uint32_t)tr.frameCount;
-    ubo.numSamples = idMath::ClampInt(1, 32, r_rtVolSamples.GetInteger());
-    ubo.maxLights = idMath::ClampInt(1, 128, r_rtVolMaxLights.GetInteger());
-    ubo.extinction = VK_RT_VolExtinction();
-    ubo.albedo = VK_RT_VolAlbedo();
-    ubo.anisotropy = idMath::ClampFloat(0.0f, 0.99f, r_rtVolAnisotropy.GetFloat());
-    ubo.maxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
-    ubo.scatterPoint = VK_RT_VolScatterScale(VK_VOL_CLASS_POINT);
-    ubo.scatterDirected = VK_RT_VolScatterScale(VK_VOL_CLASS_DIRECTED);
-    ubo.scatterFlash = VK_RT_VolScatterScale(VK_VOL_CLASS_FLASHLIGHT);
-    ubo.flashlightAnisotropy = idMath::ClampFloat(0.0f, 0.99f, r_rtVolFlashlightAnisotropy.GetFloat());
-    ubo.directedAnisotropy = idMath::ClampFloat(0.0f, 0.99f, r_rtVolDirectedAnisotropy.GetFloat());
-    ubo.isotropicMix = idMath::ClampFloat(0.0f, 1.0f, r_rtVolIsotropicMix.GetFloat());
-    ubo._uboPad = 0.0f;
-
-    // Scissor rect (GL Y-up → Vulkan Y-down, same conversion as GI), scaled into
-    // march space — the shader indexes volBuf with it.
-    const int w = (int)vk.renderExtent.width;
-    const int h = (int)vk.renderExtent.height;
-    {
-        const VkRect2D marchRect = VK_RT_Vol_ComputeDispatchRect(viewDef, s_volMarchScale);
-        ubo.scissorOffsetX = (int32_t)marchRect.offset.x;
-        ubo.scissorOffsetY = (int32_t)marchRect.offset.y;
-        ubo.scissorExtentX = (int32_t)marchRect.extent.width;
-        ubo.scissorExtentY = (int32_t)marchRect.extent.height;
-    }
-    // screenWidth/Height are the FULL-res dimensions: the shader fetches depth and
-    // reconstructs NDC at full res even when it writes at march res.
-    ubo.screenWidth = (int32_t)w;
-    ubo.screenHeight = (int32_t)h;
-    ubo.marchWidth = (int32_t)vb.width;
-    ubo.marchHeight = (int32_t)vb.height;
-    ubo.marchScale = s_volMarchScale;
-    ubo.whiteNoiseMix = idMath::ClampFloat(0.0f, 1.0f, r_rtVolWhiteNoiseMix.GetFloat());
-
-    memcpy(uboMapped, &ubo, sizeof(VolParamsUBO));
-
-    // --- Update descriptor set (once per frame slot when resources change) ---
-    static VkAccelerationStructureKHR s_lastTlas[VK_MAX_FRAMES_IN_FLIGHT] = {};
-    static VkImageView s_lastVolView[VK_MAX_FRAMES_IN_FLIGHT] = {};
-    static VkImageView s_lastDepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
-
-    const bool resourceChanged = (s_lastTlas[frameIdx] != vkRT.tlas[frameIdx].handle) ||
-                                 (s_lastVolView[frameIdx] != vb.view) ||
-                                 (s_lastDepthView[frameIdx] != vk.depthSampledView);
-
-    if (vkRT.volMarchDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount || resourceChanged)
-    {
-        VkDescriptorSet ds = vkRT.volMarchDescSets[frameIdx];
-
-        VkWriteDescriptorSetAccelerationStructureKHR tlasWrite = {};
-        tlasWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
-        tlasWrite.accelerationStructureCount = 1;
-        tlasWrite.pAccelerationStructures = &vkRT.tlas[frameIdx].handle;
-
-        VkDescriptorImageInfo volImgInfo = {};
-        volImgInfo.imageView = vb.view;
-        volImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-        VkDescriptorImageInfo depthInfo = {};
-        depthInfo.sampler = vkRT.depthSampler;
-        depthInfo.imageView = vk.depthSampledView;
-        depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-
-        VkDescriptorBufferInfo uboInfo = {};
-        uboInfo.buffer = uboBuf;
-        uboInfo.offset = 0;
-        uboInfo.range = sizeof(VolParamsUBO);
-
-        // Dedicated vol light selection (portal_area_lights.md follow-up, 2026-08-22) —
-        // NOT giLightSsbo. Same buffer layout, but filtered to lights that can
-        // possibly reach within r_rtVolMaxDist of the camera, built in vk_gi.cpp's
-        // VK_RT_UploadGILights so a GI-relevant-but-vol-unreachable light can't
-        // evict a genuinely marchable one from vol's much smaller slot budget.
-        VkDescriptorBufferInfo lightSsboInfo = {};
-        lightSsboInfo.buffer = vkRT.volLightSsbo[frameIdx];
-        lightSsboInfo.offset = 0;
-        lightSsboInfo.range = VK_WHOLE_SIZE;
-
-        VkWriteDescriptorSet writes[5] = {};
-
-        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].pNext = &tlasWrite;
-        writes[0].dstSet = ds;
-        writes[0].dstBinding = 0;
-        writes[0].descriptorCount = 1;
-        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-
-        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet = ds;
-        writes[1].dstBinding = 1;
-        writes[1].descriptorCount = 1;
-        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[1].pImageInfo = &volImgInfo;
-
-        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[2].dstSet = ds;
-        writes[2].dstBinding = 2;
-        writes[2].descriptorCount = 1;
-        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[2].pImageInfo = &depthInfo;
-
-        writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[3].dstSet = ds;
-        writes[3].dstBinding = 3;
-        writes[3].descriptorCount = 1;
-        writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-        writes[3].pBufferInfo = &uboInfo;
-
-        writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[4].dstSet = ds;
-        writes[4].dstBinding = 4;
-        writes[4].descriptorCount = 1;
-        writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writes[4].pBufferInfo = &lightSsboInfo;
-
-        vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
-        vkRT.volMarchDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
-        s_lastTlas[frameIdx] = vkRT.tlas[frameIdx].handle;
-        s_lastVolView[frameIdx] = vb.view;
-        s_lastDepthView[frameIdx] = vk.depthSampledView;
-    }
-
-    // --- Compute dispatch ---
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volMarchPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volMarchPipelineLayout, 0, 1,
-                            &vkRT.volMarchDescSets[frameIdx], 1, &uboOff);
-    // set=1: material table (MatTable SSBO, VtxAddrTable, IdxAddrTable, bindless
-    // textures) — Stage 3 (rt_projected_light_cookies.md) light-cookie sampling.
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volMarchPipelineLayout, 1, 1,
-                            &vkRT.matDescSet[vk.currentFrame], 0, NULL);
-
-    uint32_t groupsX = ((uint32_t)ubo.scissorExtentX + 7) / 8;
-    uint32_t groupsY = ((uint32_t)ubo.scissorExtentY + 7) / 8;
-    if (groupsX > 0 && groupsY > 0)
-        vkCmdDispatch(cmd, groupsX, groupsY, 1);
-
-    // --- Barrier: volBuf compute write → compute read (temporal) + fragment read (composite) ---
-    {
-        VkMemoryBarrier memBarrier = {};
-        memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
-                             &memBarrier, 0, NULL, 0, NULL);
-    }
-
-    // --- Depth barrier: restore ATTACHMENT_OPTIMAL ---
-    {
-        VkImageMemoryBarrier depthRestore = {};
-        depthRestore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        depthRestore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        depthRestore.dstAccessMask =
-            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        depthRestore.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        depthRestore.image = vk.depthImage;
-        depthRestore.subresourceRange = {depthAspect, 0, 1, 0, 1};
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0,
-                             0, NULL, 0, NULL, 1, &depthRestore);
-    }
-
-    if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Vol: dispatch complete groups=%ux%u march=%dx%d scale=%d sigma_t=%.6f samples=%d\n",
-                       groupsX, groupsY, ubo.marchWidth, ubo.marchHeight, ubo.marchScale, ubo.extinction,
-                       ubo.numSamples);
+        common->Printf("VK RT Vol: resize %ux%u\n", width, height);
 }
 
 // ---------------------------------------------------------------------------
@@ -2109,6 +627,13 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
     if (vkRT.volCompositePipeline == VK_NULL_HANDLE)
         return;
 
+    // The froxel resolve is the only writer of volBuffer. If it stood down this
+    // frame the buffer holds either black (freshly created) or a stale view, and
+    // the attenuating pipeline would multiply the scene by that alpha — a
+    // black-cleared buffer blanks the screen outright.
+    if (!VK_RT_VolFroxelActive())
+        return;
+
     const int frameIdx = vk.currentFrame;
     vkRTImage_t &vb = vkRT.volBuffer[frameIdx];
     if (vb.image == VK_NULL_HANDLE || vkRT.volSampler == VK_NULL_HANDLE)
@@ -2125,8 +650,8 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
         return;
     }
 
-    // Write the descriptor set for this frame slot.
-    // Use volReadView: points to volHistory when temporal is active, volBuffer otherwise.
+    // Write the descriptor set for this frame slot.  volReadView is claimed by the
+    // froxel resolve; volBuffer is the fallback if it never ran.
     VkImageView readView = vkRT.volReadView[frameIdx];
     if (readView == VK_NULL_HANDLE)
         readView = vb.view;
@@ -2145,28 +670,23 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
     write.pImageInfo = &imgInfo;
     vkUpdateDescriptorSets(vk.device, 1, &write, 0, NULL);
 
-    // P8: UV comes from the screen size, not the vol image size — they differ when
-    // the compositor is reading the march-res image directly.
-    // Display extent, not renderExtent: the vol image is display-sized (or a fixed
-    // fraction of it) and written identity-mapped into the render sub-rect, so
-    // fragCoord / displayExtent lands on the right texel at either march scale.
+    // Display extent, not renderExtent: the vol image is display-sized and written
+    // identity-mapped into the render sub-rect, so fragCoord / displayExtent lands
+    // on the right texel.
     struct
     {
         float invScreen[2];
         int32_t debugMode;
     } pc = {{1.0f / Max(1.0f, (float)vk.swapchainExtent.width), 1.0f / Max(1.0f, (float)vk.swapchainExtent.height)}, 0};
 
-    // Froxel overlays arrive already composed in
-    // volBuffer.rgb, so the fragment shader's mode 2 — "show rgb as-is under the
-    // replace pipeline" — is exactly the right display path.
-    const int froxelDebug = VK_RT_VolFroxelDebugMode();
-    if (froxelDebug != 0)
-    {
+    // Froxel overlays arrive already composed in volBuffer.rgb, so the fragment
+    // shader's mode 2 — "show rgb as-is under the replace pipeline" — is the right
+    // display path.
+    if (VK_RT_VolFroxelDebugMode() != 0)
         pc.debugMode = 2;
-    }
 
-    // Debug modes still win over F6's attenuating pipeline: both visualizations
-    // want the replace blend, not a multiply against the scene.
+    // Debug modes win over F6's attenuating pipeline: a visualization wants the
+    // replace blend, not a multiply against the scene.
     const bool debugActive = pc.debugMode >= 1 && pc.debugMode <= 2;
     VkPipeline pipe = vkRT.volCompositePipeline;
     if (debugActive)

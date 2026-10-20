@@ -349,9 +349,9 @@ void VK_RT_InitMaterialTable(void)
     bindings[3].binding = 3;
     bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[3].descriptorCount = VK_MAT_MAX_TEXTURES;
-    // Stage 3 (rt_projected_light_cookies.md): vol_march.comp — a COMPUTE shader,
-    // not part of the ray-tracing pipeline — now samples this binding too, for
-    // per-step light-cookie sampling. bindings[0].stageFlags only covers RT
+    // Stage 3 (rt_projected_light_cookies.md): the froxel fill — a COMPUTE shader,
+    // not part of the ray-tracing pipeline — also samples this binding, for
+    // per-cell light-cookie sampling. bindings[0].stageFlags only covers RT
     // pipeline stages, so add COMPUTE_BIT explicitly here rather than widening
     // the SSBO bindings (0-2), which nothing outside the RT pipeline reads.
     bindings[3].stageFlags = bindings[0].stageFlags | VK_SHADER_STAGE_COMPUTE_BIT;

@@ -1,10 +1,9 @@
 /* rt_phase.glsl — Henyey-Greenstein scattering phase, shared by every volumetric
   consumer (20261013_reflection_volumetrics.md Stage 5).
 
-  Previously vol_march.comp and vol_froxel_fill.comp each carried their own copy
-  with a comment asking that they stay identical.  Stage 5 adds a third consumer
-  (vol_froxel_integrate.comp) and a fourth (reflect_ray.rgen), so the function
-  moved here instead.
+  Previously each volumetric shader carried its own copy with a comment asking that
+  they stay identical.  Stage 5 added vol_froxel_integrate.comp and reflect_ray.rgen
+  as consumers, so the function moved here instead.
 
   Stage 5's actual change is rt_PhaseFromMeanDir.  The froxel fill used to bake
   phase(dot(camToCell, cellToLight)) into each cell, which made froxelScatter a

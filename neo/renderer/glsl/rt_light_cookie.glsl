@@ -1,6 +1,6 @@
 /* rt_light_cookie.glsl — light cookie/gobo sampling (rt_projected_light_cookies.md
   Stages 2-4). Shared by rt_light_eval.glsl's rt_LightContribAt (GI bounce +
-  reflections) and vol_march.comp's per-step light loop (volumetrics): samples the
+  reflections) and vol_froxel_fill.comp's per-cell light loop: samples the
   light material's chosen stage image through the world-space S/T/Q projection
   planes vk_gi.cpp derives per light from R_SetLightProject, with the stage's
   texture matrix already folded into the planes CPU-side (project_light_cookie_stage1
@@ -9,10 +9,10 @@
   Includer contract: a set=1 `sampler2D matTextures[4096]` bindless array and
   GL_EXT_nonuniform_qualifier must already be declared/enabled before this include.
   gi_ray.rchit/reflect_ray.rchit/player_reflect.rchit get this via `#include
-  "rt_material.glsl"` (set=1, binding=3); vol_march.comp declares just that one
-  binding directly instead — rt_material.glsl's other declarations
+  "rt_material.glsl"` (set=1, binding=3); vol_froxel_fill.comp declares just that
+  one binding directly instead — rt_material.glsl's other declarations
   (rt_InterpolateNormal) use gl_WorldToObjectEXT, a ray-tracing-*pipeline*-only
-  built-in that doesn't exist in vol_march.comp's compute/ray-query shader stage.
+  built-in that doesn't exist in a compute/ray-query shader stage.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source

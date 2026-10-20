@@ -434,7 +434,7 @@ struct vkRTState_t
     // Same GILightBuffer layout as giLightSsbo above, but filled with a SEPARATE
     // selection: the same admitted-candidate pool, filtered to lights that can
     // possibly reach within r_rtVolMaxDist of the camera, capped at r_rtVolMaxLights.
-    // vol_march.comp reads this buffer, not giLightSsbo.
+    // vol_froxel_fill.comp reads this buffer, not giLightSsbo.
     VkBuffer volLightSsbo[VK_MAX_FRAMES_IN_FLIGHT];
     VkDeviceMemory volLightSsboMemory[VK_MAX_FRAMES_IN_FLIGHT];
     void *volLightSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
@@ -548,21 +548,16 @@ struct vkRTState_t
     // Volumetric Lighting
     //
     // volBuffer: RGBA16F per-slot scatter accumulation image (full resolution).
-    //   Written by vol_march.comp (compute + ray queries).
+    //   Written by the froxel resolve, its only writer.
     //   Read by the composite pass (additive blend onto framebuffer).
-    // volMarch*: compute pipeline for the ray-march dispatch.
     // volComposite*: graphics pipeline for additive composite (shares
     //   gi_composite.vert; separate vol_composite.frag).
+    // volReadView: what the composite samples — claimed by the froxel resolve each
+    //   frame, defaulting to volBuffer's own view.
     // --------------------------------------------------------------------------
     vkRTImage_t volBuffer[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F volumetric scatter
     VkSampler volSampler;                           // bilinear-clamp for composite
-
-    VkPipeline volMarchPipeline;
-    VkPipelineLayout volMarchPipelineLayout;
-    VkDescriptorSetLayout volMarchDescLayout;
-    VkDescriptorPool volMarchDescPool;
-    VkDescriptorSet volMarchDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int volMarchDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkImageView volReadView[VK_MAX_FRAMES_IN_FLIGHT];
 
     VkPipeline volCompositePipeline;
     VkPipeline volCompositeDebugPipeline;
@@ -572,37 +567,9 @@ struct vkRTState_t
     VkDescriptorPool volCompositeDescPool;
     VkDescriptorSet volCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // Volumetric temporal EMA (Phase 7.2 — step 8)
-    // volHistory is single shared, not per-slot — see the AO temporal comment above.
-    vkRTImage_t volHistory;
-    bool volHistoryValid;
-    idVec3 volPrevCamPos;
-    idVec3 volPrevCamFwd;
-    VkImageView volReadView[VK_MAX_FRAMES_IN_FLIGHT];
-
-    VkPipeline volTemporalPipeline;
-    VkPipelineLayout volTemporalPipelineLayout;
-    VkDescriptorSetLayout volTemporalDescLayout;
-    VkDescriptorPool volTemporalDescPool;
-    VkDescriptorSet volTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int volTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
-
-    // Volumetric bilateral filter
-    // Reads volHistory (storage image), writes filtered result to volBlurred.
-    // CompositeVolumetrics reads volBlurred.
-    vkRTImage_t volBlurred[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F filtered output
-
-    VkPipeline volBilateralPipeline;
-    VkPipelineLayout volBilateralPipelineLayout;
-    VkDescriptorSetLayout volBilateralDescLayout;
-    VkDescriptorPool volBilateralDescPool;
-    VkDescriptorSet volBilateralDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int volBilateralDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
-
     // --------------------------------------------------------------------------
-    // Volumetric froxel grid
+    // Volumetric froxel grid — the volumetric integrator.
     //
-    // World-space-cached replacement for the per-pixel march, selected by r_rtVolFroxel.
     //  froxelScatter holds per-cell in-scattering (rgb, per unit length) + extinction (a);
     //  froxelDir (Stage 5) holds the mean scattering direction, |xyz| = mean cosine g;
     //  froxelIntegrated (F2) holds the accumulated camera->cell integral.
@@ -1251,7 +1218,7 @@ void VK_RT_GetBindlessFrameStats(vkRTBindlessFrameStats_t *out);
 // Volumetric Lighting (Phase 7.2)
 // ---------------------------------------------------------------------------
 
-// Create the RGBA16F vol buffer, compute march pipeline, and composite pipeline.
+// Create the RGBA16F vol buffer, the composite pipeline and the froxel grid.
 // Called once from VK_InitVulkan after VK_RT_InitGI.
 void VK_RT_InitVolumetrics(void);
 
@@ -1262,16 +1229,10 @@ void VK_RT_ShutdownVolumetrics(void);
 // Calls vkDeviceWaitIdle internally; do not call from a hot path.
 void VK_RT_ResizeVolumetrics(uint32_t width, uint32_t height);
 
-// Dispatch the volumetric ray-march compute pass for the current view.
-// Must be called outside a render pass, after TLAS build and GI dispatch.
-// Depth must be in ATTACHMENT_OPTIMAL on entry; transitions to READ_ONLY
-// for the compute dispatch and restores to ATTACHMENT_OPTIMAL on exit.
-// Output: volBuffer[currentFrame] is ready for FRAGMENT sampling when done.
-void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef);
-
 // Composite the volumetric buffer onto the framebuffer with additive blending.
 // Must be called INSIDE the main render pass, after VK_RT_CompositeGI.
-// Does nothing when r_rtVol is off or the pipeline is not ready.
+// Does nothing when r_rtVol is off, the pipeline is not ready, or the froxel
+// resolve stood down (nothing else writes volBuffer).
 // Self-guards against compositing the same view twice in a frame (F6 gave it
 // two possible call sites).
 void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd);
@@ -1283,9 +1244,9 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd);
 // call site must additionally gate on a real camera; see the comment there.
 bool VK_RT_VolCompositeAfterSurfaces(void);
 
-// Medium coefficients (20260917_vol_transport_coefficients.md).  The march and the
-// froxel fill must be fed identical constants or an r_rtVolFroxel 0/1 A/B is
-// meaningless, so both read these rather than the cvars.
+// Medium coefficients (20260917_vol_transport_coefficients.md).  The froxel fill
+// and the reflection in-scatter march read these rather than the cvars, so the
+// clamping and the sigma_s = albedo * sigma_t fold live in one place.
 enum
 {
     VK_VOL_CLASS_POINT = 0,
@@ -1296,46 +1257,6 @@ enum
 float VK_RT_VolExtinction(void);             // sigma_t, per world unit
 float VK_RT_VolAlbedo(void);                 // sigma_s / sigma_t, [0,1]
 float VK_RT_VolScatterScale(int lightClass); // sigma_s * per-class radiance gain
-
-// Shared dump helper: prints sigma_t/albedo/sigma_s, the T=0.5 distance, and each
-// class's effective albedo, flagging any above 1 as energy-creating.
-void VK_RT_VolPrintMedium(float sigmaT, float albedo, float scatterPoint, float scatterDirected, float scatterFlash);
-
-// ---------------------------------------------------------------------------
-// Volumetric temporal EMA (Phase 7.2 — step 8)
-// ---------------------------------------------------------------------------
-
-// Initialise history images and EMA pipeline.  Called from VK_RT_InitVolumetrics.
-void VK_RT_InitVolTemporal(void);
-
-// Destroy all vol temporal resources.  Device must be idle before calling.
-void VK_RT_ShutdownVolTemporal(void);
-
-// Resize vol history images when render resolution changes.
-void VK_RT_ResizeVolTemporal(uint32_t width, uint32_t height);
-
-// Blend volBuffer into volHistory via EMA.  Sets volReadView[currentFrame] to
-// the accumulated history so VK_RT_CompositeVolumetrics reads the smooth result.
-// Must be called outside the render pass, immediately after VK_RT_DispatchVolumetrics.
-void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *viewDef);
-
-// ---------------------------------------------------------------------------
-// Volumetric bilateral filter (Phase 7.2 — step 10)
-// ---------------------------------------------------------------------------
-
-// Initialise bilateral filter images and pipeline.  Called from VK_RT_InitVolumetrics.
-void VK_RT_InitVolBilateral(void);
-
-// Destroy all bilateral filter resources.  Device must be idle before calling.
-void VK_RT_ShutdownVolBilateral(void);
-
-// Resize bilateral images when render resolution changes.
-void VK_RT_ResizeVolBilateral(uint32_t width, uint32_t height);
-
-// Apply cross-bilateral spatial filter to the temporal history.
-// Sets volReadView[currentFrame] to volBlurred when r_rtVolBilateral is on.
-// Must be called outside the render pass, immediately after DispatchTemporalResolveVol.
-void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // ---------------------------------------------------------------------------
 // Volumetric froxel grid (20260906_froxel_probe_gi.md Part A)
@@ -1348,13 +1269,12 @@ void VK_RT_InitVolFroxel(void);
 // Destroy all froxel resources.  Device must be idle before calling.
 void VK_RT_ShutdownVolFroxel(void);
 
-// True when r_rtVolFroxel selects the froxel path and its pipeline is usable.
-// The march/temporal/bilateral passes consult this to stand down.
+// True when volumetrics are on and the froxel pipelines and grid images are all
+// usable.  Every vol pass, the composite included, stands down when this is false.
 bool VK_RT_VolFroxelActive(void);
 
-// Fill the froxel grid: one invocation per cell, same light model as
-// vol_march.comp's per-step loop.  Must be called outside a render pass, after
-// the TLAS build.  Does not touch depth.
+// Fill the froxel grid: one invocation per cell.  Must be called outside a render
+// pass, after the TLAS build.  Does not touch depth.
 void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Accumulate the filled grid front-to-back, one thread per grid column.
@@ -1362,8 +1282,8 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef);
 void VK_RT_DispatchVolFroxelIntegrate(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Grid -> vkRT.volBuffer, and repoints volReadView at volBuffer so the composite
-// reads it.  One trilinear fetch per pixel when r_rtVolFroxel is 1; also hosts
-// the r_rtVolFroxelDebug overlays.
+// reads it.  One trilinear fetch per pixel; also hosts the r_rtVolFroxelDebug
+// overlays.
 // Must be called outside a render pass; depth must be in ATTACHMENT_OPTIMAL.
 void VK_RT_DispatchVolFroxelResolve(VkCommandBuffer cmd, const viewDef_t *viewDef);
 

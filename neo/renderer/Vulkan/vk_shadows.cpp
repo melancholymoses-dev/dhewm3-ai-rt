@@ -47,7 +47,7 @@ struct ShadowParamsUBO
 
     // --- Phase 9 / Stage 1: anisotropic soft-shadow light shape ---
     // Point lights: world-axis-aligned ellipsoid semi-axes (matches the box-extents
-    // convention already used by vol_march.comp / vk_gi.cpp — light.axis rotation is
+    // convention already used by the froxel fill / vk_gi.cpp — light.axis rotation is
     // intentionally ignored for point lights, consistent with those passes).
     // Projected lights: aperture half-extents along the light's own right/up axes,
     // scaled to the near-clip ("start") plane so softness reflects the physical
@@ -1007,7 +1007,7 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         {
             // World-axis-aligned ellipsoid semi-axes — same simplification (axis
             // rotation ignored) already used for point-light box tests in
-            // vol_march.comp and vk_gi.cpp, kept consistent here.
+            // vol_froxel_fill.comp and vk_gi.cpp, kept consistent here.
             axisRightHalf = ScaleClampSoft(light.lightRadius.x);
             axisUpHalf = ScaleClampSoft(light.lightRadius.y);
             axisFwdHalf = ScaleClampSoft(light.lightRadius.z);

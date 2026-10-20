@@ -106,11 +106,10 @@ idCVar r_rtReflShadowPicks("r_rtReflShadowPicks", "1", CVAR_RENDERER | CVAR_INTE
 
 // Volumetrics in reflections (docs/plans/20261013_reflection_volumetrics.md). The
 // reflection ray marches the same froxel scatter grid the primary view resolves, so
-// light shafts — the flashlight beam above all — show up in glass. Needs
-// r_rtVolFroxel 1
+// light shafts — the flashlight beam above all — show up in glass. Needs r_rtVol 1.
 static idCVar r_rtReflVol("r_rtReflVol", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
                           "march the froxel scatter grid along reflection rays, so volumetric light shafts "
-                          "appear in reflections (needs r_rtVolFroxel 1)");
+                          "appear in reflections (needs r_rtVol 1)");
 static idCVar r_rtReflVolSteps("r_rtReflVolSteps", "6", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                                "samples per reflection ray through the froxel scatter grid (1-32). Raise if the "
                                "reflected beam bands; brightness should not change with this.");
@@ -2396,8 +2395,8 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
     const bool haveGbufAlbedo = vk.gbufferSupported && vkRT.gbufAlbedo[frameIdx].view != VK_NULL_HANDLE;
     VkImageView gbufAlbedoView = haveGbufAlbedo ? vkRT.gbufAlbedo[frameIdx].view : s_nullGbufView;
 
-    // Swaps between the live grid and the null one whenever r_rtVolFroxel is toggled,
-    // and changes outright when the res cvars force a realloc.
+    // Swaps between the live grid and the null one whenever volumetrics go on or
+    // off, and changes outright when the res cvars force a realloc.
     const VkImageView froxelView = VK_RT_GetFroxelScatterView();
     // Stage 5: fetched through the same predicate, so the pair can never end up
     // split across a toggle or a realloc.

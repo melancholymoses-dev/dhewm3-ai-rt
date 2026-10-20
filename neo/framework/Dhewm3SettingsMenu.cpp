@@ -2519,11 +2519,8 @@ struct RTCVars
 
     // Volumetric Lighting
     idCVar *rtVol = nullptr;
-    idCVar *rtVolSamples = nullptr;
     idCVar *rtVolMaxDist = nullptr;
     idCVar *rtVolMaxLights = nullptr;
-    idCVar *rtVolTemporal = nullptr;
-    idCVar *rtVolTemporalAlpha = nullptr;
     idCVar *rtVolExtinction = nullptr;
     idCVar *rtVolAlbedo = nullptr;
     idCVar *rtVolAttenuateBackground = nullptr;
@@ -2557,8 +2554,7 @@ struct RTCVars
     idCVar *rtBloomLitWeight = nullptr;
     idCVar *rtBloomMips = nullptr;
 
-    // Froxel and GI Probe Toggles
-    idCVar *rtVolFroxel = nullptr;
+    // GI Probe Toggles
     idCVar *rtGIProbeHysteresis = nullptr;
 
     // Resolution scaling / upscaling (docs/plans/completed/20260918_fsr_upscaling.md)
@@ -2632,11 +2628,8 @@ static void InitRTOptionsMenu()
     rtCVars.rtGIFalloffReach = cvarSystem->Find("r_rtGIFalloffReach");
     rtCVars.rtGIContrast = cvarSystem->Find("r_rtGIContrast");
     rtCVars.rtVol = cvarSystem->Find("r_rtVol");
-    rtCVars.rtVolSamples = cvarSystem->Find("r_rtVolSamples");
     rtCVars.rtVolMaxDist = cvarSystem->Find("r_rtVolMaxDist");
     rtCVars.rtVolMaxLights = cvarSystem->Find("r_rtVolMaxLights");
-    rtCVars.rtVolTemporal = cvarSystem->Find("r_rtVolTemporal");
-    rtCVars.rtVolTemporalAlpha = cvarSystem->Find("r_rtVolTemporalAlpha");
     rtCVars.rtVolExtinction = cvarSystem->Find("r_rtVolExtinction");
     rtCVars.rtVolAlbedo = cvarSystem->Find("r_rtVolAlbedo");
     rtCVars.rtVolAttenuateBackground = cvarSystem->Find("r_rtVolAttenuateBackground");
@@ -2661,7 +2654,6 @@ static void InitRTOptionsMenu()
     rtCVars.rtBloomThreshold = cvarSystem->Find("r_rtBloomThreshold");
     rtCVars.rtBloomLitWeight = cvarSystem->Find("r_rtBloomLitWeight");
     rtCVars.rtBloomMips = cvarSystem->Find("r_rtBloomMips");
-    rtCVars.rtVolFroxel = cvarSystem->Find("r_rtVolFroxel");
     rtCVars.rtGIProbeHysteresis = cvarSystem->Find("r_rtGIProbeHysteresis");
     rtCVars.fsr = cvarSystem->Find("r_fsr");
     rtCVars.fsrRenderScale = cvarSystem->Find("r_fsrRenderScale");
@@ -2860,12 +2852,8 @@ static void DrawRTOptionsMenu()
         // --- Left column: general + point lights ---
         ImGui::TableNextColumn();
         ImGui::TextDisabled("General");
-        RTCheckbox("Froxel Volumetrics", rtCVars.rtVolFroxel);
-        RTSliderInt("Samples##vol", rtCVars.rtVolSamples, 1, 64);
         RTSliderFloat("Max Dist##vol", rtCVars.rtVolMaxDist, 0.0f, 1024.0f, "%.0f");
         RTSliderInt("Max Lights##vol", rtCVars.rtVolMaxLights, 0, 96);
-        RTCheckbox("Temporal Accumulation", rtCVars.rtVolTemporal);
-        RTSliderFloat("Temporal Blend##vol", rtCVars.rtVolTemporalAlpha, 0.0f, 1.0f);
         RTSliderFloat("Isotropic Mix##vol", rtCVars.rtVolIsotropicMix, 0.0f, 1.0f, "%.2f");
         RTCheckbox("Attenuate Background", rtCVars.rtVolAttenuateBackground);
 

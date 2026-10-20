@@ -368,9 +368,6 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_GI_PROBE_BLEND,
     VK_RTPROF_PHASE_GI_PROBE_RESOLVE,
     VK_RTPROF_PHASE_GI_COMPOSITE,
-    VK_RTPROF_PHASE_VOL,
-    VK_RTPROF_PHASE_VOL_TEMPORAL,
-    VK_RTPROF_PHASE_VOL_BILATERAL,
     VK_RTPROF_PHASE_VOL_FROXEL_FILL,
     VK_RTPROF_PHASE_VOL_FROXEL_INTEGRATE,
     VK_RTPROF_PHASE_VOL_FROXEL_RESOLVE,
@@ -451,8 +448,7 @@ static uint64_t s_rtProfFrameStart[VK_MAX_FRAMES_IN_FLIGHT] = {};
 static const char *const s_rtProfPhaseNames[] = {
     // Ray tracing — sums into total=
     "TLAS", "Shadows", "AO", "Refl", "ReflTemporal", "ReflAtrous", "GI", "GIAlbedo", "ProbeTrace", "ProbeBlend",
-    "ProbeResolve", "GIComposite", "Vol", "VolTemporal", "VolBilateral", "FroxelFill", "FroxelIntegrate",
-    "FroxelResolve", "VolComposite",
+    "ProbeResolve", "GIComposite", "FroxelFill", "FroxelIntegrate", "FroxelResolve", "VolComposite",
     // Rest of the frame — sums into raster=
     "DepthPrepass", "Interactions", "ShaderPasses", "FogLights", "Upscale", "Bloom", "Tonemap", "GuiTextures",
     // Nested sub-spans — printed, excluded from both totals
@@ -5020,9 +5016,7 @@ void VK_RB_DrawView(const void *data)
                     return;
             }
 
-            // Froxel grid, r_rtVolFroxel 1.
-            // Exclusive with the march as of F2: VK_RT_VolFroxelActive() stands the
-            // march/temporal/bilateral passes down, so exactly one path writes volBuffer.
+            // Froxel grid fill — the volumetric integrator.
             //
             // Runs here, ahead of reflections, because the reflection rgen marches
             // froxelScatter for in-scatter along the reflected ray and a volume filled after it would be
@@ -5123,31 +5117,6 @@ void VK_RB_DrawView(const void *data)
                     return;
             }
 
-            VK_SetRenderStage("RT_Volumetrics");
-            const uint64_t rtCpuVolStart = VK_RTProfile_CPUStamp();
-            int rtProfVol = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL);
-            VK_RT_DispatchVolumetrics(cmdBuf, backEnd.viewDef);
-            VK_RTProfile_PhaseEnd(cmdBuf, rtProfVol);
-            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL, rtCpuVolStart);
-
-            VK_SetRenderStage("RT_VolTemporal");
-            const uint64_t rtCpuVolTemporalStart = VK_RTProfile_CPUStamp();
-            int rtProfVolTemporal = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_TEMPORAL);
-            VK_RT_DispatchTemporalResolveVol(cmdBuf, backEnd.viewDef);
-            VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolTemporal);
-            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_TEMPORAL, rtCpuVolTemporalStart);
-
-            // P8: at half res this pass is the upsample, not just a blur — it is where
-            // the cost the march no longer pays partly reappears, so it gets its own
-            // phase.  Comparing only Vol between r_rtVolHalfRes 1/0 would flatter the
-            // change; Vol + VolBilateral is the honest total.
-            VK_SetRenderStage("RT_VolBilateral");
-            const uint64_t rtCpuVolBiStart = VK_RTProfile_CPUStamp();
-            int rtProfVolBi = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_BILATERAL);
-            VK_RT_DispatchVolBilateral(cmdBuf, backEnd.viewDef);
-            VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolBi);
-            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_BILATERAL, rtCpuVolBiStart);
-
             VK_SetRenderStage("RT_VolFroxelIntegrate");
             const uint64_t rtCpuFroxelIntStart = VK_RTProfile_CPUStamp();
             int rtProfFroxelInt = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_FROXEL_INTEGRATE);
@@ -5155,10 +5124,7 @@ void VK_RB_DrawView(const void *data)
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfFroxelInt);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_FROXEL_INTEGRATE, rtCpuFroxelIntStart);
 
-            // Stays after the temporal EMA even though that pass now stands down in
-            // froxel mode: the resolve overwrites volBuffer, and running it before
-            // temporal read it would feed this frame's result into the march's
-            // history the moment anyone flips r_rtVolFroxel back off.
+            // Last in the vol chain: it overwrites volBuffer and claims volReadView.
             VK_SetRenderStage("RT_VolFroxelResolve");
             const uint64_t rtCpuFroxelResStart = VK_RTProfile_CPUStamp();
             int rtProfFroxelRes = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_FROXEL_RESOLVE);

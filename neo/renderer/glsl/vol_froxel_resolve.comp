@@ -8,20 +8,13 @@ has to change: vol_composite.frag keeps sampling one 2D image and knows
 nothing about the grid.
 
   mode 0 — the real resolve (F2): one trilinear fetch of the integrated grid at
-           the pixel's own depth.  rgb = in-scattering, a = path transmittance,
-           matching vol_march.comp's output convention exactly so the composite
-           cannot tell the two paths apart.
+           the pixel's own depth.  rgb = in-scattering, a = path transmittance.
 
   mode 2 — light count, colour-ramped: the MAX over the column of cells in
            front of the surface, i.e. how many lights survive the cull and the
            occlusion ray anywhere along this view ray.  Black = no light reaches
            any cell in the column; blue 1, teal 3, green 4, yellow 6, red 8+.
            This is the baseline F3's cluster cull must reproduce.
-
-           NOTE while reading any overlay: with r_rtVolHalfRes 1 the resolve
-           writes a half-res image that the composite bilinearly upscales, so
-           colours BETWEEN blocks are interpolation, not measurements.  Set
-           r_rtVolHalfRes 0 to read exact values.
   mode 3 — grid-mapping error.  Evaluates the cell world position at exactly
            this pixel's ray and the surface's depth, and compares it against
            rt_ReconstructWorldPos.  This is the decisive test of everything F0
@@ -58,9 +51,9 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 layout(set = 0, binding = 0, rgba16f) uniform readonly image3D froxelScatter;
 layout(set = 0, binding = 1, rgba16f) uniform image2D volBuf;
 layout(set = 0, binding = 3) uniform sampler2D depthSampler;
-// The integrated grid, sampled TRILINEARLY — that filter is the whole point:
-// it subsumes vol_bilateral.comp's depth-aware upsample in XY and performs the
-// final partial cell's fractional weighting in Z.
+// The integrated grid, sampled TRILINEARLY — that filter is the whole point: it
+// does the depth-aware upsample in XY and the final partial cell's fractional
+// weighting in Z.
 layout(set = 0, binding = 4) uniform sampler3D froxelIntegrated;
 
 #include "vol_froxel_common.glsl"
@@ -93,11 +86,9 @@ void main()
     if (coord.x >= outSize.x || coord.y >= outSize.y)
         return;
 
-    // Same output-space -> full-res mapping vol_march.comp uses: one
-    // representative full-res texel per output pixel, the top-left of the quad.
-    // In froxel mode the scale is 1 (r_rtVolHalfRes is forced off — the resolve
-    // is one trilinear fetch, so marching at half res buys nothing and the
-    // bilateral upsample it would need is pure loss).
+    // Output-space -> full-res mapping: one representative full-res texel per
+    // output pixel, the top-left of the quad.  volBuffer is display-sized and the
+    // resolve is a single trilinear fetch, so scale is 1 in practice.
     ivec2 fullSize  = fp.screen.xy;
     int   scale     = max(1, fullSize.x / max(outSize.x, 1));
     ivec2 fullCoord = min(coord * scale, fullSize - ivec2(1));
@@ -126,9 +117,8 @@ void main()
     // grid", which is what the grid's own far face means anyway.
     float surfDist = isSky ? (dFar * 2.0) : vf_LinearDepth(depth);
 
-    // Alpha is path transmittance (1.0 = clear air), matching vol_march.comp's
-    // convention so the composite and any future background-attenuation pass see
-    // the same thing from either path.
+    // Alpha is path transmittance (1.0 = clear air), not coverage — that is what
+    // the attenuating composite pipeline multiplies the scene by.
     vec4 outValue = vec4(0.0, 0.0, 0.0, 1.0);
 
     if (mode == 0)

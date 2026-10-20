@@ -171,12 +171,6 @@ menu (see the read-user-cfg rule). Reconcile the four before writing the presets
 | `r_rtGIAlbedo` | GI | Multiply resolved GI by receiver albedo | 1 | C |
 | `r_rtGIRadius` | GI | Light-collection window and TLAS radius | 128 | C |
 
-Phase 3 removed the screen-space GI path: `r_rtGISamples`, `r_rtGICheckerboard`,
-`r_rtGITemporal(+Alpha)` and `r_rtGIAtrous*` are gone. `r_rtGIRadius` stayed — it sizes
-light collection (`vk_gi.cpp`) and the TLAS radius (`vk_accelstruct.cpp`), not just the
-deleted per-pixel ray. `r_rtGIStochasticLights` stayed for the same reason: `gi_ray.rchit`
-reads it and probe rays go through that shader.
-
 ### GI light selection
 
 Shared by probes, reflections and volumetrics, so none of this dies with Phase 3.
@@ -196,7 +190,6 @@ Shared by probes, reflections and volumetrics, so none of this dies with Phase 3
 | `r_rtGIProbeFastBuckets` | GI lights | Separate cache bucket for flickering lights | 1 | C |
 | `r_rtGILightCollectRadiusScale` | GI lights | Legacy sphere collector radius scale — superseded by the area walk | 4.0 | X |
 
-Deleted 2026-10-18: `r_rtGILightDump`.
 
 ### GI probes
 
@@ -214,16 +207,13 @@ Deleted 2026-10-18: `r_rtGILightDump`.
 | `r_rtGIProbeDistSharpness` | GI probes | Distance-weight sharpness for the visibility moments | 50 | C |
 | `r_rtGIProbeDebug` | GI probes | The one probe overlay: 2 probe weights, 3 leak detector | 0 | C |
 
-Deleted 2026-10-18: `r_rtGIProbeDebugGain`, `r_rtGIProbeDebugRadius`, `r_rtGIProbeDump`.
-Removing the radius took the sphere-lattice overlay with it, which is why probe debug modes
-1/4/5/6/7 are retired rather than merely unused.
 
 ### Volumetric lighting
 
 | Name | Group | Purpose | Default | Verdict |
 |---|---|---|---|---|
 | `r_rtVolExtinction` | Volumetrics | Fog density | 0.0006 | M |
-| `r_rtVolMaxDist` | Volumetrics | Max march distance | 512 | C |
+| `r_rtVolMaxDist` | Volumetrics | Far cap on the medium's reach; bounds the froxel grid and the vol light selection | 512 | C |
 | `r_rtVolMaxLights` | Volumetrics | Max lights | 96 | C |
 | `r_rtVolAlbedo` | Volumetrics | Medium albedo | 1.0 | C |
 | `r_rtVolGain` / `r_rtVolAnisotropy` | Volumetrics | Point-light scatter gain and phase anisotropy | 25 / 0.4 | C |
@@ -231,24 +221,19 @@ Removing the radius took the sphere-lattice overlay with it, which is why probe 
 | `r_rtVolDirectedGain` / `…DirectedAnisotropy` | Volumetrics | Spot/projected light gain and anisotropy | 70 / 0.6 | C |
 | `r_rtVolFlashlightGain` / `…FlashlightAnisotropy` | Volumetrics | Flashlight beam gain and anisotropy | 50 / 0.7 | C |
 | `r_rtVolAttenuateBackground` | Volumetrics | Scene × transmittance, not add-only | 1 | C |
-| `r_rtVolTemporal` / `…TemporalAlpha` | Volumetrics | Temporal accumulation and blend | 1 / 0.5 | C |
+| `r_rtVolWhiteNoiseMix` | Volumetrics | White noise blended into the froxel sampling jitter | 0.025 | C |
 | `r_rtVolFroxelResX/Y/Z` | Volumetrics | Froxel grid resolution. Preset scales all three | 240 / 135 / 96 | C (preset) |
 | `r_rtVolFroxelFarTransmittance` | Volumetrics | Transmittance floor that sets the froxel far plane | 0.002 | C |
 | `r_rtVolProjEmitterBias` | Volumetrics | Projected-light emitter offset, so a lamp housing doesn't occlude its own beam | 24 | C |
 | `r_rtVolProjFalloff` / `…ProjFalloffDist` | Volumetrics | Projected-light falloff mode and distance | 2 / 512 | C |
 | `r_rtVolFroxelDebug` | Volumetrics | The one vol overlay: 2 per-cell light count, 3 grid-mapping error | 0 | C |
-| `r_rtVolSamples` | Volumetrics | March samples | 8 | X |
-| `r_rtVolHalfRes` | Volumetrics | Half-resolution trace (froxel forces it off) | 1 | X |
-| `r_rtVolUpsampleDepthSigma` | Volumetrics | Bilateral upsample depth falloff | 24 | X |
-| `r_rtVolWhiteNoiseMix` | Volumetrics | Noise mix for sampling | 0.025 | X |
-| `r_rtVolBilateral` / `…BilateralSigma` | Volumetrics | Bilateral filter and sigma | 1 / 2.0 | X |
-| `r_rtVolFroxel` | Volumetrics | Froxel-grid path. X after Phase 4 — froxel becomes the only path | 1 | C → X |
 
-The X rows are march-path-only and go with Phase 4. Verify each before removing it; the
-froxel path forces `r_rtVolHalfRes` off rather than ignoring it.
+Deleted 2026-10-20 with the per-pixel ray march (Phase 4): `r_rtVolSamples`,
+`r_rtVolHalfRes`, `r_rtVolUpsampleDepthSigma`, `r_rtVolBilateral`,
+`r_rtVolBilateralSigma`, `r_rtVolTemporal`, `r_rtVolTemporalAlpha`, and the
+`r_rtVolFroxel` path toggle. `r_rtVolWhiteNoiseMix` survived the cut — the froxel
+fill reads it too, so it moved to **C** rather than **X**.
 
-Deleted 2026-10-18: `r_rtVolDebugMode`, `r_rtVolDebugGain`, `r_rtVolDump`,
-`r_rtVolFroxelDebugSlice`, `r_rtVolFroxelDebugGain`, `r_rtVolFroxelDump`.
 
 ### Temporal / denoise (AO + shared)
 
@@ -259,7 +244,6 @@ Deleted 2026-10-18: `r_rtVolDebugMode`, `r_rtVolDebugGain`, `r_rtVolDump`,
 | `r_rtAtrousSigmaDepth` / `…SigmaLuminance` | Temporal | AO A-trous edge-stops | 0.01 / 0.1 | C |
 | `r_rtTemporalCutPosThreshold` / `…CutAngleThreshold` | Temporal | Camera move / rotation per frame that resets every history | 6 / 4 | C |
 
-These survive Phase 3 — AO's temporal path is separate from GI's.
 
 ### Tonemap and bloom
 
@@ -316,10 +300,7 @@ These survive Phase 3 — AO's temporal path is separate from GI's.
 ### Vulkan backend (debug / stability)
 
 Almost all C: this is the debugging instrument set, and the engine rules say keep the
-instruments. The three submit-path cvars are not substitutes for each other —
-`r_vkSerializeFrames` is the only one that drops frames-in-flight to 1, which is how you
-test for a CPU/GPU race on a shared buffer; `r_vkSplitSubmitMask` localises a fault within
-one frame and cannot see that class at all.
+instruments. 
 
 | Name | Group | Purpose | Default | Verdict |
 |---|---|---|---|---|
@@ -341,11 +322,6 @@ one frame and cannot see that class at all.
 | `r_vkShadowStableMode` | Vulkan | Force Z-fail shadow volumes | 0 | C |
 | `r_vkInsideLightHysteresisEnter` / `Exit` | Vulkan | Inside-light hysteresis margins | 0.5 / 1.5 | C |
 
-Deleted 2026-10-18: `r_vkShadowFlipOps`, `r_vkShadowFullScissor`, `r_vkLightFullScissor`,
-`r_vkVcCheck`, `r_vkLogBufferGarbage`, `r_vkLogShadowBranch`, `r_vkLogShadowGeom`,
-`r_vkRTReflDataDiag`, `r_vkRTDebugSurface`, `r_vkRTDebugMaxLogsPerFrame`, `r_vkRTInterLogN`,
-`r_vkRTLogCaptureReset`, `r_vkRTDebugLightTextures`, `r_vkRTLightLogN`,
-`r_vkRTDebugLightFilter`.
 
 ### Player model: first person, third person
 
@@ -389,9 +365,7 @@ perturbed path — replace-blend composite, suppressed blur, forced `r_rtReflect
 to render an ordinary image.
 
 Capability actually lost, not just renumbered: the probe sphere-lattice overlay (placement,
-buried/void classification) and the FSR2 bleed and bloom source passes. The probe
-lattice was already broken before this pass — its renderer went with `r_rtGIProbeDebugRadius`
-in the 2026-10-18 cvar commits, so modes 1/4/5/6/7 had been rendering black.
+buried/void classification) and the FSR2 bleed and bloom source passes. 
 
 ## 3. Recommended quality preset
 
@@ -405,8 +379,6 @@ The numbers below are starting points, not measured.
 | `r_rtGIProbeRays` | 64 | 128 | 128 | 192 |
 | `r_rtGIProbeUpdatesPerFrame` | 512 | 1024 | 1024 | 2048 |
 | `r_rtGIMaxBounceLights` | 8 | 16 | 16 | 24 |
-| `r_rtVolSamples` | 4 | 8 | 8 | 12 |
-| `r_rtVolHalfRes` | 1 | 1 | 1 | 0 |
 | `r_rtVolFroxelRes{X,Y,Z}` | 120/68/48 | 160/90/64 | 240/135/96 | 320/180/128 |
 
 ## 4. Menu cleanup checklist

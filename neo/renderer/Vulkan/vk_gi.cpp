@@ -1474,7 +1474,7 @@ void VK_RT_ResizeGI(uint32_t width, uint32_t height)
 // Ordering contract (L1, rt_optimization_tuning.md): lights are selected via
 // stratified distance tiers and uploaded importance-first, because consumers
 // walk a prefix of the buffer (gi_ray.rchit: maxBounceLights, reflect_ray.rchit:
-// shadow budget, vol_march.comp: maxLights).
+// shadow budget, vol_froxel_fill.comp: maxLights).
 //
 // Independent of r_rtGILightBounce so that reflection hit shaders can always
 // evaluate lighting even when the GI bounce feature is disabled.
@@ -1684,7 +1684,7 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         // against 0.24 for the next-ranked light: it monopolised the GI/vol upload
         // slots and blew the volumetric march into a full-screen wash that no density,
         // strength or anisotropy could pull back, since the multiplier sits upstream of
-        // all three (vol_march.comp's contrib line). 40 retail light entities set parm3
+        // all three (the fill's contrib line). 40 retail light entities set parm3
         // outside [0,1], up to 80000 (recycling1 "level_fog") — concentrated in the big
         // maps: recycling1, enpro, cpu, cpuboss, hell1, site3.
         //
@@ -2195,17 +2195,17 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
 
     // Vol-specific selection (portal_area_lights.md follow-up, 2026-08-22): GI's own
     // selection above (s_selected) can legitimately include a light that's admitted
-    // for bounce/reflection purposes but sits far outside anything the volumetric
-    // march can ever sample (e.g. a room revealed down a long hallway by the Stage
+    // for bounce/reflection purposes but sits far outside anything the froxel grid
+    // can ever sample (e.g. a room revealed down a long hallway by the Stage
     // 1.5 view-flood union — real for GI bounce off a surface near it, irrelevant to
-    // fog scattered near the camera). Previously vol_march.comp just read a raw
-    // prefix of GI's buffer, so a burst of those admitted-but-unreachable lights
-    // could silently evict a genuinely nearby, march-relevant light purely by
-    // consuming shared slots — the root cause of the hallway on/off pop. Fix: walk
-    // GI's own importance-ordered selection (so near/far tier balance and hero-light
+    // fog scattered near the camera). The vol pass used to read a raw prefix of GI's
+    // buffer, so a burst of those admitted-but-unreachable lights could silently
+    // evict a genuinely nearby, fog-relevant light purely by consuming shared
+    // slots — the root cause of the hallway on/off pop. Fix: walk GI's own
+    // importance-ordered selection (so near/far tier balance and hero-light
     // protection carry over unchanged) and keep only lights whose sphere/cone can
     // possibly reach within r_rtVolMaxDist of the camera, into a SEPARATE buffer
-    // vol_march.comp reads instead of GI's.
+    // vol_froxel_fill.comp reads instead of GI's.
     static const Candidate *s_volSelected[VK_GI_MAX_LIGHTS];
     int numVolSelected = 0;
     {

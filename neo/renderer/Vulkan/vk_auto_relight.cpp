@@ -814,7 +814,7 @@ static void AR_Dedupe(idRenderWorldLocal *world, idList<arCluster_t> &clusters)
 // ---------------------------------------------------------------------------
 // AR5 — light synthesis
 //
-// RT shadow/GI/volumetric consumers (vk_shadows.cpp, vk_gi.cpp, vol_march.comp)
+// RT shadow/GI/volumetric consumers (vk_shadows.cpp, vk_gi.cpp, the froxel fill)
 // deliberately ignore point-light axis rotation and read lightRadius as
 // literal world X/Y/Z half-extents (see vk_shadows.cpp's anisotropic
 // soft-shadow comment). Orienting the ellipsoid via renderLight.axis alone

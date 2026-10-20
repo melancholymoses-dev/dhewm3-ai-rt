@@ -42,7 +42,7 @@ this says *when*.
 | 7b | 8g reflection refactor Stage 5 (6 optional) | 8g | Stages 1-4 landed and verified. Stage 5 is knob consolidation only — cleanup, no image change |
 | 8 | Cleanup 1c, then 1d | 8e | 1c unblocked 2026-10-18 — reflection cvars have M/C/X verdicts in the Settings doc. 1d (debug modes 44 → 18) wants 1a/1b/1c settled first since it edits shader branches |
 | 8b | Cleanup Phase 2 (legacy reflection mode 2) | 8e | Rewritten 2026-10-17: F0 stays and becomes a menu knob; only mode 2 goes. Needs 8g Stage 5's knob fold first |
-| 9 | Cleanup 3, 4 | 8e | Biggest surgery, 0.001 ms gain. Last of the code changes. Phase 4 takes `r_rtVolDebugMode` with it |
+| 9 | ~~Cleanup 3, 4~~ — **done 2026-10-20** | 8e | Both landed; neither validated in-game yet. Screen-space GI and the per-pixel vol march are gone, probe GI and the froxel grid are the only paths |
 | 10 | Cleanup 5b presets, then Phase 7 comments | 8e | Needs the final cvar set |
 
 

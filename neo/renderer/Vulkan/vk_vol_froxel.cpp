@@ -3,10 +3,9 @@
 
 dhewm3-rt Vulkan — vk_vol_froxel.cpp — froxel-grid volumetrics.
 
-World-space (well, frustum-space) cache for volumetric in-scattering, replacing
-the per-pixel ray march in vk_vol.cpp.  The grid is filled once per cell instead
-of once per pixel per step: at the 160x90x64 default that is ~0.92M cell
-evaluations against the current half-res march's ~4.1M step evaluations.
+Frustum-space cache for volumetric in-scattering, and since Phase 4 of
+20261010_cleanup_polish.md the engine's only volumetric integrator.  The grid is
+filled once per cell rather than once per pixel per step.
 
 Three passes, added over chunks F0-F2 of 20260906_froxel_probe_gi.md Part A:
 
@@ -14,11 +13,11 @@ Three passes, added over chunks F0-F2 of 20260906_froxel_probe_gi.md Part A:
   2. integrate (F2)            — per-column front-to-back Beer-Lambert
   3. resolve   (F1 debug, F2)  — trilinear fetch into vkRT.volBuffer
 
-r_rtVolFroxel 1 selects this path and stands the march, the volumetric temporal
-EMA and the bilateral upsample down (VK_RT_VolFroxelActive) — exactly one of the
-two paths writes vkRT.volBuffer.  Measured 2026-09-13: 1.63 -> 0.29 ms median,
-and the grid's 64 slices over [znear, dFar] integrate more accurately than the
-march's 8 steps over [0, r_rtVolMaxDist], whose last step spanned ~300 units.
+The resolve is the sole writer of vkRT.volBuffer; VK_RT_CompositeVolumetrics
+stands itself down when VK_RT_VolFroxelActive is false, since nothing else fills
+that image.  Measured 2026-09-13 against the deleted march: 1.63 -> 0.29 ms
+median, and the grid's 64 slices over [znear, dFar] integrate more accurately
+than the march's 8 steps over [0, r_rtVolMaxDist].
 
 r_rtVolFroxelDebug hosts the two overlays: 2 = per-cell light count, 3 = the
 grid-to-world mapping check.
@@ -46,10 +45,6 @@ Code release.
 // CVars
 // ---------------------------------------------------------------------------
 
-static idCVar r_rtVolFroxel("r_rtVolFroxel", "1", CVAR_RENDERER | CVAR_INTEGER,
-                            "Volumetric sampling structure: 0 = per-pixel ray march (vol_march.comp), "
-                            "1 = froxel grid");
-
 static idCVar r_rtVolFroxelResX("r_rtVolFroxelResX", "240", CVAR_RENDERER | CVAR_INTEGER,
                                 "Froxel grid width in cells. Raising this is the first mitigation for soft "
                                 "shaft edges; cost is linear. Change forces a device-idle realloc.");
@@ -66,7 +61,7 @@ static idCVar r_rtVolFroxelResZ("r_rtVolFroxelResZ", "96", CVAR_RENDERER | CVAR_
 static idCVar r_rtVolFroxelDebug("r_rtVolFroxelDebug", "0", CVAR_RENDERER | CVAR_INTEGER,
                                  "Froxel grid overlay: 0=off, 2=per-cell light-count heatmap at the pixel's own "
                                  "depth slice, 3=grid-mapping error vs the depth-reconstructed world position "
-                                 "(green=agreement). Requires r_rtVolFroxel 1. "
+                                 "(green=agreement). "
                                  "Retired, now no-ops: 1 (single Z slice), 4 (blocked projected-cone count).");
 
 // One place decides which overlay numbers exist, so the UBO and the composite's
@@ -110,8 +105,7 @@ extern bool VK_AllocUBOForShadow(VkBuffer *outBuf, uint32_t *outOffset, void **o
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
 
-// vk_vol.cpp — the march's medium/phase/strength model, shared verbatim so an
-// r_rtVolFroxel 0/1 A/B differs only in sampling structure.
+// vk_vol.cpp owns the medium/phase/strength model; the fill reads it from there.
 extern idCVar r_rtVol;
 extern idCVar r_rtVolMaxDist;
 extern idCVar r_rtVolMaxLights;
@@ -127,9 +121,9 @@ extern idCVar r_rtVolIsotropicMix;
 // VolFroxelParamsUBO — must match the std140 VolFroxelParams block in
 // vol_froxel_common.glsl, which every froxel pass includes at set=0 binding=2.
 //
-// vec4-packed on purpose: VolParamsUBO's scalar layout has already cost two
-// offset-mismatch debugging sessions, and every member here is 16-byte aligned
-// by construction so std140 has nothing to surprise us with.
+// vec4-packed on purpose: a scalar std140 layout has already cost two
+// offset-mismatch debugging sessions elsewhere, and every member here is 16-byte
+// aligned by construction so std140 has nothing to surprise us with.
 // ---------------------------------------------------------------------------
 
 struct VolFroxelParamsUBO
@@ -152,7 +146,7 @@ static_assert(sizeof(VolFroxelParamsUBO) == 304, "VolFroxelParamsUBO size mismat
 
 // Cached dimensions the images were actually built at, so a mid-session res
 // cvar change can be detected and the grid reallocated rather than silently
-// running with a mismatched extent (same pattern as s_volMarchScale).
+// running with a mismatched extent.
 static int32_t s_froxelDim[3] = {0, 0, 0};
 
 // Dimensions the last allocation attempt FAILED at.  A failed realloc leaves
@@ -209,9 +203,9 @@ static vkFroxelGrid_t s_nullFroxelDirGrid;
 // image and ~2 GiB across both images and both frame slots — a setting the
 // CVars accept and a memory-constrained device will refuse.  Under VK_CHECK that
 // legal setting terminated the renderer.  Returning false instead lets
-// VK_RT_VolFroxelActive stand the froxel path down and the ray march carry the
-// frame; that fallback only actually works because Active() now tests the grid
-// images and not just the pipelines.
+// VK_RT_VolFroxelActive report false, which stands the whole vol chain down for
+// the frame (the composite included) rather than killing the renderer; that only
+// works because Active() tests the grid images, not just the pipelines.
 static bool VK_RT_AllocFroxelImage(vkFroxelGrid_t &g, uint32_t w, uint32_t h, uint32_t d,
                                    VkFormat format = VK_FROXEL_SCATTER_FORMAT)
 {
@@ -419,7 +413,7 @@ static void VK_RT_CreateFroxelImages(void)
             s_froxelDimFailed[0] = dim[0];
             s_froxelDimFailed[1] = dim[1];
             s_froxelDimFailed[2] = dim[2];
-            common->Warning("VK RT Froxel: grid allocation failed at %dx%dx%d — falling back to the ray march "
+            common->Warning("VK RT Froxel: grid allocation failed at %dx%dx%d — volumetrics off this frame "
                             "(VK_RT_VolFroxelActive is false while the images are null)",
                             dim[0], dim[1], dim[2]);
             return;
@@ -466,8 +460,8 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
 {
     memset(&ubo, 0, sizeof(ubo));
 
-    // invViewProj — same construction as the march's, kept identical so cell
-    // positions and march step positions agree (that is what F1's overlay tests).
+    // invViewProj, built the same way the resolve reconstructs world position, so
+    // cell centres and reconstructed pixel positions agree (F1's overlay tests it).
     {
         float vp[16];
         VK_RT_BuildFroxelViewProj(viewDef, vp);
@@ -521,7 +515,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
 
     ubo.depthParams[0] = dNear;
     ubo.depthParams[1] = dFar;
-    // Depth linearization constants — same idiom as BilateralPC in vk_vol.cpp.
+    // Depth linearization constants — see vf_LinearDepth in vol_froxel_common.glsl.
     ubo.depthParams[2] = -viewDef->projectionMatrix[14];
     ubo.depthParams[3] = viewDef->projectionMatrix[10];
 
@@ -559,9 +553,8 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     ubo.misc[2] = VK_RT_ValidFroxelDebugMode();
     ubo.misc[3] = 0;
 
-    // screen.xy = full res (depth fetch / NDC), screen.zw = the volBuffer the
-    // resolve writes. In froxel mode that is full res too — VK_RT_VolRequestedScale
-    // forces r_rtVolHalfRes off, because the resolve is a single trilinear fetch.
+    // screen.xy = render res (depth fetch / NDC), screen.zw = the volBuffer the
+    // resolve writes, which is display-sized.
     const vkRTImage_t &vb = vkRT.volBuffer[vk.currentFrame];
     ubo.screen[0] = (int32_t)vk.renderExtent.width;
     ubo.screen[1] = (int32_t)vk.renderExtent.height;
@@ -624,7 +617,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
 //                                                 selection, NOT giLightSsbo)
 //   set 0, binding 4: STORAGE_IMAGE              (froxelDir, 3D, write — Stage 5)
 //   set 1: vkRT.matDescLayout — shared material table, for light cookies. Only
-//          its bindless matTextures[4096] is used here, exactly as vol_march.comp.
+//          its bindless matTextures[4096] is used here.
 //
 // Binding 2 is the params UBO in EVERY froxel pass: vol_froxel_common.glsl
 // declares the block itself, so the slot is part of that file's contract.
@@ -829,9 +822,8 @@ static void VK_RT_InitFroxelIntegratePipeline(void)
 //   set 0, binding 4: COMBINED_IMAGE_SAMPLER (froxelIntegrated, sampler3D)
 //
 // No set 1 — the resolve samples no materials.  Binding 4's trilinear filter is
-// the whole of the real path: it replaces vol_bilateral.comp's depth-aware
-// upsample in XY, and performs the final partial cell's fractional weighting
-// in Z.
+// the whole of the real path: it does the depth-aware upsample in XY, and performs
+// the final partial cell's fractional weighting in Z.
 // ---------------------------------------------------------------------------
 
 static void VK_RT_InitFroxelResolvePipeline(void)
@@ -869,10 +861,9 @@ static void VK_RT_InitFroxelResolvePipeline(void)
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.froxelResolveDescLayout));
 
-    // Own trilinear/clamp sampler rather than borrowing vkRT.volSampler: that one
-    // is created at the END of VK_RT_InitVolMarchPipeline and is left NULL if the
-    // march shader fails to load, which would silently take the froxel path down
-    // with it.
+    // Own trilinear/clamp sampler rather than borrowing vkRT.volSampler: this one
+    // filters a 3D grid, and owning it keeps the froxel path independent of whether
+    // the composite pipeline came up.
     if (vkRT.froxelSampler == VK_NULL_HANDLE)
     {
         VkSamplerCreateInfo si = {};
@@ -1043,8 +1034,6 @@ static bool VK_RT_VolFroxelSelected(void)
 {
     if (!vkRT.isInitialized || !r_useRayTracing.GetBool() || !r_rtVol.GetBool())
         return false;
-    if (r_rtVolFroxel.GetInteger() != 1)
-        return false;
     return vkRT.froxelFillPipeline != VK_NULL_HANDLE && vkRT.froxelIntegratePipeline != VK_NULL_HANDLE &&
            vkRT.froxelResolvePipeline != VK_NULL_HANDLE;
 }
@@ -1149,7 +1138,7 @@ bool VK_RT_GetFroxelSampleParams(const viewDef_t *viewDef, vkFroxelSampleParams_
 // VK_RT_DispatchVolFroxelFill (public)
 //
 // One invocation per cell.  Reads the TLAS and the vol light selection; does NOT
-// read depth, so unlike the march this needs no depth layout round-trip.
+// read depth, so it needs no depth layout round-trip.
 // On exit froxelScatter[currentFrame] is in GENERAL and readable by the
 // integrate pass (F2) — nothing consumes it in F0.
 // ---------------------------------------------------------------------------
@@ -1289,7 +1278,7 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.froxelFillPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.froxelFillPipelineLayout, 0, 1,
                             &vkRT.froxelFillDescSets[frameIdx], 1, &uboOff);
-    // set=1: shared material table — light cookies, same bind as vol_march.comp.
+    // set=1: shared material table — light cookies.
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.froxelFillPipelineLayout, 1, 1,
                             &vkRT.matDescSet[vk.currentFrame], 0, NULL);
 
@@ -1321,9 +1310,8 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
 // ---------------------------------------------------------------------------
 // VK_RT_DispatchVolFroxelIntegrate (public)
 //
-// One invocation per grid COLUMN — 14400 of them at the 160x90 default, against
-// the march's ~500k per-pixel integrations.  Reads no depth, so no layout
-// round-trip.  Must follow the fill's compute->compute barrier.
+// One invocation per grid COLUMN — 14400 of them at the 160x90 default.  Reads no
+// depth, so no layout round-trip.  Must follow the fill's compute->compute barrier.
 // ---------------------------------------------------------------------------
 
 void VK_RT_DispatchVolFroxelIntegrate(VkCommandBuffer cmd, const viewDef_t *viewDef)
@@ -1455,13 +1443,7 @@ void VK_RT_DispatchVolFroxelIntegrate(VkCommandBuffer cmd, const viewDef_t *view
 //
 // F1: runs only while an overlay is selected, and writes the overlay into
 // vkRT.volBuffer[currentFrame] so vol_composite.frag can display it with no
-// knowledge of the grid.  volReadView is repointed at volBuffer because the
-// temporal/bilateral passes will have aimed it at their own outputs earlier in
-// the frame.
-//
-// Ordering note: this runs AFTER the temporal EMA has consumed volBuffer, so
-// overwriting it here cannot poison the history — the march refills volBuffer at
-// the top of the next frame, before temporal reads it again.
+// knowledge of the grid, and claims volReadView.
 //
 // Must be called outside a render pass; depth must be in ATTACHMENT_OPTIMAL.
 // ---------------------------------------------------------------------------
@@ -1486,11 +1468,9 @@ void VK_RT_DispatchVolFroxelResolve(VkCommandBuffer cmd, const viewDef_t *viewDe
     if (grid.image == VK_NULL_HANDLE || integrated.image == VK_NULL_HANDLE || vb.image == VK_NULL_HANDLE)
         return;
 
-    // Claim volReadView up front, not after the dispatch: temporal and bilateral
-    // stand down in froxel mode, so whatever they last pointed it at (volHistory
-    // or volBlurred) would otherwise persist — and at the old half resolution —
-    // through any early-out below. A stale volBuffer is the right failure here;
-    // a stale differently-sized image is not.
+    // Claim volReadView up front, not after the dispatch, so an early-out below
+    // leaves the composite reading a stale volBuffer rather than a stale view of
+    // some other, possibly differently sized, image.
     vkRT.volReadView[frameIdx] = vb.view;
 
     VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
@@ -1620,10 +1600,9 @@ void VK_RT_DispatchVolFroxelResolve(VkCommandBuffer cmd, const viewDef_t *viewDe
         s_lastDepthView[frameIdx] = vk.depthSampledView;
     }
 
-    // We are about to overwrite volBuffer. VK_RT_VolFroxelActive stands the march
-    // and the temporal EMA down whenever this runs, so today nothing else in the
-    // frame touches it — but this image is the hand-off point between two paths
-    // and the barrier is what keeps that true if the ordering is ever revisited.
+    // We are about to overwrite volBuffer.  This pass is its only writer, so nothing
+    // else in the frame touches it — the barrier is what keeps that safe if another
+    // pass is ever ordered against it.
     {
         VkMemoryBarrier volBarrier = {};
         volBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;

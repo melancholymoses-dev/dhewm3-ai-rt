@@ -1326,7 +1326,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         inst.instanceCustomIndex = 0;
         // Player geometry (renderEntity_t::rtPlayer) gets its own mask bit so rays can
         // exclude it with 0xFD. Everything else is bit 0, so a cullMask of 0x02 isolates
-        // the player (vol_march.comp self-shadow debug view).
+        // the player.
         inst.mask = ent->parms.rtPlayer ? VK_RT_MASK_PLAYER : VK_RT_MASK_WORLD;
         // Player body uses SBT offset 2 → player_reflect.rchit (main) and placeholder (probe, never fires).
         // World geometry uses offset 0 → reflect_ray.rchit (main) and glass_probe.rchit (probe).
@@ -2217,7 +2217,6 @@ void VK_RT_BeginLevelLoad(void)
     }
     // Temporal history from the old level is meaningless for the new one.
     vkRT.aoHistoryValid = false;
-    vkRT.volHistoryValid = false;
     // reflChain[].historyValid is deliberately not touched: a level load always trips
     // either the camera-cut test or !prevFrameValid on the first frame, so the reflection
     // EMA resets itself. Left as-is by Stage 4a rather than quietly changed.

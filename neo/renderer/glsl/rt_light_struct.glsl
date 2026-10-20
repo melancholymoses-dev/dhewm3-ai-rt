@@ -7,8 +7,8 @@
   rt_light_eval.glsl is NOT that shared home — it declares a rayPayloadEXT and
   calls traceRayEXT, so a compute shader cannot include it.
 
-  Before this existed the struct was transcribed four times (rt_light_eval.glsl,
-  vol_march.comp, vol_froxel_fill.comp, gi_probe_resolve.comp) and every field
+  Before this existed the struct was transcribed in each consumer
+  (rt_light_eval.glsl, vol_froxel_fill.comp, gi_probe_resolve.comp) and every field
   change had to land in all of them, with no compile error if one was missed.
 
   This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,

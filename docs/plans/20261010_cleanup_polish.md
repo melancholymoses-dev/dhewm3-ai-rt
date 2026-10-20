@@ -188,17 +188,26 @@ one of the two denoise ping-pong pairs.
 
 ---
 
-## Phase 4 — Remove non-froxel volumetrics
-
-Froxel is default (`r_rtVolFroxel 1`, `vk_vol_froxel.cpp:1023`). `vk_vol.cpp` is 2237 lines and may still hold shared composite / upsample code.
+## Phase 4 — Remove non-froxel volumetrics ✅ done (2026-10-20), not yet validated in-game
 
 | Step | Detail |
 |---|---|
-| 4a. Map | Which `vk_vol.cpp` functions the froxel path calls (composite, upsample, light list) |
-| 4b. Delete | per-pixel ray-march pipeline + shader, `r_rtVolFroxel` toggle, `r_rtVolSamples`, `r_rtVolHalfRes`, `r_rtVolUpsampleDepthSigma`, `r_rtVolBilateral*`, `r_rtVolWhiteNoiseMix` (verify each is march-only) |
-| 4c. Rename | Remaining froxel + composite code into `vk_vol.cpp`; drop `vk_vol_froxel.cpp` name split if one file is clearer |
+| 4a/4b. Deleted | `vol_march.comp`, `vol_bilateral.comp`; the march pipeline, the vol temporal EMA (`volHistory`, `volPrevCam*`, `volHistoryValid`) and the bilateral upsample (`volBlurred`); `VolParamsUBO`, `BilateralPC`, the `s_volMarchScale` machinery; `r_rtVolFroxel`, `r_rtVolSamples`, `r_rtVolHalfRes`, `r_rtVolUpsampleDepthSigma`, `r_rtVolBilateral(+Sigma)`, `r_rtVolTemporal(+Alpha)`; the `Vol`/`VolTemporal`/`VolBilateral` profile phases |
+| 4c. Not done | The split stays. `vk_vol.cpp` is 711 lines (medium coefficients + `volBuffer` + composite) against `vk_vol_froxel.cpp`'s 1653; merging makes one 2.4k-line file, which is not clearer |
+| 4d. Kept | `r_rtVolWhiteNoiseMix` — `vol_froxel_fill.comp` reads it, so it was never march-only. `r_rtVolMaxDist` likewise bounds the grid and the vol light selection |
 
-Check: volumetric hall + flashlight screenshots identical; vol GPU ms ≤ baseline; shader list in `CMakeLists.txt` matches files in `glsl/`.
+Two consequences worth knowing:
+
+- **`volReadView` has one claimant.** The froxel resolve is now the only writer of
+  `volBuffer`, so `VK_RT_CompositeVolumetrics` gates on `VK_RT_VolFroxelActive()`. Without
+  that, a frame where the grid stood down composites a black-cleared buffer through the
+  attenuating pipeline (`dst = src.rgb + dst*src.a`) and blanks the screen.
+- **The vol EMA was already dead.** It loaded `gi_temporal_resolve.comp.spv`, which Phase 3
+  deleted, so it had been silently warning-and-disabling since then.
+
+Check: volumetric hall + flashlight screenshots identical; vol GPU ms ≤ baseline (phases are
+now `FroxelFill`/`FroxelIntegrate`/`FroxelResolve`/`VolComposite` only); shader list in
+`CMakeLists.txt` matches files in `glsl/`.
 
 ---
 
@@ -280,7 +289,7 @@ Reordered 2026-10-13. Two principles, both from measurement rather than taste:
 | 1d Debug mode trim | low | 1a, 1b, 1c | Done |
 | 2 Reflection legacy mode 2 | low-med | 1c, 8g Stage 5 | Unblocked except for Stage 5's knob fold |
 | 3 Screen-space GI | med | 1a | Dead paths confirmed at 0.001 ms |
-| 4 Non-froxel vol | med | 1a | same. Takes `r_rtVolDebugMode` with it |
+| 4 Non-froxel vol | med | 1a | Done 2026-10-20, not yet validated in-game |
 | 5a Reset buttons | low | 0 | No cvar-set dependency; can land any time |
 | 5b Presets | low | 1c, 1d, 2, 3, 4 (final cvar set) | |
 | 7 Comments | none | all of the above | Last by design; `git diff -w` must show no code change |

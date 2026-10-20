@@ -1876,12 +1876,11 @@ void VK_RT_UpdateRenderExtent(void)
                        old.width, old.height, wn, hn, vk.swapchainExtent.width, vk.swapchainExtent.height, scale,
                        (float)wn / (float)vk.swapchainExtent.width, (float)hn / (float)vk.swapchainExtent.height);
 
-        // The AO/vol histories are indexed in render-resolution texels, so after a
-        // scale change every one of them refers to the previous raster grid.  Blending
-        // against that ghosts until it converges.  Same flags the camera-cut detector
-        // uses; this is the same class of event.
+        // The AO history is indexed in render-resolution texels, so after a scale
+        // change it refers to the previous raster grid.  Blending against that ghosts
+        // until it converges.  Same flag the camera-cut detector uses; this is the
+        // same class of event.
         vkRT.aoHistoryValid = false;
-        vkRT.volHistoryValid = false;
     }
 
     vk.renderExtent.width = wn;

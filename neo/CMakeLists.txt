@@ -775,9 +775,7 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/shadow_ray.rgen
 	renderer/glsl/shadow_ray.rmiss	
 	renderer/glsl/temporal_resolve.comp
-	renderer/glsl/vol_march.comp
 	renderer/glsl/vol_composite.frag
-	renderer/glsl/vol_bilateral.comp
 	renderer/glsl/vol_froxel_fill.comp
 	renderer/glsl/vol_froxel_integrate.comp
 	renderer/glsl/vol_froxel_resolve.comp

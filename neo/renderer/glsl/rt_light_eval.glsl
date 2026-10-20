@@ -147,7 +147,7 @@ bool rt_LightContribAt(int i, vec3 hitPos, vec3 hitNorm, float contribScale,
     // mirrors GL, where R_SetLightProject builds the falloff planes around parms.origin.
     // Point lights (lType 0) get box containment below; projected/flashlight lights
     // (1/2) need cone containment instead, or they light a full sphere around
-    // themselves instead of their actual cone — same tests vol_march.comp already uses.
+    // themselves instead of their actual cone — same tests the froxel fill uses.
     float atten;
     if (lType == 0u)
     {
