@@ -258,16 +258,10 @@ static_assert(sizeof(GIProbeStatsEntry) == 8, "GIProbeStatsEntry size mismatch")
 static GIProbeStateEntry *s_probeState = NULL;
 static int s_probeStateCount = 0;
 
-// CPU shadow of the GPU-written statistics. Kept separate from the device buffer
-// so the CPU never writes the latter behind an in-flight blend dispatch: a probe
-// that scrolls into a new tile is zeroed HERE, and the readback below refuses to
-// adopt the device value until that probe has been traced again.
+// CPU shadow of the GPU-written statistics.
 static GIProbeStatsEntry *s_probeStats = NULL;
 
-// Staging copy of the mapped readback snapshot. The classification loop below
-// reads each entry several times; doing that against mapped device memory is
-// far slower than one linear memcpy into ordinary heap, even when the
-// allocation got HOST_CACHED.
+// Staging copy of the mapped readback snapshot.
 static GIProbeStatsEntry *s_probeStatsRead = NULL;
 static bool s_statsReadbackCached = false;
 
@@ -287,23 +281,16 @@ static float s_spacing = 0.0f;
 
 // Round-robin cursor.
 //
-// Deliberately a SINGLE counter advanced once per frame, not one per
-// frame-in-flight slot. The plan's "per-slot counter" rule exists because a
-// tr.frameCount-derived index aliases with vk.currentFrame and pins each slot to
-// one fixed subset of a PER-SLOT resource forever (the GI checkerboard ghost).
-// The probe atlases are a single shared pair, so there is no per-slot resource
-// to pin: what matters here is only that the cursor advances exactly once per
-// frame, which the duplicate-dispatch guard below guarantees. Two per-slot
-// counters would actually break coverage — each would walk the same stride and
-// visit the same probes, leaving the rest never updated.
+// Deliberately a SINGLE counter advanced once per frame.
+// The probe atlases are a single shared pair;
+//  what matters here is only that the cursor advances exactly once per
+// frame, which the duplicate-dispatch guard below guarantees.
 static uint32_t s_updateCursor = 0;
 static int32_t s_updateBase = 0;
 
 // Set only once vkCmdTraceRaysKHR has actually been recorded for this slot.
 // The blend pass gates on this rather than on "the descriptor set was refreshed
-// this frame": every early-out in the trace below sits AFTER that refresh, and
-// blending an unwritten scratch image folds last frame's rays — or garbage on
-// the first frame — into the atlas with no way to tell afterwards.
+// this frame": every early-out in the trace below sits AFTER that refresh
 static int s_traceRecordedFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
 
 // Atlas geometry, derived from the probe count.
@@ -1360,22 +1347,12 @@ int VK_RT_GIProbeDebugMode(void)
     return VK_RT_ValidProbeDebugMode();
 }
 
-// True when the probe path OWNS the GI result — G2 wires this to stand the
-// per-pixel rgen, the temporal EMA and the a-trous chain down. It requires the
-// whole chain, so a shader that fails to load falls back to the per-pixel path
-// rather than leaving the screen with no GI at all (the same rule
-// VK_RT_VolFroxelActive enforces for the froxel path).
 bool VK_RT_GIProbeActive(void)
 {
     if (!vkRT.isInitialized || !r_useRayTracing.GetBool() || !r_rtGI.GetBool())
         return false;
     if (r_rtGIProbes.GetInteger() != 1)
         return false;
-    // The trace is part of the chain. VK_RT_InitGIPipeline tolerates a missing
-    // gi_probe_trace.rgen.spv by zeroing giProbeRgenRegion, and the trace then
-    // early-outs on it — so omitting it here stands the per-pixel path down in
-    // favour of probes that are never traced, i.e. black GI, which is the exact
-    // outcome this predicate exists to prevent.
     return vkRT.giProbeBlendPipeline != VK_NULL_HANDLE && vkRT.giProbeBorderPipeline != VK_NULL_HANDLE &&
            vkRT.giProbeResolvePipeline != VK_NULL_HANDLE && vkRT.giProbeIrradiance.image != VK_NULL_HANDLE &&
            vkRT.giPipeline != VK_NULL_HANDLE && vkRT.giProbeRgenRegion.deviceAddress != 0;
@@ -1430,20 +1407,6 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
 
     s_lastUpdateFrame = tr.frameCount;
     s_lastUboValid = false;
-
-    // One line per handover, unconditionally: a perf capture or a "GI went
-    // black" report has to say which sampling structure was live without
-    // needing r_vkLogRT turned on first.
-    {
-        static int s_lastOwner = -1;
-        const int owner = VK_RT_GIProbeActive() ? 1 : 0;
-        if (owner != s_lastOwner)
-        {
-            s_lastOwner = owner;
-            common->Printf("VK RT GIProbe: GI is now %s (r_rtGIProbes %d) — per-pixel rgen/temporal/a-trous %s\n",
-                           owner ? "PROBE" : "per-pixel", owner, owner ? "stood down" : "live");
-        }
-    }
 
     const float spacing = idMath::ClampFloat(8.0f, 512.0f, r_rtGIProbeSpacing.GetFloat());
     VK_RT_GIProbeAnchor(viewDef, spacing);

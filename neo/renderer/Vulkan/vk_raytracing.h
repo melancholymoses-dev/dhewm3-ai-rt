@@ -1192,13 +1192,13 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef);
 // G5b (20260906_froxel_probe_gi.md) — flicker factorization, owned by vk_gi.cpp's
 // classifier and consumed by vk_gi_probe.cpp when it builds GIProbeParams.
 //
-// A fast light is uploaded at its PEAK colour L̂ with s = current/peak alongside,
+// A fast light is uploaded at its PEAK colour Lhat with s = current/peak alongside,
 // so the probe fast bucket caches its transport time-invariantly and the resolve
 // multiplies the gain back in. Both are refreshed inside VK_RT_UploadGILights,
 // which vk_backend.cpp calls before any probe dispatch — reading them earlier in
 // the frame would hand the resolve the previous frame's flicker phase.
 //
-// Count is the clamped r_rtGIProbeFastBuckets (K). Gain is the L̂-luminance-
+// Count is the clamped r_rtGIProbeFastBuckets (K). Gain is the Lhat-luminance-
 // weighted mean of s over the bucket's uploaded lights, and is 0 — not 1 — when
 // the bucket holds no light, so its decaying atlas history cannot republish.
 int VK_RT_GIFastBucketCount(void);
@@ -1221,48 +1221,6 @@ void VK_RT_CompositeGI(VkCommandBuffer cmd);
 // r_rtAODebug view (replace blend).  Call inside the render pass after the shader
 // passes, same frame as VK_RT_CompositeGI; no-op when that didn't run.
 void VK_RT_CompositeGIDebug(VkCommandBuffer cmd);
-
-// ---------------------------------------------------------------------------
-// GI temporal EMA resolve (Phase 6.2)
-// ---------------------------------------------------------------------------
-
-// Initialize GI history images and the gi_temporal_resolve compute pipeline.
-// Called from VK_RT_InitGI after the GI ray pipeline is ready.
-void VK_RT_InitGITemporal(void);
-
-// Destroy all GI temporal resources.  Device must be idle before calling.
-void VK_RT_ShutdownGITemporal(void);
-
-// Resize GI history images when render resolution changes.
-void VK_RT_ResizeGITemporal(uint32_t width, uint32_t height);
-
-// Blend the raw GI buffer into the per-slot history using exponential moving average.
-// Must be called after VK_RT_DispatchGI (outside a render pass).
-// On entry giBuffer[currentFrame] is in GENERAL with a shader-write → shader-read barrier
-// already issued by VK_RT_DispatchGI.
-// On exit giHistory contains the blended result; giReadView[currentFrame]
-// is set to giHistory.view and a (COMPUTE_WRITE → FRAGMENT_READ) barrier is issued.
-void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewDef);
-
-// ---------------------------------------------------------------------------
-// GI À-trous spatial filter (Phase 6.3)
-// ---------------------------------------------------------------------------
-
-// Allocate ping-pong filter buffers and the gi_atrous.comp compute pipeline.
-// Called from VK_RT_InitGI after the ray pipeline is ready.
-void VK_RT_InitGIAtrous(void);
-
-// Destroy all À-trous resources.  Device must be idle before calling.
-void VK_RT_ShutdownGIAtrous(void);
-
-// Reallocate filter buffers when render resolution changes.
-void VK_RT_ResizeGIAtrous(uint32_t width, uint32_t height);
-
-// Run r_rtGIAtrousIterations filter passes over giReadView; updates giReadView
-// to point at the filtered result.  Must be called outside a render pass, after
-// VK_RT_DispatchTemporalResolveGI.  Issues a COMPUTE_WRITE → FRAGMENT_READ
-// barrier on exit.
-void VK_RT_DispatchAtrousGI(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // ---------------------------------------------------------------------------
 // GI receiver-albedo modulation (docs/plans/gi_albedo_target.md)

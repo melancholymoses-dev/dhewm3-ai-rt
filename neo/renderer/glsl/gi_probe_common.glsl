@@ -151,11 +151,9 @@ bool gip_CellInGrid(ivec3 absCell)
 
 // Round-robin schedule (G1).  updateBase comes from a PER-SLOT counter on the
 // CPU, never tr.frameCount — a frameCount-derived index advances in lockstep
-// with vk.currentFrame and pins each slot to one fixed subset forever, which is
-// the bug that cost the GI checkerboard a session.
+// with vk.currentFrame and pins each slot to one fixed subset forever.
 //
-// The trace rgen and the blend pass must agree on this exactly, so it lives
-// here rather than being open-coded twice.
+// The trace rgen and the blend pass must agree on this exactly
 ivec3 gip_ScheduledCell(int slot)
 {
     int li = (gp.rays.z + slot) % gip_ProbeCount();

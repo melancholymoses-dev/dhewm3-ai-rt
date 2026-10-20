@@ -287,8 +287,8 @@ void main()
             vec3  lightPos    = giLightBuf.lights[li].posRadius.xyz;
             vec3  emitPos     = giLightBuf.lights[li].emitPos.xyz;
             float sphereRad   = giLightBuf.lights[li].posRadius.w;
-            // G5b: colorIntensity.rgb is L̂ (the running peak) for a flickering
-            // light, so the current colour is L̂ * s. Folded in here rather than
+            // G5b: colorIntensity.rgb is Lhat (the running peak) for a flickering
+            // light, so the current colour is Lhat * s. Folded in here rather than
             // at the contrib line so nothing downstream — cookie, phase, class
             // gain — can be reached without it. Missing this makes fan-blade
             // shafts go steady under a strobing fixture while the fixture itself

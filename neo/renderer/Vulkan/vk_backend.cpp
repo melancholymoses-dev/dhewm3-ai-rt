@@ -4571,8 +4571,6 @@ void VK_RB_DrawView(const void *data)
         if (fenceResult != VK_SUCCESS)
         {
             // VK_ERROR_DEVICE_LOST (-4): GPU crashed executing the previous frame's command buffer.
-            // Enable r_vkLogRT 1 (or 2 for per-light detail) to see RT breadcrumbs before the crash.
-            // Enable r_vkLogSubmitInfo 2 to see per-frame submit state.
             common->Warning("VK: vkWaitForFences failed: %d (%s)%s", (int)fenceResult, VK_ResultToString(fenceResult),
                             (fenceResult == VK_ERROR_DEVICE_LOST)
                                 ? " — GPU DEVICE LOST: enable r_vkLogRT 2 to see RT breadcrumbs"
@@ -5022,19 +5020,10 @@ void VK_RB_DrawView(const void *data)
         // main view's history buffers with their alternate perspective, causing ghosting.
         //
         // 2026-08-31 (rt_temporal_cut_detection.md follow-up): Doom 3 submits the 2D
-        // GUI/HUD overlay as a second RC_DRAW_VIEW every frame (this function's own
-        // comment above), with a renderView that's never populated (no camera makes
-        // sense for a 2D pass) — neither isSubview nor isMirror, so it was passing this
-        // guard and re-running AO/Refl/GI/Vol against a degenerate view every frame.
-        // First attempt gated on viewEntitys != NULL (tr_local.h's documented "is this
-        // view solely 2D" signal) — wrong: viewEntitys only chains actual game entities
-        // (R_SetEntityDefViewEntity, tr_light.cpp:441), NOT the static world/brush
-        // geometry (rendered via the separate worldSpace viewEntity), so any ordinary
-        // corridor with zero monsters/items on screen also has viewEntitys == NULL and
-        // was being wrongly skipped too — surfaced as GI ghosting at disoccluded edges
-        // during camera motion (AO/Vol far less visibly, same root cause). Use the
-        // actual confirmed signature instead: the GUI overlay's viewaxis is the zero
-        // vector, which no real camera (with or without visible entities) ever has.
+        // GUI/HUD overlay as a second RC_DRAW_VIEW every frame, with a renderView that's never populated
+        //  (no camera makessense for a 2D pass). Uses the actual confirmed signature:
+        // the GUI overlay's viewaxis is the zero vector,
+        //  which no real camera (with or without visible entities) ever has.
         const bool hasRealCamera = backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f;
         if (!backEnd.viewDef->isSubview && !backEnd.viewDef->isMirror && hasRealCamera)
         {
@@ -5050,13 +5039,12 @@ void VK_RB_DrawView(const void *data)
                     return;
             }
 
-            // Froxel grid (20260906_froxel_probe_gi.md Part A), r_rtVolFroxel 1.
+            // Froxel grid, r_rtVolFroxel 1.
             // Exclusive with the march as of F2: VK_RT_VolFroxelActive() stands the
             // march/temporal/bilateral passes down, so exactly one path writes volBuffer.
             //
             // Runs here, ahead of reflections, because the reflection rgen marches
-            // froxelScatter for in-scatter along the reflected ray
-            // (20261013_reflection_volumetrics.md) and a volume filled after it would be
+            // froxelScatter for in-scatter along the reflected ray and a volume filled after it would be
             // two frames stale on a moving light. Only needs the TLAS and the vol light
             // selection, both ready well before this point. Integrate and resolve stay
             // after GI, where the rest of the vol chain lives.
@@ -5109,20 +5097,6 @@ void VK_RB_DrawView(const void *data)
                 if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGI", false))
                     return;
             }
-
-            VK_SetRenderStage("RT_GI_Temporal");
-            const uint64_t rtCpuGITemporalStart = VK_RTProfile_CPUStamp();
-            int rtProfGITemporal = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_TEMPORAL);
-            VK_RT_DispatchTemporalResolveGI(cmdBuf, backEnd.viewDef);
-            VK_RTProfile_PhaseEnd(cmdBuf, rtProfGITemporal);
-            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_TEMPORAL, rtCpuGITemporalStart);
-
-            VK_SetRenderStage("RT_GI_Atrous");
-            const uint64_t rtCpuGIAtrousStart = VK_RTProfile_CPUStamp();
-            int rtProfGIAtrous = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_ATROUS);
-            VK_RT_DispatchAtrousGI(cmdBuf, backEnd.viewDef);
-            VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIAtrous);
-            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_ATROUS, rtCpuGIAtrousStart);
 
             if ((splitMask & 1024) != 0)
             {
@@ -5328,19 +5302,13 @@ void VK_RB_DrawView(const void *data)
         fflush(NULL);
     }
 
-    // U4 (docs/plans/completed/20260918_fsr_upscaling.md §9): build FSR 2's mask inputs here, after
-    // the interactions and before the blend stages — that boundary is the whole point of
-    // the pre-alpha snapshot.  The capture needs the render pass closed (a vkCmdCopyImage
-    // cannot be recorded inside one), so it costs one end/resume when enabled.
-    //
-    // Same real-camera gate as the RT dispatches above: the 2D overlay view arrives as a
-    // second RC_DRAW_VIEW with a zeroed viewaxis and has nothing pre-alpha about it, and a
-    // mirror/subview would overwrite the primary view's masks with its own.
-    //
-    // Bloom B1a shares the same slot and the same gate for the same reasons: its
-    // snapshot is only meaningful before the blend stages, it is a compute dispatch
-    // that cannot be recorded inside a render pass, and a mirror/subview would
-    // overwrite the primary view's snapshot with its own.  One end/resume covers both.
+    // Build FSR 2's mask inputs here, after
+    //  the interactions and before the blend stages — that boundary is the whole point of
+    //  the pre-alpha snapshot.
+    //  Bloom B1a shares the same slot and the same gate for the same reasons: its
+    //  snapshot is only meaningful before the blend stages, it is a compute dispatch
+    //  that cannot be recorded inside a render pass, and a mirror/subview would
+    //  overwrite the primary view's snapshot with its own.  One end/resume covers both.
     const bool fsrWantsCapture = VK_RT_UpscaleNeedsReactiveMask() || VK_RT_UpscaleNeedsTcMask();
     const bool bloomWantsCapture = VK_RT_BloomActive();
     if ((fsrWantsCapture || bloomWantsCapture) && backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f &&
@@ -5725,7 +5693,6 @@ void VK_RB_SwapBuffers()
     // mutually exclusive, so ordering between them does not matter.
     VK_SetRenderStage("RT_MaskDebug");
     VK_RT_DispatchMaskDebug(cmdBuf);
-
 
     // Tonemap: read hdrScene (RGBA16F), apply Uchimura filmic curve, blit to swapchain.
     // After this call the swapchain image is in PRESENT_SRC_KHR.

@@ -3,7 +3,7 @@
 
 dhewm3-rt Vulkan — gi_ray.rchit — closest-hit shader for GI bounce rays.
 
-Phase 6.1 Option B — Single light evaluation at secondary hit:
+Single light evaluation at secondary hit:
   At the secondary hit point, evaluates direct lighting from each scene
   light to produce physically motivated bounce radiance:
 
@@ -18,13 +18,11 @@ Phase 6.1 Option B — Single light evaluation at secondary hit:
     2. Fire a shadow ray (missIndex=1 → gi_shadow.rmiss) to test visibility.
     3. Accumulate irradiance contribution.
 
-Wave 3 / P3 — stochastic light selection:
+Stochastic light selection:
   With r_rtGIStochasticLights > 0 the light loop instead importance-samples
   1-2 lights per hit and fires shadow rays only for those, dividing by the
   selection probability (rt_EvalDirectLightingStochastic in rt_light_eval.glsl).
-  Worst case falls from numSamples x maxBounceLights rays/pixel (4 x 16 = 64) to
-  numSamples x picks (4 x 2 = 8), which is what buys the headroom to raise
-  r_rtGISamples.  Set r_rtGIStochasticLights 0 for the legacy all-lights path.
+  Set r_rtGIStochasticLights 0 for the legacy all-lights path.
 
   Fallback (numLights == 0, e.g. r_rtGILightBounce 0):
     Returns raw albedo (Option A behaviour) so the rgen's giStrength scale
@@ -67,7 +65,6 @@ layout(set = 0, binding = 3) uniform GIParams {
     ivec2 screenSize;
     ivec2 scissorOffset;
     ivec2 scissorExtent;
-    int   checker;
     int   maxBounceLights;   // 0 = Option A fallback; otherwise caps light loop
     float giContrast;        // rgen only — present so the block matches GIParamsUBO
     int   stochasticLights;  // P3: shadow rays per bounce hit (0 = every light)
@@ -151,9 +148,9 @@ void main()
     int n = min(rtLightBuf.numLights, min(params.maxBounceLights, RT_LIGHT_MAX_LIGHTS));
 
     // G5b: three-way split. `stable` is the steady lights; `fastNorm` is the
-    // flickering ones evaluated at their peak L̂ (what the probe fast bucket
+    // flickering ones evaluated at their peak Lhat (what the probe fast bucket
     // caches, and the only form that is time-invariant); `fastScaled` is those
-    // same lights at L̂·s, i.e. as they look right now.
+    // same lights at Lhat·s, i.e. as they look right now.
     vec3 stable, fastNorm, fastScaled;
     if (params.stochasticLights > 0)
     {

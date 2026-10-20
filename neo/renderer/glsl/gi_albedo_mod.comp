@@ -3,15 +3,14 @@
 
 dhewm3-rt Vulkan — gi_albedo_mod.comp — GI receiver-albedo modulation.
 
-Multiplies the denoised GI buffer (post temporal + à-trous) by the receiving
-surface's albedo, sampled from the gbufAlbedo G-buffer target written by the
+Multiplies the denoised GI buffer by the receiving surface's albedo, 
+sampled from the gbufAlbedo G-buffer target written by the
 depth prepass (gbuffer.frag / gbuffer_clip.frag). Without this, the GI
 composite adds raw bounced radiance directly onto every surface regardless of
 how much of it that surface would actually reflect — a near-black material
 gets the same GI wash as a white one. See docs/plans/gi_albedo_target.md.
 
-Runs once, after the à-trous filter (or straight after temporal resolve if
-à-trous is disabled) and before the interaction render pass composites GI
+Runs once before the interaction render pass composites GI
 onto the framebuffer. Not in-place: the source is read-only (checkerboard
 history / à-trous ping-pong state), so the result is written to a separate
 scratch image and vk_gi.cpp repoints giReadView at it.

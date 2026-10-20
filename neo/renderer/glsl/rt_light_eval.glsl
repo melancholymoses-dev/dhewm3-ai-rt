@@ -101,7 +101,7 @@ float rtle_rand(uint seed)
 // G5b — the flicker gain of light i, or 1.0 for a steady light.
 //
 // rt_LightContribAt deliberately does NOT apply this: it returns the light at
-// L̂, which is what the probe fast bucket must cache and — just as importantly —
+// Lhat, which is what the probe fast bucket must cache and — just as importantly —
 // what the reservoir below must weight by, so the same light keeps winning picks
 // at the same rate through its dark phase instead of starving the bucket.
 // Everything that wants the light as it looks right now multiplies it back in.
@@ -126,7 +126,7 @@ bool rt_LightIsBucketed(int i)
 // stochastic loop below.  Returns false when the light doesn't reach the point.
 //
 // G5b: the result is NORMALISED — a flickering light is evaluated at its peak
-// colour L̂, without its current gain s. Multiply by rt_LightFastScale(i) for
+// colour Lhat, without its current gain s. Multiply by rt_LightFastScale(i) for
 // the light as it is this frame.
 // ---------------------------------------------------------------------------
 bool rt_LightContribAt(int i, vec3 hitPos, vec3 hitNorm, float contribScale,
@@ -270,8 +270,8 @@ bool rt_TraceLightShadow(vec3 hitPos, vec3 hitNorm, vec3 lightDir, float dist, f
 // G5b splits the sum three ways so probe GI can cache the flicker-normalised
 // half separately:
 //   stableOut     — steady lights, as today
-//   fastNormOut   — flickering lights at L̂ (s = 1): the probe fast bucket
-//   fastScaledOut — the same lights at L̂·s: what everything else wants
+//   fastNormOut   — flickering lights at Lhat (s = 1): the probe fast bucket
+//   fastScaledOut — the same lights at Lhat·s: what everything else wants
 // stableOut + fastScaledOut is the value this function used to return, so the
 // wrapper below leaves every existing caller's behaviour unchanged.
 // ---------------------------------------------------------------------------
@@ -294,7 +294,7 @@ void rt_EvalDirectLightingBuckets(vec3 hitPos, vec3 hitNorm, int maxLights, int 
         if (!rt_LightContribAt(i, hitPos, hitNorm, contribScale, contrib, lightDir, dist))
             continue;
 
-        // The shadow budget is spent on L̂ rather than on the current value, so a
+        // The shadow budget is spent on Lhat rather than on the current value, so a
         // flickering light keeps its shadow ray through its dark phase and its
         // cached transport stays shadowed correctly.
         float weight = 1.0;

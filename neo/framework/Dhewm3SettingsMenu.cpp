@@ -2503,12 +2503,8 @@ struct RTCVars
     idCVar *rtReflRoughLumExp = nullptr;
 
     // GI fine-tuning
-    idCVar *rtGITemporal = nullptr;
-    idCVar *rtGITemporalAlpha = nullptr;
-    idCVar *rtGISamples = nullptr;
     idCVar *rtGIMaxLights = nullptr;
     idCVar *rtGILightCollectRadiusScale = nullptr;
-    idCVar *rtGICheckerboard = nullptr;
     idCVar *rtGIRadius = nullptr;
     idCVar *rtGIStrength = nullptr;
     idCVar *rtGIDirectScale = nullptr;
@@ -2519,11 +2515,6 @@ struct RTCVars
     idCVar *rtGIEmissiveScale = nullptr;
     idCVar *rtGIFalloffMode = nullptr;
     idCVar *rtGIFalloffReach = nullptr;
-    idCVar *rtGIAtrous = nullptr;
-    idCVar *rtGIAtrousIterations = nullptr;
-    // rtGIAtrousSigmaL/SigmaZ removed from the menu 2026-08-23 (never touched, no
-    // visible effect) — the r_rtGIAtrousSigmaL/r_rtGIAtrousSigmaZ cvars themselves
-    // are untouched, still console-settable, just not exposed here.
     idCVar *rtGIContrast = nullptr;
 
     // Volumetric Lighting
@@ -2628,12 +2619,8 @@ static void InitRTOptionsMenu()
     rtCVars.rtReflAtrousFireflyClamp = cvarSystem->Find("r_rtReflAtrousFireflyClamp");
     rtCVars.rtReflMaxLuminance = cvarSystem->Find("r_rtReflMaxLuminance");
     rtCVars.rtReflRoughLumExp = cvarSystem->Find("r_rtReflRoughLumExp");
-    rtCVars.rtGITemporal = cvarSystem->Find("r_rtGITemporal");
-    rtCVars.rtGITemporalAlpha = cvarSystem->Find("r_rtGITemporalAlpha");
-    rtCVars.rtGISamples = cvarSystem->Find("r_rtGISamples");
     rtCVars.rtGIMaxLights = cvarSystem->Find("r_rtGIMaxLights");
     rtCVars.rtGILightCollectRadiusScale = cvarSystem->Find("r_rtGILightCollectRadiusScale");
-    rtCVars.rtGICheckerboard = cvarSystem->Find("r_rtGICheckerboard");
     rtCVars.rtGIRadius = cvarSystem->Find("r_rtGIRadius");
     rtCVars.rtGIStrength = cvarSystem->Find("r_rtGIStrength");
     rtCVars.rtGIDirectScale = cvarSystem->Find("r_rtGIDirectScale");
@@ -2644,8 +2631,6 @@ static void InitRTOptionsMenu()
     rtCVars.rtGIBounceScale = cvarSystem->Find("r_rtGIBounceScale");
     rtCVars.rtGIFalloffMode = cvarSystem->Find("r_rtGIFalloffMode");
     rtCVars.rtGIFalloffReach = cvarSystem->Find("r_rtGIFalloffReach");
-    rtCVars.rtGIAtrous = cvarSystem->Find("r_rtGIAtrous");
-    rtCVars.rtGIAtrousIterations = cvarSystem->Find("r_rtGIAtrousIterations");
     rtCVars.rtGIContrast = cvarSystem->Find("r_rtGIContrast");
     rtCVars.rtVol = cvarSystem->Find("r_rtVol");
     rtCVars.rtVolSamples = cvarSystem->Find("r_rtVolSamples");
@@ -2852,12 +2837,11 @@ static void DrawRTOptionsMenu()
         // --- Left column: general + point lights ---
         ImGui::TableNextColumn();
         ImGui::TextDisabled("General");
-        RTCheckbox("RT GI Probes", rtCVars.rtGIProbes);
-        RTSliderInt("GI Samples (1-8)", rtCVars.rtGISamples, 1, 8);
         RTSliderInt("GI Max Lights (nearest-first, 1-128)", rtCVars.rtGIMaxLights, 1, 128);
         RTSliderFloat("GI Light Collect Radius Scale", rtCVars.rtGILightCollectRadiusScale, 0.25f, 4.0f, "%.2f");
         RTSliderFloat("GI Radius (world units)", rtCVars.rtGIRadius, 16.0f, 512.0f, "%.0f");
-
+        RTSliderFloat("GI Temporal Hysteresis (1=full history, 0=current only)", rtCVars.rtGIProbeHysteresis, 0.0f,
+                      1.0f, "%.3f");
         ImGui::TableNextColumn();
         ImGui::TextDisabled("Contrast/Scale");
         RTSliderFloat("GI Strength", rtCVars.rtGIStrength, 0.0f, 1.0f);
@@ -2866,23 +2850,6 @@ static void DrawRTOptionsMenu()
         RTSliderFloat("Bounce Light Scale", rtCVars.rtGIBounceScale, 0.0f, 10.0f, "%.1f");
         ImGui::EndTable();
     }
-    ImGui::Spacing();
-    ImGui::SeparatorText("GI Temporal Filter (EMA)");
-    RTCheckbox("GI Temporal Accumulation (EMA)", rtCVars.rtGITemporal);
-    const bool giTemporalOn = rtCVars.rtGITemporal && rtCVars.rtGITemporal->GetBool();
-    ImGui::BeginDisabled(!giTemporalOn);
-    RTSliderFloat("Temporal Alpha (0=full history, 1=current only)", rtCVars.rtGITemporalAlpha, 0.0f, 1.0f, "%.3f");
-    RTSliderFloat("Probe Alpha (1=full history, 0=current only)", rtCVars.rtGIProbeHysteresis, 0.0f, 1.0f, "%.3f");
-    ImGui::EndDisabled(); // !giTemporalOn
-
-    ImGui::Spacing();
-    ImGui::SeparatorText("GI Spatial Filter (A-trous)");
-    RTCheckbox("A-trous Spatial Filter", rtCVars.rtGIAtrous);
-    const bool giAtrousOn = rtCVars.rtGIAtrous && rtCVars.rtGIAtrous->GetBool();
-    ImGui::BeginDisabled(!giAtrousOn);
-    RTSliderInt("A-trous Filter Passes", rtCVars.rtGIAtrousIterations, 1, 6);
-    ImGui::EndDisabled(); // !giAtrousOn
-
     ImGui::EndDisabled(); // !giOn
     ImGui::Spacing();
     ImGui::SeparatorText("GI Volumetric Lighting");

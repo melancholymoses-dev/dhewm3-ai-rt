@@ -29,7 +29,7 @@
 #define GI_LIGHT_FLAG_HAS_COOKIE 0x1u
 
 // G5b (completed/20260906_froxel_probe_gi.md) — this light is classified as
-// flickering: colorIntensity.rgb is its PEAK colour L̂ and fastScale is
+// flickering: colorIntensity.rgb is its PEAK colour Lhat and fastScale is
 // s = current/peak.  Every consumer must multiply the two to get the light as it
 // looks right now.
 #define GI_LIGHT_FLAG_FAST 0x2u
@@ -48,7 +48,7 @@
 
 struct RTLight {
     vec4 posRadius;      // xyz = volume centre (parms.origin), w = falloff/pre-cull radius
-    vec4 colorIntensity; // rgb = light colour — L̂ when FAST — a = intensity
+    vec4 colorIntensity; // rgb = light colour — Lhat when FAST — a = intensity
     vec4 coneDir;        // projected: xyz=dir, w=cos(halfAngle); zeroed for point
     vec4 boxExtents;     // point: xyz=AABB half-extents, w=0; projected: w=max reach, xyz=0
     uint lightType;      // 0 = point, 1 = projected/spot, 2 = player flashlight

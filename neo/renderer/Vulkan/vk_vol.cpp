@@ -893,7 +893,7 @@ static VkRect2D VK_RT_Vol_ComputeDispatchRect(const viewDef_t *viewDef, int scal
 }
 
 // ---------------------------------------------------------------------------
-// History image lifecycle (mirrors VK_RT_AllocGIHistoryImage pattern)
+// History image lifecycle
 // ---------------------------------------------------------------------------
 
 static bool VK_RT_AllocVolHistoryImage(vkRTImage_t &img, uint32_t width, uint32_t height)
