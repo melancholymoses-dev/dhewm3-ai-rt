@@ -21,6 +21,11 @@ The original Dhewm3 project is hosted at: https://github.com/dhewm
 
 There is an archived _vkDoom3_ Vulkan implementation of Dhewm-BFG edition at  https://github.com/DustinHLand/vkDOOM3, which I found after starting work.
 
+## Installation
+
+To install this, unzip one of the releases for your OS.
+Extract all of the the files from dhewm3-rt on top of an existing Doom 3 install, or copy over the pak files from that install into this dir's `base` folder.
+
 ## Overall Impact of RT
 
 Mostly, the ray-tracing is computationally expensive, and tends to fight the original art direction - which the map design and gameplay were already optimized towards.
@@ -63,7 +68,7 @@ I made no attempts to preserve Dhewm3's Mac builds since the driver situation se
 ## 0. Tweaked lighting on projectiles for some weapons (pulse rifle, rocket launcher)
 
 ![Restored plasma particle luminance.](docs/img/screenshots/20260331_restore_luminance.jpg)
-This is just a definition on the weapon to activate an existing effect.  This was already in-game but probably off for 2005 performance reasons.  Most noticeable on plasma and rockets.
+This is just a definition on the weapon to activate a pre-existing effect.  This was already in-game but probably off for 2005 performance reasons.  Most noticeable on plasma and rockets.
 
 The third person shadow was also always there, but never activated.  This is essential for RT reflections reflections, and adds a lot of atmosphere on its own.  See Item 9 for the shadow.
 
@@ -71,8 +76,11 @@ The third person shadow was also always there, but never activated.  This is ess
 This kept the original GL pipeline that can be toggled back to, and created a Vulkan pipeline in parallel.  That was the essential starting point for the vendor neutral ray-tracing work.
 
 ## 2. Ray Traced shadows.
-![Ray Traced Shadows](docs/img/screenshots/20261018_shadows_rt.jpg)
-![Ray Traced Original](docs/img/screenshots/20261018_shadows_stencil.jpg)
+
+![Ray Traced Shadows](docs/img/screenshots/20261018_shadow_rt.jpg)
+
+![Ray Traced Original](docs/img/screenshots/20261018_shadow_stencil.jpg)
+
 Top screenshot is RT, lower screenshot is original stencil.  Slight differences in shadows, and we're blurring the shadow edges a little.  In all, it really is not that noticeable.  The third-person player model showing up is more impactful in shadows.
 
 ## 3. Ray-Traced Ambient Occlusion with temporal filtering.
@@ -112,10 +120,10 @@ AMD Fidelity FX FSR2, with FSR1 as backup, and bilinear upscale as simplest vers
 No plans to go to FSR3, since it is harder to build on Linux, and FSR2 looks good enough and works on AMD and Nvidia Hardware.  It mostly looks acceptable, and buys back some performance.  There are some unavoidable tradeoffs between blurriness and aliasing, especially noticeable on grids.
 
 ## 8. Controller Update
-Tweaked handling of controller with a light auto-aim and added a D-pad weapon selector ala Half-life 2.  Also added rumble for pain, weapon fire, and beast foot steps.  Need to test it works on more controllers.
+Tweaked handling of controller with a light auto-aim and added a D-pad weapon selector ala Half-life 2.  Also added controller rumble for pain, weapon fire, and beast foot steps.  Need to test it works on more controllers.
 
 ## 9. First Person Body
-Added a custom first person body, based off the marine body, and adjusted in Blender by hand.   The softness comes from the RT shadows. (Note: the third person shadow could appear in the original game)
+Added a custom first person body, based off the existing third person marine body, and adjusted in Blender by hand primarily by distorting the torso.  (Note: the third person shadow could appear in the original game)
 ![Doom guy has legs!](docs/img/screenshots/20261013_legs_shadow.jpg)
 
 ## Defaults Useful Cvars
@@ -127,21 +135,22 @@ The pipeline and ray-tracing can be enabled/disabled at the terminal in game or 
 See `docs/Dhewm3-AI-RT-Settings.md` for a fuller list.
 
 ## Additional Files
-
+The following are created as part of the compile process, and included in the released zips:
 - Part of the build process requires compiling the Vulkan shaders and copying them.
 Currently the compiled shaders are compiled and copied in `base/glprogs/glsl` relative to where the player's save data and config lives.
 (e.g. ~/Documents/dhewm3/)
 
-- I am also editing some gun definitions to cast more light.
-Those should be copied to `base/def` alongside the shaders to take effect in game.
+- I edited some gun definitions to cast more light from projectiles.
+The build process copies these to `base/def` alongside the shaders to take effect in game.
 - Updated Plasma Rifle particles to shed blue light on pulses.
 - Updated Rockets to emit light too.
 
 - First person model is in base/models/sp_player.md5mesh and based on the original third person model, though hacked on in Blender so it looks okay from camera perspective.
 
-- There is also a material for tracking added GI accent lights in logging.   Game will break without that material.
+- There is also a material for tracking added GI accent lights in logging.  Game will break without that material.
 
-- Also a test map ("`simple`") included that I have used for checking shadows/volumetrics/reflections and weapon effects.
+- This also includes a small test map ("`simple`") built in DarkRadiant.  Useful for quickly checking shadows/volumetrics/reflections/modeling and weapon effects.
+Accessible by running `dmap simple` from in-game console and then `map simple`.
 
 # GENERAL BUILD NOTES
 
@@ -166,6 +175,8 @@ See https://dhewm3.org/#how-to-install for game data installation instructions. 
 ## Configuration
 
 See [Configuration.md](./Configuration.md) for dhewm3-specific configuration, especially for using gamepads or the new settings menu.
+
+Also see [Dhewm3-AI-RT-Settings.md](./docs/Dhewm3-AI-RT-Settings.md) for more specific Dhewm3-RT Cvar settings.
 
 ## Compiling
 
