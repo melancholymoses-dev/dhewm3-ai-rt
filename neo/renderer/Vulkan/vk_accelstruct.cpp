@@ -153,7 +153,7 @@ static float VK_RT_Pass2CullRadius()
 static const int VK_RT_MAX_TLAS_INSTANCES = 4096;
 
 // ---------------------------------------------------------------------------
-// TLAS build instrumentation (docs/plans/20261009_vol_fix.md stage 1).
+// TLAS build instrumentation.
 //
 // The fallback passes exist to re-add occluders that portal/frustum culling
 // dropped, so a zero count there is a silent correctness bug: rays simply pass
@@ -169,7 +169,7 @@ struct vkRTTlasPassStats_t
     uint32_t rejDist, rejAlreadyAdded, rejDynamic, rejViewLocal, rejNoModel, rejNoCachedBlas, rejGeomFull;
     uint32_t rejDistWorld;       // world areas lost to the distance cull alone
     float nearestRejWorldOrigin; // origin-based distance of the closest such area
-    float nearestRejWorldBounds; // same area measured against its bounds — what stage 2 will use
+    float nearestRejWorldBounds; // same area measured against its bounds
 };
 
 // Distance from a point to the entity's world-space bounds, 0 when inside.
@@ -536,7 +536,7 @@ static void AllocASBuffer(VkDeviceSize size, VkBufferUsageFlags extraUsage, VkBu
     VK_CHECK(vkBindBufferMemory(vk.device, *outBuf, *outMem, 0));
 }
 
-// GUI reflections Stage 0 (docs/plans/20261015_gui_reflections.md): log each GUI surface
+// Log each GUI surface
 // the BLAS filter sees, once per model/surface. Dynamic models rebuild often, so dedupe.
 static void VK_RT_LogGuiBlasSurf(const idRenderModel *model, int surfIdx, const idMaterial *shader, bool skipped)
 {
@@ -556,7 +556,7 @@ static void VK_RT_LogGuiBlasSurf(const idRenderModel *model, int surfIdx, const 
 // The MF_NOSHADOWS exclusion. Shared with the dynamic-instance address refresh, which must
 // walk the same surfaces to keep BLAS geometry slots aligned. Real window glass stays for
 // reflection rays; so do GUI surfaces (stage-less entityGui is translucent, hence noshadows),
-// which reflections show via their live texture (docs/plans/20261015_gui_reflections.md).
+// which reflections show via their live texture.
 static bool VK_RT_NoShadowsExcluded(const idMaterial *shader)
 {
     if (!shader->TestMaterialFlag(MF_NOSHADOWS))
@@ -566,10 +566,9 @@ static bool VK_RT_NoShadowsExcluded(const idMaterial *shader)
     return shader->GetSurfaceType() != SURFTYPE_GLASS && !shader->HasGui();
 }
 
-// GUI reflections Stage 2: point a GUI surface's material entry at its live texture slot,
-// resolving the GUI per instance as tr_light.cpp does. Without a rendered slot the entry
-// keeps GUI_SURF only, and every any-hit shader ignores it (the pre-Stage-2 result).
-// Returns a value for the static signature so slot changes rewrite cached entries.
+// Point a GUI surface's material entry at its live texture slot, resolving the GUI per
+// instance as tr_light.cpp does.  Without a slot the entry keeps GUI_SURF only and any-hit
+// ignores it.  Returns a value for the static signature so slot changes rewrite entries.
 static uint32_t VK_RT_BindGuiMaterial(VkMaterialEntry &e, const idMaterial *shader, const idRenderEntityLocal *ent)
 {
     if (!shader || (e.flags & VK_MAT_FLAG_GUI_SURF) == 0)
@@ -643,18 +642,8 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
         if (geo->numVerts == 0 || geo->numIndexes == 0)
             continue;
 
-        // Exclude surface types that must not be TLAS occluders:
-        //
-        //  MF_POLYGONOFFSET  — decals coplanar with the surface beneath them.
-        //    Including them causes AO/shadow rays from nearby pixels to
-        //    immediately hit the decal quad → black squares matching decal bounds.
-        //
-        //  MF_NOSHADOWS  — material explicitly opts out of shadow casting.
-        //    Particles, flares, and some translucent surfaces carry this flag.
-        //
-        //  DFRM_PARTICLE / DFRM_PARTICLE2 / DFRM_SPRITE / DFRM_FLARE  — soft
-        //    particles and sprites are view-facing billboards with no physical
-        //    thickness; including them adds spurious AO and shadow blockers.
+        // Not TLAS occluders: MF_POLYGONOFFSET decals (coplanar, self-hit by nearby rays),
+        // MF_NOSHADOWS opt-outs, and particle/sprite/flare billboards (no thickness).
         if (surf->shader)
         {
             if (surf->shader->TestMaterialFlag(MF_POLYGONOFFSET))
@@ -670,11 +659,8 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
             const deform_t def = surf->shader->Deform();
             if (def == DFRM_PARTICLE || def == DFRM_PARTICLE2 || def == DFRM_SPRITE || def == DFRM_FLARE)
                 continue;
-            // Skip surfaces still using the engine's white placeholder material.
-            // Sprites and beams always set surf.shader = tr.defaultMaterial; they
-            // only have a real visual via the entity's customShader override during
-            // rasterisation.  In RT these produce opaque white boxes.  If the
-            // entity later gets a real shader on the surface this check will pass.
+            // Sprites and beams carry tr.defaultMaterial and only look right via the entity's
+            // customShader at raster time; in RT they would be opaque white boxes.
             if (surf->shader == tr.defaultMaterial)
                 continue;
         }
@@ -757,11 +743,8 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
     }
 
     // ---------------------------------------------------------------------------
-    // BLAS update path: reuse existing buffers and AS when geometry is compatible.
-    // Avoids per-frame alloc/free cycle and keeps device address stable so the
-    // static TLAS signature does not churn on dynamic entity BLASes.
-    // Only valid for CPU-path (owned) buffers; GPU-cache buffers are managed
-    // externally and have stable addresses already.
+    // BLAS update path: reuse buffers and AS when geometry is compatible, avoiding per-frame
+    // alloc/free and keeping the device address stable.  Owned (CPU-path) buffers only.
     // ---------------------------------------------------------------------------
     if (prevBlas && prevBlas->isValid && prevBlas->allowUpdate && prevBlas->geomCount == (uint32_t)validCount &&
         prevBlas->geomPrimCounts && prevBlas->geomVertSizes && prevBlas->geomVertRanges)
@@ -931,7 +914,7 @@ fullRebuild:
         triData.indexData.deviceAddress = GetBufferDeviceAddress(idxBufs[i]) + idxOffsets[i];
         triData.transformData.deviceAddress = 0; // identity — world transform goes in TLAS instance
 
-        // Store per-geometry addresses for the material table (Phase 5.4).
+        // Store per-geometry addresses for the material table.
         blas->geomVertAddrs[i] = triData.vertexData.deviceAddress;
         blas->geomIdxAddrs[i] = triData.indexData.deviceAddress;
 
@@ -950,7 +933,7 @@ fullRebuild:
     VkAccelerationStructureBuildGeometryInfoKHR buildInfo = {};
     buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-    // Static BLASes never refit: no ALLOW_UPDATE gives the driver a smaller, faster-to-trace AS (R3).
+    // Static BLASes never refit: no ALLOW_UPDATE gives the driver a smaller, faster-to-trace AS.
     buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
                       (allowUpdate ? VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR : 0);
     buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
@@ -1131,11 +1114,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (!viewDef)
         return;
 
-    // Multiple DrawViews can occur within a single frame (game world, HUD, PDA, etc.).
-    // Each records commands into the same command buffer.  If we destroy+recreate the
-    // TLAS for a later DrawView, the earlier trace commands (already recorded) reference
-    // a freed acceleration structure → VK_ERROR_DEVICE_LOST.
-    // Fix: only build the TLAS once per frameCount.  Subsequent DrawViews reuse it.
+    // Build once per frameCount: several DrawViews share the command buffer, and rebuilding
+    // would free a TLAS that earlier recorded traces reference (device lost).
     vkTLAS_t &tlasRef = vkRT.tlas[vk.currentFrame];
     if (tlasRef.isValid && tlasRef.lastBuiltFrameCount == tr.frameCount)
     {
@@ -1171,9 +1151,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // Static instances can be cached and skipped when unchanged.
     static VkAccelerationStructureInstanceKHR staticInstances[VK_RT_MAX_TLAS_INSTANCES];
     static VkAccelerationStructureInstanceKHR dynamicInstances[VK_RT_MAX_TLAS_INSTANCES];
-    // Parallel material-table entries for Phase 5.4.
-    // Material entries are now one-per-geometry, not one-per-instance.
-    // Size to VK_MAT_MAX_GEOMS to cover the worst case (all geom slots filled).
+    // Material entries, one per geometry; sized for every geometry slot filled.
     static VkMaterialEntry staticMatEntries[VK_MAT_MAX_GEOMS];
     static VkMaterialEntry dynamicMatEntries[VK_MAT_MAX_GEOMS];
     // Per-instance base geom index — needed to patch instanceCustomIndex after
@@ -1223,10 +1201,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             ent->blasFrameCount = tr.frameCount;
             continue;
         }
-        // View-local-only entities (first-person body) duplicate world geometry that is
-        // already in the TLAS, so they must never be RT occluders — a duplicate casts a
-        // second shadow, visibly displaced once the fp body is offset from the world body.
-        // Same blasFrameCount stamp as above so pass 3 skips them too.
+        // View-local entities (first-person body) duplicate world geometry already in the TLAS
+        // and would cast a second shadow.  Stamped like above so pass 3 skips them too.
         if (ent->parms.allowSurfaceInViewID)
         {
             ent->blasFrameCount = tr.frameCount;
@@ -1247,11 +1223,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         if (ent->dynamicModel)
             needRebuild = true;
 
-        // For static entities, check the model BLAS cache before building.
-        // If the same hModel was already built this session, reuse that BLAS:
-        // avoids BLAS rebuilds when the entity pointer churns (e.g. doors
-        // destroyed/recreated each frame) and keeps the device address stable
-        // so the static TLAS signature stops churning.
+        // Static entities reuse a cached BLAS per hModel, so entity-pointer churn (doors) doesn't
+        // rebuild it and the device address stays stable.
         if (needRebuild && !ent->dynamicModel)
         {
             idRenderModel *staticModel = ent->parms.hModel;
@@ -1336,10 +1309,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         // Per-surface opaque flags are encoded in the BLAS geometry entries; no instance-level override needed.
         inst.accelerationStructureReference = ent->blas->deviceAddress;
 
-        // Collect per-surface material entries.
-        // instanceCustomIndex will be set to baseGeomIdx so that shaders can compute
+        // Per-surface material entries.  instanceCustomIndex = baseGeomIdx, so shaders use
         //   matIdx = gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT
-        // giving one correct VkMaterialEntry per geometry slot.
         const uint64_t matStart = slowLog ? SDL_GetPerformanceCounter() : 0;
         {
             const uint32_t geomCount = ent->blas ? ent->blas->geomCount : 0;
@@ -1358,11 +1329,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                     const uint32_t base = dynamicGeomCount;
                     dynamicInstBaseGeom[dynamicCount - 1] = base;
 
-                    // For dynamic instances we must refresh vertex/index addresses from
-                    // the model's current surface cache entries each frame.  blas->geomVertAddrs
-                    // was captured at BLAS build time and contains (cacheBaseAddr + oldOffset).
-                    // The vertex cache ring buffer advances each frame, so oldOffset is stale.
-                    // Re-query VK_VertexCache_GetBuffer to get the current offset.
+                    // Dynamic instances re-query addresses each frame: the vertex cache ring
+                    // advances, so the offsets captured at BLAS build are stale.
                     idRenderModel *dynModel = ent->dynamicModel ? ent->dynamicModel : ent->parms.hModel;
                     uint32_t validSurfIdx = 0; // tracks which BLAS geometry slot each surface maps to
 
@@ -1380,7 +1348,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                         if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
                             matEntry.maxVertex = (uint32_t)(ent->blas->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
                         // Bounds check: max valid triangle index — must be checked BEFORE the
-                        // index-buffer read, not just the vertex indices it returns (A9 follow-up).
+                        // index-buffer read, not just the vertex indices it returns.
                         if (ent->blas->geomIdxSizes && ent->blas->geomIdxSizes[g] >= 3u * sizeof(uint32_t))
                             matEntry.maxPrimId = (uint32_t)(ent->blas->geomIdxSizes[g] / (3u * sizeof(uint32_t))) - 1u;
                         dynamicMatEntries[base + g] = matEntry;
@@ -1472,7 +1440,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                         if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
                             matEntry.maxVertex = (uint32_t)(ent->blas->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
                         // Bounds check: max valid triangle index — must be checked BEFORE the
-                        // index-buffer read, not just the vertex indices it returns (A9 follow-up).
+                        // index-buffer read, not just the vertex indices it returns.
                         if (ent->blas->geomIdxSizes && ent->blas->geomIdxSizes[g] >= 3u * sizeof(uint32_t))
                             matEntry.maxPrimId = (uint32_t)(ent->blas->geomIdxSizes[g] / (3u * sizeof(uint32_t))) - 1u;
                         staticMatEntries[base + g] = matEntry;
@@ -1481,8 +1449,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                         {
                             s_staticGeomVtxAddrs[base + g] = (uint64_t)ent->blas->geomVertAddrs[g];
                             s_staticGeomIdxAddrs[base + g] = (uint64_t)ent->blas->geomIdxAddrs[g];
-                            // A6: fold into staticSignature so a freed/reallocated vertex-cache
-                            // buffer (address changes, BLAS address doesn't) forces a rewrite.
+                            // Fold into staticSignature so a reallocated vertex-cache buffer
+                            // (address changes, BLAS address doesn't) forces a rewrite.
                             staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &s_staticGeomVtxAddrs[base + g],
                                                                       sizeof(uint64_t));
                             staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &s_staticGeomIdxAddrs[base + g],
@@ -1513,13 +1481,9 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     VK_RT_LapTicks(&slowLap, &tPass1);
     blasTicks1 = s_blasBuildStats.cpuTicks;
 
-    // Second pass: include static, already-cached entities that were portal/frustum
-    // culled from viewEntitys but whose BLASes are already built.  This ensures GI
-    // rays can hit geometry in adjacent areas (e.g. the ceiling under a skylight when
-    // the player looks away from it).  No new BLAS builds — cache hits only.
-    // Distance cull: GI rays travel at most r_rtGIRadius from the pixel world position,
-    // which is itself at most r_rtGIRadius from the camera — so 2x radius covers all
-    // reachable geometry.
+    // Second pass: culled static entities whose BLASes are already cached (no new builds), so
+    // GI rays still hit adjacent-area geometry.  Distance cull at 2x r_rtGIRadius: pixel
+    // distance plus ray length.
     if (tr.primaryWorld != NULL)
     {
         const float pass2Rad = VK_RT_Pass2CullRadius();
@@ -1650,7 +1614,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                 {
                     s_staticGeomVtxAddrs[base + g] = (uint64_t)cached->geomVertAddrs[g];
                     s_staticGeomIdxAddrs[base + g] = (uint64_t)cached->geomIdxAddrs[g];
-                    // A6: fold into staticSignature — see the other construction site.
+                    // Fold into staticSignature — see the other construction site.
                     staticSignature =
                         VK_RT_HashFnv1a64_Bytes(staticSignature, &s_staticGeomVtxAddrs[base + g], sizeof(uint64_t));
                     staticSignature =
@@ -1674,13 +1638,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     passStats.pass2 = staticCount + dynamicCount - passStats.pass1;
     VK_RT_LapTicks(&slowLap, &tPass2);
 
-    // Third pass: include nearby off-screen dynamic entities (enemies, characters) so
-    // they appear in RT reflections and cast RT shadows when outside the view frustum.
-    // For each entity within r_rtNearDynRadius units we call R_EntityDefDynamicModel to
-    // CPU-skin the current animation pose (game logic updates joints every frame regardless
-    // of visibility) and then rebuild the BLAS in-place.  Cost is one MD5 skin + BLAS
-    // update per nearby off-screen enemy — negligible at the default 256-unit radius.
-    // geometry intersections (shape, shadow, reflection silhouette) are always correct.
+    // Third pass: off-screen dynamic entities within r_rtNearDynRadius, so they still reflect
+    // and cast RT shadows.  Each costs one CPU skin of the current pose plus a BLAS update.
     if (tr.primaryWorld != NULL && r_rtNearDynRadius.GetFloat() > 0.0f)
     {
         const float nearRad = r_rtNearDynRadius.GetFloat();
@@ -1718,10 +1677,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             if (ent->parms.allowSurfaceInViewID)
                 continue;
 
-            // Regenerate the current animation pose. The game keeps parms.joints
-            // up-to-date every frame regardless of frustum visibility, so this gives
-            // the correct posed mesh for the current game tick even though the entity
-            // isn't in viewEntitys.
+            // parms.joints is updated every frame regardless of visibility, so this is the
+            // current pose.
             const uint64_t dynModelStart = slowLog ? SDL_GetPerformanceCounter() : 0;
             idRenderModel *model = R_EntityDefDynamicModel(ent);
             if (slowLog)
@@ -1943,12 +1900,9 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         dynamicGeomCount = VK_MAT_MAX_GEOMS - staticGeomCount;
     }
 
-    // P6 (rt_optimization_tuning.md): does any glass geometry exist in this frame's
-    // TLAS?  When not, the reflection rgen skips its per-pixel glass probe ray —
-    // a full-screen ray dispatch saved in most rooms.
+    // Any glass in this TLAS?  If not, the reflection rgen skips its full-screen glass probe.
+    // REAL_GLASS, not GLASS: GLASS is every MC_TRANSLUCENT surface.
     {
-        // R4: REAL_GLASS, not GLASS — the latter is every MC_TRANSLUCENT, so P6's
-        // "skip the probe in glass-free rooms" almost never fired.
         bool hasGlass = false;
         for (uint32_t i = 0; i < staticGeomCount && !hasGlass; i++)
             hasGlass = (staticMatEntries[i].flags & VK_MAT_FLAG_REAL_GLASS) != 0;
@@ -2023,9 +1977,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     VkAccelerationStructureBuildGeometryInfoKHR buildInfo = {};
     buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    // FAST_BUILD, not FAST_TRACE: this TLAS is rebuilt from scratch every frame, so
-    // build time is paid per frame while the trace-quality difference at TLAS level
-    // is negligible (P7, docs/plans/rt_optimization_tuning.md). BLASes stay FAST_TRACE.
+    // FAST_BUILD: the TLAS is rebuilt every frame and trace quality barely differs at TLAS
+    // level.  BLASes stay FAST_TRACE.
     buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR;
     buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     buildInfo.geometryCount = 1;
@@ -2217,9 +2170,8 @@ void VK_RT_BeginLevelLoad(void)
     }
     // Temporal history from the old level is meaningless for the new one.
     vkRT.aoHistoryValid = false;
-    // reflChain[].historyValid is deliberately not touched: a level load always trips
-    // either the camera-cut test or !prevFrameValid on the first frame, so the reflection
-    // EMA resets itself. Left as-is by Stage 4a rather than quietly changed.
+    // reflChain[].historyValid is left alone: a level load always trips the camera-cut test
+    // or !prevFrameValid, so the reflection EMA resets itself.
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT: BeginLevelLoad — cleared %d model BLAS cache entries, freed TLAS\n",
                        s_modelBLASCacheCount);
@@ -2400,20 +2352,20 @@ void VK_RT_Shutdown(void)
     // Reflection pipeline, SBT, and buffers
     VK_RT_ShutdownReflections();
 
-    // GI pipeline, SBT, and buffers (Phase 6.1)
+    // GI pipeline, SBT, and buffers
     VK_RT_ShutdownGI();
 
-    // Volumetric lighting pipeline and buffers (Phase 7.2)
+    // Volumetric lighting pipeline and buffers
     VK_RT_ShutdownVolumetrics();
 
     // Tonemap (with the HDR scene buffer and the G-buffer images) and upscale are shut
     // down by VKimp_PreShutdown instead: they are created whether or not the device has
     // RT, so their teardown cannot live behind this function's RT gate.
 
-    // Bloom images and source-capture pipelines (bloom plan B1)
+    // Bloom images and pipelines
     VK_RT_ShutdownBloom();
 
-    // Material table SSBOs and bindless descriptor set (Phase 5.4)
+    // Material table SSBOs and bindless descriptor set
     VK_RT_ShutdownMaterialTable();
 
     memset(&vkRT, 0, sizeof(vkRT));
@@ -2463,7 +2415,7 @@ void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height)
             sm.blurTempMemory = VK_NULL_HANDLE;
         }
 
-        // R8 UNORM storage image array — one layer per shadow-casting light (P1b).
+        // R8 UNORM storage image array — one layer per shadow-casting light.
         VkImageCreateInfo imgInfo = {};
         imgInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         imgInfo.imageType = VK_IMAGE_TYPE_2D;

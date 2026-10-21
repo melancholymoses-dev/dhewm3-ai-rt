@@ -75,7 +75,7 @@ struct AOParamsUBO
     float aoRadius;
     int32_t numSamples;
     uint32_t frameIndex;
-    int32_t useGbufNormal; // P9 — was pad0; repurposed, so the layout is unchanged
+    int32_t useGbufNormal; // was pad0, so the layout is unchanged
     int32_t screenWidth;
     int32_t screenHeight;
     int32_t scissorOffsetX;
@@ -119,12 +119,12 @@ extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemor
                             VkBuffer *outBuffer, VkDeviceMemory *outMemory);
 extern VkShaderModule VK_LoadSPIRV(const char *path);
 extern bool VK_AllocUBOForShadow(VkBuffer *outBuf, uint32_t *outOffset, void **outMapped);
-// P9: shared 1x1 G-buffer fallback owned by vk_reflections.cpp (alpha 0 = "no data").
+// Shared 1x1 G-buffer fallback owned by vk_reflections.cpp (alpha 0 = "no data").
 extern VkImageView VK_RT_GetNullGbufNormalView(void);
 
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
-extern idCVar r_rtGbufNormals; // P9 — defined in vk_gbuffer.cpp
+extern idCVar r_rtGbufNormals; // defined in vk_gbuffer.cpp
 
 // ---------------------------------------------------------------------------
 // VK_RT_CreateAOMaskImages
@@ -188,20 +188,9 @@ static void VK_RT_CreateAOMaskImages(uint32_t width, uint32_t height)
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &ao.view));
 
-        // Transition UNDEFINED → GENERAL and clear to WHITE so the rgen shader can
-        // imageStore immediately.
-        //
-        // A2 (amd_vulkan_cleanup.md): white = 1.0 = unoccluded, matching the shadow
-        // mask's "fully lit" convention. Every other RT image gets a clear at creation
-        // (vk_gi.cpp:429, vk_temporal.cpp:1005, vk_tonemap.cpp:162, vk_vol.cpp:407) —
-        // this one was the exception, and the interaction shader samples the mask
-        // full-screen whenever the image merely exists. The AO rgen only writes inside
-        // the view scissor, so anything outside it (subviews: mirrors, cameras, security
-        // monitors) was never touched. Uninitialised VRAM read as an AO multiplier
-        // darkens or saturates the lighting arbitrarily.
-        //
-        // This was invisible until A5 landed the same day: while the mask was uniformly
-        // 1.0, an unwritten texel was indistinguishable from a correctly-neutral one.
+        // UNDEFINED → GENERAL and clear to WHITE (1.0 = unoccluded).  The rgen only writes
+        // inside the view scissor, but the interaction shader samples the whole mask, so
+        // texels outside it must be neutral rather than uninitialised VRAM.
         VkCommandBuffer tmpCmd = VK_NULL_HANDLE;
         {
             VkCommandBufferAllocateInfo cbAlloc = {};
@@ -295,7 +284,7 @@ static void VK_RT_InitAOPipeline(void)
     // binding 1: AO mask storage image
     // binding 2: depth sampler
     // binding 3: AO params UBO (dynamic)
-    // binding 4: G-buffer normal/F0 sampler (P9 — replaces rt_ReconstructNormal)
+    // binding 4: G-buffer normal/F0 sampler
 
     VkDescriptorSetLayoutBinding bindings[5] = {};
 
@@ -441,16 +430,9 @@ static void VK_RT_InitAOPipeline(void)
     auto alignUp = [](uint32_t v, uint32_t a) { return (v + a - 1) & ~(a - 1); };
     uint32_t handleSizeAligned = alignUp(handleSize, handleAlignment);
     uint32_t stride = alignUp(handleSizeAligned, baseAlignment);
-    // 3 shader groups (rgen, miss, hit) but 5 SBT records.
-    //
-    // TLAS instances carry a hardcoded instanceShaderBindingTableRecordOffset of
-    // 0 or 2 (2 = rtPlayer body/held weapon, see vk_accelstruct.cpp).
-    // That offset is per-instance and shared by every pipeline that traces this
-    // TLAS, so the hit region here must be wide enough to contain record 2 or an
-    // out-of-range fetch pulls a garbage shader handle. Layout:
-    //   [0]=rgen  [1]=miss  [2..4]=hit (same handle in all three)
-    // Record 3 is unused padding — nothing traces with sbtRecordOffset 1 here —
-    // but it must exist for record 4 to be addressable.
+    // 3 groups, 5 SBT records.  TLAS instances use hit offset 0 or 2 (2 = rtPlayer, see
+    // vk_accelstruct.cpp) in every pipeline, so the hit region must reach record 2.
+    //   [0]=rgen  [1]=miss  [2..4]=hit (same handle; record 3 is padding)
     uint32_t sbtSize = 5 * stride;
 
     VK_CreateBuffer(sbtSize,
@@ -493,8 +475,7 @@ static void VK_RT_InitAOPipeline(void)
                        (unsigned)(vkRT.aoHitRegion.size / vkRT.aoHitRegion.stride));
 
     // --- Descriptor pool and sets ---
-    // COMBINED_IMAGE_SAMPLER count is doubled: depth (binding 2) + gbufNormal
-    // (binding 4, P9) — two per frame slot.
+    // Two COMBINED_IMAGE_SAMPLERs per slot: depth (binding 2) + gbufNormal (binding 4).
     VkDescriptorPoolSize poolSizes[4] = {
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_MAX_FRAMES_IN_FLIGHT},
@@ -544,9 +525,8 @@ static void VK_RT_InitAOPipeline(void)
 void VK_RT_InitAO(void)
 {
     VK_RT_InitAOPipeline();
-    // P9: force the shared null G-buffer image into existence here, at init, so the
-    // idempotent create inside never runs mid-frame (it does a submit + queue wait).
-    // AO initializes before reflections, which is the other caller.
+    // Create the shared null G-buffer image at init: its lazy create does a submit + queue
+    // wait, which must not happen mid-frame.
     VK_RT_GetNullGbufNormalView();
     VK_RT_ResizeAOMask(vk.swapchainExtent.width, vk.swapchainExtent.height);
     // Temporal history images and EMA pipeline (Step 5.2)
@@ -577,12 +557,8 @@ void VK_RT_ResizeAOMask(uint32_t width, uint32_t height)
 
 void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
-    // A2 (amd_vulkan_cleanup.md): clear validity for this slot before ANY early-out, and
-    // set it only once the trace has actually been recorded. The creation-time clear
-    // covers frame 0; this covers every frame thereafter where the dispatch bails
-    // (RT off, invalid TLAS across a level load, empty scissor, null image) and would
-    // otherwise leave the interaction shader sampling a stale or unwritten mask while
-    // believing it valid — vk_backend.cpp only checked that the image existed.
+    // Clear validity before any early-out and set it only once the trace is recorded, so a
+    // bailed dispatch never leaves the interaction shader trusting a stale mask.
     vkRT.aoValid[vk.currentFrame] = false;
 
     if (!vkRT.isInitialized)
@@ -592,11 +568,8 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
     if (!r_useRayTracing.GetBool() || !r_rtAO.GetBool())
         return;
-    // Guard is unconditional; only the log is gated on r_vkLogRT. An invalid TLAS
-    // is a normal transient across level-load frames, so this stays silent by
-    // default like the equivalent guards in vk_gi.cpp / vk_reflections.cpp —
-    // but tracing against a stale TLAS handle is undefined behaviour, so the
-    // early-out itself must never depend on a logging CVar.
+    // Invalid TLAS is normal across level loads, so only the log is gated; tracing a stale
+    // TLAS is undefined, so the early-out itself is unconditional.
     if (!vkRT.tlas[vk.currentFrame].isValid)
     {
         if (r_vkLogRT.GetInteger() >= 1)
@@ -685,19 +658,17 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.aoFalloff = r_rtAOFalloff.GetBool() ? 1 : 0;
     ubo.numSamples = idMath::ClampInt(1, 16, r_rtAOSamples.GetInteger());
     ubo.frameIndex = (uint32_t)(tr.frameCount);
-    // P9: 0 also when the G-buffer isn't available at all, so the shader's clamped
-    // fetch of the 1x1 null image is never even consulted.
+    // 0 also when the G-buffer is unsupported, so the null image is never consulted.
     ubo.useGbufNormal = (vk.gbufferSupported && r_rtGbufNormals.GetBool()) ? 1 : 0;
 
-    // P9 mode transitions. AO dispatches before GI and both read the same CVar, so
-    // one line here covers the pair.
+    // Log normal-source changes.  AO runs before GI and both read the same CVar.
     if (r_vkLogRT.GetInteger() >= 1)
     {
         static int s_lastUseGbuf = -1;
         if (ubo.useGbufNormal != s_lastUseGbuf)
         {
             s_lastUseGbuf = ubo.useGbufNormal;
-            common->Printf("[P9] AO/GI normals: %s\n",
+            common->Printf("VK RT AO/GI normals: %s\n",
                            ubo.useGbufNormal
                                ? "G-buffer (bump-mapped)"
                                : (vk.gbufferSupported ? "depth-gradient reconstruction (r_rtGbufNormals 0)"
@@ -713,11 +684,8 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.scissorExtentX = (int32_t)dispatchRect.extent.width;
     ubo.scissorExtentY = (int32_t)dispatchRect.extent.height;
 
-    // Scale the band by sqrt(znear/3): reconstruction error is d^2*ulp/znear, so the
-    // safe distance shrinks when the game drops r_znear to 1.0 for cinematics
-    // (Game_local.cpp:4532). Without this AO breaks at d~2887 in cut-scenes.
-    // Near plane from the projection rather than the cvar, so the transition frame
-    // itself is right too — see VK_RT_EffectiveZNear.
+    // Scale the band by sqrt(znear/3): reconstruction error is d^2*ulp/znear, and cinematics
+    // drop znear to 1.0.  Near plane from the projection (VK_RT_EffectiveZNear), not the cvar.
     {
         const float znScale = idMath::Sqrt(Max(0.001f, VK_RT_EffectiveZNear(viewDef)) / 3.0f);
         ubo.fadeStart = Max(0.0f, r_rtAOFadeStart.GetFloat()) * znScale;
@@ -752,11 +720,8 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     static VkImageView s_lastAODepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastAOGbufView[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
-    // P9: G-buffer normal/F0 — real per-frame image when supported, else the shared
-    // 1x1 null image (a = 0, the "no data" sentinel that makes ao_ray.rgen fall back
-    // to rt_ReconstructNormal). Already in SHADER_READ_ONLY_OPTIMAL: the real one via
-    // the barrier vk_backend.cpp issues once for the whole RT block before AO runs,
-    // the null one permanently since nothing writes it.
+    // Per-frame G-buffer when supported, else the 1x1 null image (a = 0 makes ao_ray.rgen
+    // reconstruct normals).  Both are already SHADER_READ_ONLY_OPTIMAL.
     const bool haveGbuf = vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE;
     VkImageView gbufView = haveGbuf ? vkRT.gbufNormal[frameIdx].view : VK_RT_GetNullGbufNormalView();
 
@@ -801,7 +766,7 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         uboInfo.offset = 0;
         uboInfo.range = sizeof(AOParamsUBO);
 
-        // Binding 4: G-buffer normal/F0 sampler (P9). texelFetch in the rgen, so the
+        // Binding 4: G-buffer normal/F0 sampler.  texelFetch in the rgen, so the
         // sampler's filter/wrap state is irrelevant — reuse the depth sampler.
         VkDescriptorImageInfo gbufInfo = {};
         gbufInfo.sampler = vkRT.depthSampler;
@@ -865,9 +830,7 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     vkCmdTraceRaysKHR(cmd, &vkRT.aoRgenRegion, &vkRT.aoMissRegion, &vkRT.aoHitRegion, &vkRT.aoCallRegion,
                       dispatchRect.extent.width, dispatchRect.extent.height, 1);
-    // A2: the trace is recorded — the mask is valid for this frame. Note this marks the
-    // scissor rect as written, not the whole image; the creation-time clear is what makes
-    // the region outside it neutral rather than garbage.
+    // Valid means the scissor rect was written; the creation-time clear keeps the rest neutral.
     vkRT.aoValid[frameIdx] = true;
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT AO: traceRaysKHR recorded\n");

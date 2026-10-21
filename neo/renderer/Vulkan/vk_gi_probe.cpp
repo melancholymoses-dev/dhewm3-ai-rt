@@ -3,8 +3,7 @@
 
 dhewm3-rt Vulkan — vk_gi_probe.cpp — world-space irradiance probes for GI.
 
-Part B of 20260906_froxel_probe_gi.md: the same move froxels made for
-volumetrics, applied to GI.  Per-pixel GI recomputes a hemisphere integral for
+The same move froxels made for volumetrics, applied to GI.  Per-pixel GI recomputes a hemisphere integral for
 every pixel every frame and then spends three denoise passes fighting the noise
 that produces; probes compute it once per probe in WORLD space, where temporal
 reuse is trivially valid, and reduce the per-pixel cost to a handful of texture
@@ -12,23 +11,22 @@ fetches.
 
 Four passes:
 
-  1. trace   (G1) — gi_probe_trace.rgen, the SECOND raygen group in vk_gi.cpp's
+  1. trace   — gi_probe_trace.rgen, the SECOND raygen group in vk_gi.cpp's
                     existing GI ray pipeline.  Fires r_rtGIProbeRays rays for
                     each of r_rtGIProbeUpdatesPerFrame probes into a scratch
                     image.  Shares gi_ray.rchit/rmiss — and therefore the light
                     list, cookies and admission — with every other RT consumer.
-  2. blend   (G1) — gi_probe_blend.comp, scratch rays -> octahedral irradiance
+  2. blend   — gi_probe_blend.comp, scratch rays -> octahedral irradiance
                     and visibility atlases, with an EMA.
-  3. border  (G1) — gi_probe_border.comp, octahedral seam fill.
-  4. resolve (G2) — gi_probe_resolve.comp, per-pixel 8-probe fetch -> giBuffer,
+  3. border  — gi_probe_border.comp, octahedral seam fill.
+  4. resolve — gi_probe_resolve.comp, per-pixel 8-probe fetch -> giBuffer,
                     and every debug overlay.
 
 The lattice is ABSOLUTE (cell * spacing) and storage is TOROIDAL
 (cell mod gridDim), so the window can follow the camera without probes sliding
 and without rewriting the atlas — see gi_probe_common.glsl.  The atlases are a
-SINGLE shared pair, not per frame-in-flight slot: they are an EMA accumulator
-and per-slot history is what silently halved the AO/GI/Vol update rate before
-the 2026-09-06 fix.
+SINGLE shared pair, not per frame-in-flight slot: they are an EMA accumulator,
+and per-slot history halves the effective update rate.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -78,35 +76,32 @@ static idCVar r_rtGIProbeHysteresis("r_rtGIProbeHysteresis", "0.97", CVAR_RENDER
                                     "atlas tile belongs to a different probe (toroidal storage).");
 
 static idCVar r_rtGIProbeNormalBias("r_rtGIProbeNormalBias", "8.0", CVAR_RENDERER | CVAR_FLOAT,
-                                    "Receiver offset along the surface normal before the probe lookup (G2).");
+                                    "Receiver offset along the surface normal before the probe lookup.");
 
 static idCVar r_rtGIProbeViewBias("r_rtGIProbeViewBias", "8.0", CVAR_RENDERER | CVAR_FLOAT,
-                                  "Receiver offset toward the eye, on top of r_rtGIProbeNormalBias (G3). This is "
-                                  "what stops a wall seen at a grazing angle from registering as its own occluder "
-                                  "in the Chebyshev test. Raise it if r_rtGIProbeDebug 3 shows blue "
-                                  "(over-darkening) along walls; lower it if raising it turns them red (leaks).");
+                                  "Receiver offset toward the eye, on top of r_rtGIProbeNormalBias, so grazing walls "
+                                  "don't occlude themselves in the Chebyshev test. Raise if r_rtGIProbeDebug 3 shows "
+                                  "blue (over-darkening) along walls; lower if they turn red (leaks).");
 
 static idCVar r_rtGIProbeInsideThreshold("r_rtGIProbeInsideThreshold", "0.25", CVAR_RENDERER | CVAR_FLOAT,
-                                         "G4: fraction of a probe's rays that must hit BACK faces before it is "
+                                         "Fraction of a probe's rays that must hit BACK faces before it is "
                                          "classified as buried in geometry and given zero weight in the resolve. "
                                          "0 disables the classification.");
 
 static idCVar r_rtGIProbeOutsideThreshold("r_rtGIProbeOutsideThreshold", "0.9", CVAR_RENDERER | CVAR_FLOAT,
-                                          "G4: fraction of a probe's rays that must hit NOTHING before it is "
+                                          "Fraction of a probe's rays that must hit NOTHING before it is "
                                           "classified as sitting in the void outside the level and given zero "
                                           "weight. Deliberately high.");
 
 static idCVar r_rtGIProbeVisibility("r_rtGIProbeVisibility", "1", CVAR_RENDERER | CVAR_BOOL,
-                                    "Chebyshev visibility weighting in the resolve (G3) — the thin-wall leak "
+                                    "Chebyshev visibility weighting in the resolve — the thin-wall leak "
                                     "mitigation. Set 0 to see the raw "
                                     "leak surface r_rtGIProbeDebug 3 is measuring against.");
 
 static idCVar r_rtGIProbeMaxRayDist("r_rtGIProbeMaxRayDist", "512", CVAR_RENDERER | CVAR_FLOAT,
-                                    "Probe ray length, and the value a miss records in the visibility "
-                                    "moments. Independent of r_rtGIRadius, which bounds the light window. "
-                                    "Also the unit the distance atlas is normalised by (rg16f cannot hold "
-                                    "a raw second moment), so changing it re-scales the atlas and the EMA "
-                                    "needs about a full refresh to wash the old encoding out.");
+                                    "Probe ray length, and the distance a miss records. Independent of "
+                                    "r_rtGIRadius. Also normalises the distance atlas, so a change needs about "
+                                    "a full refresh to settle.");
 
 static idCVar r_rtGIProbeDistSharpness("r_rtGIProbeDistSharpness", "50.0", CVAR_RENDERER | CVAR_FLOAT,
                                        "Cosine-power lobe width for the visibility moments. Much tighter "
@@ -187,7 +182,7 @@ static_assert(sizeof(GIProbeParamsUBO) == 256, "GIProbeParamsUBO size mismatch")
 // alignment, so the trailing uint packs into the same 16 bytes.
 struct GIProbeStateEntry
 {
-    float offset[3]; //  0  G4 relocation from the lattice point
+    float offset[3]; //  0  relocation from the lattice point
     uint32_t flags;  // 12  GIPROBE_FLAG_*
 };
 static_assert(sizeof(GIProbeStateEntry) == 16, "GIProbeStateEntry size mismatch");
@@ -224,8 +219,7 @@ static_assert(sizeof(GIProbeStatsEntry) == 8, "GIProbeStatsEntry size mismatch")
 #define VK_GIPROBE_MAX_PROBES 65536
 
 // Probe set bindings, shared by the trace rgen (set 2) and the blend/border
-// compute passes (set 0). Named because G5b's fast scratch made it grow, and
-// the count appears in three places that must agree.
+// compute passes (set 0). The count appears in three places that must agree.
 #define VK_GIPROBE_DESC_BINDINGS 7
 
 // Resolve set bindings. Its own layout, and its own count.
@@ -257,7 +251,7 @@ static bool s_statsReadbackCached = false;
 static int32_t s_probeDim[3] = {0, 0, 0};
 static int32_t s_probeRays = 0;
 static int32_t s_probeUpdates = 0;
-// G5b: K as the irradiance atlas was actually sized for. Changing
+// Fast-bucket count K the irradiance atlas was sized for. Changing
 // r_rtGIProbeFastBuckets changes the atlas height, so it joins the realloc test.
 static int32_t s_probeFastBuckets = -1;
 
@@ -341,7 +335,7 @@ static bool VK_RT_GIProbeGeometryChanged(void)
     const int32_t probes = want[0] * want[1] * want[2];
     const int32_t rays = VK_RT_GIProbeRequestedRays();
     const int32_t updates = VK_RT_GIProbeRequestedUpdates(probes);
-    // G5b: K sizes the irradiance atlas, so it belongs in both tests below.
+    // K sizes the irradiance atlas, so it belongs in both tests below.
     const int32_t fastBuckets = VK_RT_GIFastBucketCount();
 
     if (want[0] == s_probeGeomFailed[0] && want[1] == s_probeGeomFailed[1] && want[2] == s_probeGeomFailed[2] &&
@@ -642,11 +636,8 @@ static void VK_RT_CreateProbeResources(void)
         tx++;
     const int32_t ty = (probeCount + tx - 1) / tx;
 
-    // G5b: the irradiance atlas holds 1 + K sets of tiles, bucket k starting at
-    // tile index k * probeCount. Deliberately extra ROWS rather than an image
-    // array — gip_TileOrigin already turns a linear tile index into a texel
-    // origin, so nothing in the addressing changes and no blend/border/resolve
-    // declaration has to be retyped to image2DArray. The distance atlas is NOT
+    // The irradiance atlas holds 1 + K tile sets as extra rows (bucket k at tile k * probeCount),
+    // so gip_TileOrigin addressing needs no image2DArray.  The distance atlas is not
     // duplicated: occluder geometry is shared by both buckets.
     const int32_t irrBuckets = 1 + VK_RT_GIFastBucketCount();
     const int32_t irrTilesY = ty * irrBuckets;
@@ -678,17 +669,9 @@ static void VK_RT_CreateProbeResources(void)
             return;
         }
 
-        // G5b fast-bucket radiance for the same rays. Allocated even at K = 0:
-        // the descriptor set writes binding 6 unconditionally, and a shader that
-        // declares a binding it never reads still needs a live view there.
-        //
-        // rgba16f, not the planned r11f_g11f_b10f. STORAGE_IMAGE support for
-        // B10G11R11 is optional in Vulkan (it sits behind
-        // shaderStorageImageExtendedFormats), and a GLSL storage image's format
-        // qualifier has to match its view exactly — so a runtime fallback would
-        // mean shipping two variants of gi_probe_trace.rgen and
-        // gi_probe_blend.comp. The alpha channel is wasted; 0.5 MiB per slot at
-        // the defaults is not worth a device-dependent cliff.
+        // Fast-bucket radiance for the same rays; allocated even at K = 0 since binding 6 is
+        // always written.  rgba16f because B10G11R11 storage is optional and the GLSL format
+        // qualifier must match the view exactly.
         if (!VK_RT_AllocProbeImage(vkRT.giProbeScratchFast[i], (uint32_t)rays, (uint32_t)updates,
                                    VK_FORMAT_R16G16B16A16_SFLOAT))
         {
@@ -709,15 +692,9 @@ static void VK_RT_CreateProbeResources(void)
         vkRT.giProbeResolveDescSetLastUpdatedFrameCount[i] = -1;
     }
 
-    // One shared stats buffer — see GIProbeStatsEntry on why this must not be
-    // per slot. Device-side zeroing happens once, here, with the device idle.
-    //
-    // Plus a PER-SLOT readback snapshot. Sharing the accumulator removed the
-    // accidental synchronisation the per-slot version had: the CPU would
-    // otherwise read the live buffer while the previous frame's blend is still
-    // writing it, since the fence it waited on is two submissions back. The blend
-    // copies into the slot's snapshot, and the CPU reads THAT — recorded in a
-    // submission the fence has retired.
+    // One shared stats buffer (see GIProbeStatsEntry), zeroed once here.  Plus a per-slot
+    // readback snapshot: the CPU's fence is two submissions back, so it reads the copy the
+    // blend made in a retired submission, never the live accumulator.
     {
         const VkDeviceSize statsBytes = (VkDeviceSize)probeCount * sizeof(GIProbeStatsEntry);
         VK_CreateBuffer(statsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -851,11 +828,8 @@ static void VK_RT_GIProbeAnchor(const viewDef_t *viewDef, float spacing)
 
                 s_probeState[idx].flags = 0;
                 s_probeState[idx].offset[0] = s_probeState[idx].offset[1] = s_probeState[idx].offset[2] = 0.0f;
-                // The tile now belongs to a different probe in a different room;
-                // inheriting its predecessor's verdict would classify on the
-                // wrong geometry until the EMA washed it out. Clearing TRACED
-                // above also stops the readback adopting the device value, and
-                // makes the next blend take its measurement outright.
+                // The tile now belongs to a different probe; don't inherit its verdict.  Clearing
+                // TRACED also makes the next blend take its measurement outright.
                 s_probeStats[idx].backface = 0.0f;
                 s_probeStats[idx].miss = 0.0f;
                 cleared++;
@@ -938,9 +912,8 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
     ubo.misc[0] = VK_RT_ValidProbeDebugMode();
     ubo.misc[1] = (vk.gbufferSupported && r_rtGbufNormals.GetBool()) ? 1 : 0;
     ubo.misc[2] = r_rtGIProbeVisibility.GetBool() ? 1 : 0;
-    // G5b: how many bucket-sized tile blocks the irradiance atlas holds. The
-    // shaders need it to normalise their UVs against the taller image — the
-    // DISTANCE atlas is not duplicated and keeps using atlas[1] alone.
+    // Tile blocks in the irradiance atlas, for UV normalisation; the distance atlas is
+    // not duplicated.
     ubo.misc[3] = 1 + s_probeFastBuckets;
 
     const vkRTImage_t &gb = vkRT.giBuffer[vk.currentFrame];
@@ -975,10 +948,8 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
     }
 
     ubo.debug[0] = 0;
-    // Clamped below half spacing: the overlay's ray stepping is spacing/2, and a
-    // sphere larger than that could be stepped past and vanish at some angles —
-    // which would read as "probes are missing", the exact failure mode this
-    // overlay exists to rule out.
+    // Clamped below half spacing: the overlay steps rays at spacing/2 and would skip larger
+    // spheres at some angles, making probes look missing.
     ubo.debug[1] = idMath::ClampFloat(0.25f, s_spacing * 0.49f, 1);
     ubo.debug[2] = Max(1.0f, r_rtGIProbeDistSharpness.GetFloat());
 
@@ -988,10 +959,8 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
     // receiver is not at.
     ubo.tune2[1] = idMath::ClampFloat(0.0f, s_spacing * 0.5f, r_rtGIProbeViewBias.GetFloat());
 
-    // G5b: the fast buckets' current gains, refreshed by this frame's
-    // VK_RT_UploadGILights (vk_backend.cpp calls it before any probe dispatch).
-    // This is the ONLY part of the probe path that has to be current-frame
-    // fresh — the atlases are deliberately not.
+    // Fast-bucket gains from this frame's VK_RT_UploadGILights — the only part of the probe
+    // path that must be current-frame fresh.
     ubo.tune2[2] = VK_RT_GIFastBucketGain(0);
     ubo.tune2[3] = 0.0f; // bucket 1, when K > 1 is earned
 
@@ -1002,10 +971,8 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
 // Pipelines
 // ---------------------------------------------------------------------------
 
-// Shared by the trace rgen (at set 2 of the GI RT pipeline) and by the blend and
-// border compute passes (at their set 0). One layout object bound at two
-// different set indices — legal, and it keeps the binding contract in
-// gi_probe_common.glsl to a single list.
+// Shared by the trace rgen (set 2 of the GI RT pipeline) and the blend/border compute
+// passes (set 0), keeping gi_probe_common.glsl's binding contract to one list.
 //
 //   0 STORAGE_IMAGE   probe ray scratch  rgba16f
 //   1 STORAGE_IMAGE   irradiance atlas   rgba16f
@@ -1013,7 +980,7 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
 //   3 STORAGE_BUFFER  probe state        (per slot, CPU-owned)
 //   4 STORAGE_IMAGE   distance atlas     rg16f
 //   5 STORAGE_BUFFER  probe stats        (shared, GPU-owned; blend only)
-//   6 STORAGE_IMAGE   fast ray scratch   rgba16f  (G5b; alpha unused)
+//   6 STORAGE_IMAGE   fast ray scratch   rgba16f  (alpha unused)
 static bool VK_RT_InitProbeDescLayout(void)
 {
     VkDescriptorSetLayoutBinding bindings[VK_GIPROBE_DESC_BINDINGS] = {};
@@ -1031,7 +998,7 @@ static bool VK_RT_InitProbeDescLayout(void)
     bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; // G5b fast scratch
+    bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; // fast scratch
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1109,9 +1076,8 @@ static void VK_RT_InitProbeBlendPipelines(void)
         common->Printf("VK RT GIProbe: blend/border pipelines initialized\n");
 }
 
-// Resolve set 0 — deliberately keeps the params UBO at binding 2 and the probe
-// state at binding 3, matching giProbeDescLayout, so gi_probe_common.glsl can
-// declare both for every pass from one place.
+// Resolve set 0 — params UBO at binding 2 and probe state at 3, matching giProbeDescLayout,
+// so gi_probe_common.glsl declares both once.
 //
 //   0 COMBINED_IMAGE_SAMPLER  irradiance atlas
 //   1 STORAGE_IMAGE           giBuffer (write)
@@ -1120,11 +1086,8 @@ static void VK_RT_InitProbeBlendPipelines(void)
 //   4 COMBINED_IMAGE_SAMPLER  distance atlas
 //   5 COMBINED_IMAGE_SAMPLER  depth
 //   6 COMBINED_IMAGE_SAMPLER  G-buffer normal/F0
-//   7 ACCELERATION_STRUCTURE  TLAS — G3's leak overlay traces ray queries for
-//     ground-truth probe visibility. Only mode 3 reads it, but the shader
-//     references it statically, so it has to be a live handle on every dispatch;
-//     the resolve therefore requires a valid TLAS, exactly as VK_RT_DispatchGI
-//     already does.
+//   7 ACCELERATION_STRUCTURE  TLAS — the leak overlay (mode 3) ray-queries it; referenced
+//     statically, so the resolve requires a valid TLAS like VK_RT_DispatchGI.
 static void VK_RT_InitProbeResolvePipeline(void)
 {
     VkDescriptorSetLayoutBinding bindings[VK_GIPROBE_RESOLVE_BINDINGS] = {};
@@ -1226,10 +1189,8 @@ void VK_RT_InitGIProbe(void)
         vkRT.giProbeDescSetLastUpdatedFrameCount[i] = -1;
         vkRT.giProbeResolveDescSetLastUpdatedFrameCount[i] = -1;
 
-        // Fixed size, so unlike everything else here it survives a geometry
-        // realloc. Non-dynamic: the probe set is bound at set 2 of the GI RT
-        // pipeline alongside set 0's dynamic GIParams, and a second dynamic
-        // offset in that bind call is a trap waiting for the next caller.
+        // Fixed size, so it survives a geometry realloc.  Non-dynamic: a second dynamic offset
+        // next to set 0's GIParams in the GI RT bind call would be easy to get wrong.
         if (vkRT.giProbeParamsUbo[i] == VK_NULL_HANDLE)
         {
             VK_CreateBuffer(sizeof(GIProbeParamsUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -1404,12 +1365,8 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
         return false;
     }
 
-    // --- G4 classification: read back what the GPU measured ---
-    //
-    // Read this slot's SNAPSHOT, not the live accumulator: the copy was recorded
-    // in the submission the frame fence has already retired. We only ever read;
-    // the device-side stats are never written from the CPU after creation, so
-    // there is nothing to upload back either.
+    // --- Inside/outside classification: read back what the GPU measured ---
+    // Reads this slot's snapshot from a retired submission; the CPU never writes stats back.
     if (vkRT.giProbeStatsReadbackMapped[frameIdx] != NULL && s_probeStatsRead != NULL)
     {
         // One linear pass out of mapped memory, then classify from the heap copy.
@@ -1553,7 +1510,7 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
         writes[4].pImageInfo = &distInfo;
         writes[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writes[5].pBufferInfo = &statsInfo;
-        writes[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; // G5b fast scratch
+        writes[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; // fast scratch
         writes[6].pImageInfo = &scratchFastInfo;
 
         vkUpdateDescriptorSets(vk.device, VK_GIPROBE_DESC_BINDINGS, writes, 0, NULL);
@@ -1692,12 +1649,8 @@ void VK_RT_DispatchGIProbeBlend(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (!VK_RT_GIProbeUpdate(viewDef, ubo))
         return;
 
-    // Write-after-read across the frame boundary. The atlases are SHARED, not per
-    // slot, so the previous frame's resolve may still be sampling them when this
-    // blend starts overwriting: submission order does not imply an execution
-    // dependency, and the frame fence is two submissions back. Nothing else
-    // covers it — the trace->blend barrier below is about the scratch image, and
-    // the post-resolve barrier only reaches fragment work.
+    // WAR across frames: the shared atlases may still be sampled by last frame's resolve.
+    // Submission order is not an execution dependency, and no other barrier covers it.
     {
         VkMemoryBarrier memBarrier = {};
         memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -1724,9 +1677,8 @@ void VK_RT_DispatchGIProbeBlend(VkCommandBuffer cmd, const viewDef_t *viewDef)
                              0, NULL, 0, NULL);
     }
 
-    // Snapshot for the CPU's G4 classification. Reading the live accumulator
-    // instead would race the previous frame's blend — the fence the CPU waited on
-    // is two submissions back, not one.
+    // Snapshot for the CPU's inside/outside classification; the live accumulator would
+    // race the previous frame's blend.
     if (vkRT.giProbeStatsReadback[frameIdx] != VK_NULL_HANDLE)
     {
         VkBufferCopy region = {};
@@ -1744,10 +1696,8 @@ void VK_RT_DispatchGIProbeBlend(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.giProbeBorderPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.giProbeBorderPipelineLayout, 0, 1,
                             &vkRT.giProbeDescSets[frameIdx], 0, NULL);
-    // y covers every irradiance bucket plus the single distance map. G5b: this
-    // used to be a constant 2 and MUST track s_probeFastBuckets — passing 2 with
-    // K = 1 leaves the fast bucket's octahedral borders unwritten, which reads as
-    // a seam cross that shows up only on flickering lights.
+    // y covers every irradiance bucket plus the distance map; must track s_probeFastBuckets
+    // or fast-bucket borders go unwritten (seam cross on flickering lights).
     vkCmdDispatch(cmd, (uint32_t)s_probeUpdates, (uint32_t)(s_probeFastBuckets + 2), 1);
 
     // Border writes -> resolve's sampled read.
@@ -1773,7 +1723,7 @@ void VK_RT_DispatchGIProbeBlend(VkCommandBuffer cmd, const viewDef_t *viewDef)
 // to be re-pointed because the albedo-mod pass aims it at its own scratch
 // output, and that is where it is left at the end of the previous frame.
 //
-// Mode 0 is the shipping G2 resolve; any other mode is an overlay, and
+// Mode 0 is the shipping resolve; any other mode is an overlay, and
 // VK_RT_DispatchGIAlbedoMod skips so a measurement reaches the composite
 // unmodulated.
 //
@@ -1788,10 +1738,8 @@ void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     const int frameIdx = vk.currentFrame;
 
-    // G3 bound the TLAS into the resolve set for the leak overlay's ray queries.
-    // Only mode 3 reads it, but the shader references it statically, so binding
-    // set 0 at all requires a live handle. VK_RT_DispatchGI has the same
-    // requirement, so a frame without a TLAS already had no GI.
+    // The resolve set references the TLAS statically (leak overlay), so it needs a live
+    // handle; a frame without a TLAS has no GI anyway.
     if (!vkRT.tlas[frameIdx].isValid || vkRT.tlas[frameIdx].handle == VK_NULL_HANDLE)
     {
         if (r_vkLogRT.GetInteger() >= 1)

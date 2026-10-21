@@ -133,7 +133,7 @@ struct VolFroxelParamsUBO
     int32_t misc[4];        // 192  x=frameIndex y=maxLights z=debugMode w=unused
     int32_t screen[4];      // 208  x=screenW y=screenH z=outW w=outH (resolve target)
     int32_t rect[4];        // 224  resolve dispatch rect, resolve-target space
-    float prevViewProj[16]; // 240  F4 reprojection; identity until then
+    float prevViewProj[16]; // 240  reserved for reprojection; identity
 };
 static_assert(sizeof(VolFroxelParamsUBO) == 304, "VolFroxelParamsUBO size mismatch");
 
