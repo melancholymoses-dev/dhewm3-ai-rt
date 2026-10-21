@@ -2393,11 +2393,13 @@ idWeapon::PresentWeapon
 */
 void idWeapon::PresentWeapon(bool showViewModel)
 {
-    // dhewm3-rt: the flag is not saved; re-mark the held world model as RT player geometry.
+    // dhewm3-rt: the flags are not saved; re-mark the held world model as RT player geometry,
+    // and as a reflection emitter so its deform-sprite muzzle flash shows in glass.
     idAnimatedEntity *worldEnt = worldModel.GetEntity();
-    if (worldEnt && !worldEnt->GetRenderEntity()->rtPlayer)
+    if (worldEnt && (!worldEnt->GetRenderEntity()->rtPlayer || !worldEnt->GetRenderEntity()->rtGlow))
     {
         worldEnt->GetRenderEntity()->rtPlayer = true;
+        worldEnt->GetRenderEntity()->rtGlow = true;
         worldEnt->UpdateVisuals();
     }
 

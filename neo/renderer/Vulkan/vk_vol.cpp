@@ -51,11 +51,11 @@ idCVar r_rtVolWhiteNoiseMix("r_rtVolWhiteNoiseMix", "0.025", CVAR_RENDERER | CVA
                             "Fraction of white noise blended into the IGN sampling jitter to soften visible "
                             "dither stripes/fringes (0 = pure IGN, 1 = pure white noise).");
 
-idCVar r_rtVolMaxDist("r_rtVolMaxDist", "512.0", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolMaxDist("r_rtVolMaxDist", "512.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                       "Far cap on the volumetric medium's reach in world units.  Also bounds the froxel grid "
                       "and the vol light selection.");
 
-idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_INTEGER,
+idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                         "Max lights in the dedicated volumetric light selection (separate from "
                         "GI's own light buffer/cap).");
 
@@ -75,7 +75,7 @@ idCVar r_rtVolAlbedo("r_rtVolAlbedo", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR
 
 // Per-class gains scale the light's radiance, not the medium: Doom 3 intensities are
 // authored, not radiometric, so this leaves the transport equation alone.
-idCVar r_rtVolGain("r_rtVolGain", "25.0", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolGain("r_rtVolGain", "25.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                    "Radiance gain for point-light in-scatter (compensates Doom 3's non-radiometric "
                    "light intensities).  Brightness only — does not affect transmittance.");
 
@@ -87,7 +87,7 @@ static idCVar r_rtVolAttenuateBackground(
     "in-scattering (1), or add only (0).  When 1 the composite also moves after the "
     "interaction/shader passes so direct light is attenuated too.");
 
-idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.4", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                          "Henyey-Greenstein g parameter (0=isotropic, 0.8=flashlight shaft)");
 
 // HG is normalised, so one lobe trades side-on visibility for forward contrast (25x at
@@ -98,15 +98,15 @@ idCVar r_rtVolIsotropicMix("r_rtVolIsotropicMix", "0.45", CVAR_RENDERER | CVAR_A
                            "side-on/high-angle shaft visibility without lowering r_rtVol*Anisotropy.");
 
 // Scene directed/spot lights (lightType 1) — separate from the player's flashlight.
-idCVar r_rtVolDirectedGain("r_rtVolDirectedGain", "70.0", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolDirectedGain("r_rtVolDirectedGain", "70.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                            "Radiance gain for scene directed/spot in-scatter.  Brightness only.");
-idCVar r_rtVolDirectedAnisotropy("r_rtVolDirectedAnisotropy", "0.6", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolDirectedAnisotropy("r_rtVolDirectedAnisotropy", "0.6", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                  "Henyey-Greenstein g for scene spot lights (0=iso, 1=full forward).");
 
 // Player flashlight (lightType 2, allowLightInViewID set).
-idCVar r_rtVolFlashlightGain("r_rtVolFlashlightGain", "50.0", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolFlashlightGain("r_rtVolFlashlightGain", "50.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                              "Radiance gain for player-flashlight in-scatter.  Brightness only.");
-idCVar r_rtVolFlashlightAnisotropy("r_rtVolFlashlightAnisotropy", "0.7", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolFlashlightAnisotropy("r_rtVolFlashlightAnisotropy", "0.7", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                    "Henyey-Greenstein g parameter for the flashlight (0=isotropic, 1=full forward).");
 
 // ---------------------------------------------------------------------------

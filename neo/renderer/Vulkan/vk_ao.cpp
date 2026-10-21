@@ -30,7 +30,7 @@ of the original Doom 3 GPL Source Code release.
 // ---------------------------------------------------------------------------
 
 // r_rtAO and r_rtAOSamples declared in RenderSystem_init.cpp — use extern here.
-static idCVar r_rtAORadius("r_rtAORadius", "24.0", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtAORadius("r_rtAORadius", "24.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                            "Max AO ray length in world units. Keep below r_rtGIProbeSpacing: AO fills in "
                            "the contact detail the probes can't resolve.");
 static idCVar r_rtAOFalloff("r_rtAOFalloff", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
@@ -38,7 +38,7 @@ static idCVar r_rtAOFalloff("r_rtAOFalloff", "1", CVAR_RENDERER | CVAR_BOOL | CV
                             "radius fully occludes (legacy)");
 idCVar r_rtAOIndirectStrength("r_rtAOIndirectStrength", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                               "How strongly AO darkens GI (indirect light), 0-1");
-idCVar r_rtAODirectStrength("r_rtAODirectStrength", "0.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+idCVar r_rtAODirectStrength("r_rtAODirectStrength", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                             "How strongly AO darkens direct diffuse light while GI is on, 0-1. "
                             "With GI off, AO always applies fully to direct light.");
 idCVar r_rtAODebug("r_rtAODebug", "0", CVAR_RENDERER | CVAR_INTEGER,

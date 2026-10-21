@@ -70,7 +70,7 @@ static idCVar r_rtGIProbeUpdatesPerFrame("r_rtGIProbeUpdatesPerFrame", "1024", C
                                          "Probes refreshed per frame, round-robin. At the 32x32x16 default "
                                          "this is a full refresh every 16 frames.");
 
-static idCVar r_rtGIProbeHysteresis("r_rtGIProbeHysteresis", "0.97", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtGIProbeHysteresis("r_rtGIProbeHysteresis", "0.97", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                     "Atlas EMA history weight. A probe that has never been traced since it "
                                     "entered the grid ignores this and takes the new value outright — its "
                                     "atlas tile belongs to a different probe (toroidal storage).");

@@ -26,10 +26,20 @@ struct RtEmitter {
     float radius;
     vec3  rgb;
     uint  texIndex;   // matTextures slot (0 = procedural falloff) | flags
+    vec4  texS;       // stage texture matrix rows (m00 m01 0 m02); identity if none
+    vec4  texT;
 };
 
 uint rt_EmitterTexSlot(uint texIndex)   { return texIndex & ~RT_EMITTER_SRCALPHA; }
 bool rt_EmitterSrcAlpha(uint texIndex)  { return (texIndex & RT_EMITTER_SRCALPHA) != 0u; }
+
+// Stage texture matrix applied to a raw uv, as the raster path does (scroll, scale,
+// rotate). Without it a filmstrip or scrolling stage samples frame 0 / all frames.
+vec2 rt_EmitterTexUV(vec2 uv, vec4 texS, vec4 texT)
+{
+    vec4 st = vec4(uv, 0.0, 1.0);
+    return vec2(dot(texS, st), dot(texT, st));
+}
 
 // Texture contribution of an emitter sample. A (SRC_ALPHA, ONE) stage is weighted by
 // its alpha, so transparent texels with bright rgb don't read as solid glow.
@@ -39,7 +49,7 @@ vec3 rt_EmitterTexColor(vec4 texel, uint texIndex)
 }
 
 // World-space triangle of an additive translucent surface the BLAS excludes
-// (noshadows, e.g. the Mars City bio-scanner beam). Mirrors vkRTGlowTri_t, 80 bytes.
+// (noshadows, e.g. the Mars City bio-scanner beam). Mirrors vkRTGlowTri_t, 112 bytes.
 struct RtGlowTri {
     vec4  v0;         // xyz, w = s
     vec4  v1;
@@ -47,6 +57,8 @@ struct RtGlowTri {
     vec4  t;          // xyz = t per vertex
     vec3  rgb;
     uint  texIndex;   // matTextures slot | flags, as RtEmitter
+    vec4  texS;       // texture matrix rows, as RtEmitter
+    vec4  texT;
 };
 
 // Two-sided Moller-Trumbore. On a hit, t is the ray distance and uv the interpolated texcoord.

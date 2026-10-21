@@ -24,7 +24,7 @@ Target: ~30 M, ~120 C, ~105 X. That is 116 menu widgets down to ~30.
 | Ray Tracing | Enable RT | `r_useRayTracing` |
 | Features | Shadows / AO / Reflections / GI / Volumetric light | `r_rtShadows`, `r_rtAO`, `r_rtReflections`, `r_rtGI`, `r_rtVol` |
 | Features | Player shadow + reflection | `g_showPlayerShadow` |
-| Quality | New preset Low / Medium / High / Ultra (see §3) | writes the C sample/res cvars |
+| Quality | Preset Low / High / Ultra / Custom (see §3) | writes the §3 cvars, including FSR |
 | Look | GI strength, Fog density | `r_rtGIStrength`, `r_rtVolExtinction` |
 | Look | Tonemap on, Exposure | `r_rtTonemap`, `r_rtTonemapExposure` |
 | Look | Bloom on, Bloom strength | `r_rtBloom`, `r_rtBloomStrength` |
@@ -136,10 +136,11 @@ table had never listed, and moved six defaults. Defaults below are read from sou
 | `r_rtReflectionMinWeight` | Reflections | Skip rays below this coarse (mip-4 F0) Fresnel weight — panel-scale, not texel-scale. A value tuned against per-pixel F0 reads far stricter here (8g 2b) | 0.04 | C |
 | `r_rtReflVol` | Reflections | March the reflected segment through `froxelScatter` (arc 8c) | 1 | C |
 | `r_rtReflVolGain` / `r_rtReflVolSteps` | Reflections | Reflected-beam gain and march steps | 1.0 / 6 | C |
+| `r_rtReflVolStepLen` | Reflections | Max world units one march step may represent. Uncapped, a missed ray put ~167 units behind one froxel tap and outlined reflective silhouettes in white. 0 = uncapped | 48 | C |
 | `r_rtReflGlow` / `…Gain` | Reflections | Emissive glow in reflections, and its gain | 1 / 1.0 | C |
 | `r_rtReflGlowDist` | Reflections | Glow reach | 1024 | C |
 | `r_rtReflGlowSmoke` / `…SmokeMinLum` | Reflections | Glow through smoke, min luminance | 1 / 0.3 | C |
-| `r_rtReflFlashGlow` / `…Gain` / `…Radius` / `…Offset` | Reflections | Flashlight lamp glow in reflections — the viewmodel can never reach a reflection ray, so the lamp is drawn analytically | 1 / 1.5 / 1.5 / 0.0 | C |
+| `r_rtReflFlashGlow` / `…Gain` / `…Radius` / `…Offset` | Reflections | Flashlight lamp glow in reflections — the viewmodel can never reach a reflection ray, so the lamp is drawn analytically. Projected lights only (`flashPointLight 0`) | 1 / 1.5 / 1.5 / 0.0 | C |
 | `r_rtGlassNormalMode` | Reflections | Glass normal: 0 interpolated, 1 face, 2 crease-aware (arc 8b) | 2 | C |
 | `r_rtGlassCreaseRatio` | Reflections | Mode 2 threshold. Tuned once and settled | 0.25 | X |
 | `r_rtGuiReflGain` | Reflections | GUI screen brightness in reflections | 0.3 | C |
@@ -367,19 +368,27 @@ to render an ordinary image.
 Capability actually lost, not just renumbered: the probe sphere-lattice overlay (placement,
 buried/void classification) and the FSR2 bleed and bloom source passes. 
 
-## 3. Recommended quality preset
+## 3. Quality presets
 
-One new `r_rtQuality` cvar (menu combo) writes these; the individual cvars stay available in the console and Advanced node.
-The numbers below are starting points, not measured.
+Three presets: Low, High and Ultra. The menu combo writes these values (`rtQualityRows` in
+`Dhewm3SettingsMenu.cpp`) and shows Custom once any live value differs. A "—" means the
+preset leaves that cvar alone. The values are starting points and have not been measured;
+targets and checks are in cleanup plan Phase 5b.
 
-| Cvar | Low | Medium | High (= current) | Ultra |
-|---|---|---|---|---|
-| `r_rtShadowSamples` | 1 | 2 | 2 | 4 |
-| `r_rtAOSamples` | 2 | 4 | 4 | 8 |
-| `r_rtGIProbeRays` | 64 | 128 | 128 | 192 |
-| `r_rtGIProbeUpdatesPerFrame` | 512 | 1024 | 1024 | 2048 |
-| `r_rtGIMaxBounceLights` | 8 | 16 | 16 | 24 |
-| `r_rtVolFroxelRes{X,Y,Z}` | 120/68/48 | 160/90/64 | 240/135/96 | 320/180/128 |
+| Cvar | Low | High | Ultra |
+|---|---|---|---|
+| `r_fsr` | 2 | 2 | — |
+| `r_fsrQuality` | 2 (Balanced) | 1 (Quality) | 0 |
+| `r_fsrRenderScale` | — | — | 1.0 |
+| `r_rtReflectionMode` | 1 | 3 | 3 |
+| `r_rtReflOpaqueHalfRes` | 1 | 1 | 0 |
+| `r_rtReflShadowPicks` | 1 | 1 | 2 |
+| `r_rtShadowSamples` | 1 | 2 | 4 |
+| `r_rtAOSamples` | 2 | 4 | 8 |
+| `r_rtGIProbeRays` | 64 | 128 | 192 |
+| `r_rtGIProbeUpdatesPerFrame` | 512 | 1024 | 2048 |
+| `r_rtGIMaxBounceLights` | 8 | 16 | 24 |
+| `r_rtVolFroxelRes{X,Y,Z}` | 120/68/48 | 240/135/96 | 320/180/128 |
 
 ## 4. Menu cleanup checklist
 

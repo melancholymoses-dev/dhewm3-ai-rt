@@ -34,10 +34,10 @@ of the original Doom 3 GPL Source Code release.
 
 // r_rtReflections declared in RenderSystem_init.cpp
 
-static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "1000.0", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "1000.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                      "Max reflection ray travel distance in world units (default 1000.0)");
 
-static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "6.0", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "6.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                   "Scale factor for reflection radiance, applied in reflect_ray.rgen. Max 10.");
 
 // Specular Reflection and Roughness
@@ -99,6 +99,16 @@ static idCVar r_rtReflVol("r_rtReflVol", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_A
 static idCVar r_rtReflVolSteps("r_rtReflVolSteps", "6", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                                "samples per reflection ray through the froxel scatter grid (1-32). Raise if the "
                                "reflected beam bands; brightness should not change with this.");
+
+// hitT/volSteps alone stretches the step count over the whole segment, so a ray that
+// missed (hitT = r_rtReflectionDistance) puts ~167 world units of path length behind one
+// trilinear froxel tap. Near-camera cells are small and bright, and grazing rays skim
+// through them, so that over-estimate outlined reflective silhouettes in white.
+static idCVar r_rtReflVolStepLen("r_rtReflVolStepLen", "48", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                                 "max world-unit step for the reflected in-scatter march. Caps how much path "
+                                 "length one froxel tap can represent; the march then covers only the first "
+                                 "r_rtReflVolSteps * this units of the segment. 0 = uncapped (old behaviour).",
+                                 0.0f, 512.0f);
 
 static idCVar r_rtReflVolGain("r_rtReflVolGain", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                               "scale on reflected in-scatter. 1.0 is the literal integral.");
@@ -254,6 +264,7 @@ int VK_RT_ValidReflDebugMode(void)
 //   int    glassRectW     offset 288 size  4
 //   int    glassRectH     offset 292 size  4
 //   int    reflScale      offset 296 size  4  (1 full res, 2 half res)
+//   float  volStepLen     offset 300 size  4  (r_rtReflVolStepLen)
 //   total: 304 bytes — std140 rounds the block up to a multiple of
 //   16, and uboInfo.range is sizeof(ReflParamsUBO), which must not be smaller.
 // ---------------------------------------------------------------------------
@@ -307,7 +318,7 @@ struct ReflParamsUBO
     int32_t glassRectH;
     // reflImage is 1/reflScale the G-buffer's size. 1 full res, 2 half res.
     int32_t reflScale;
-    int32_t _pad0[1]; // std140 block size rounds to 16
+    float volStepLen; // r_rtReflVolStepLen — caps the volumetric march step length
 };
 
 // Which surfaces a reflect_ray.rgen dispatch is responsible for (ubo.population).
@@ -2282,6 +2293,7 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
             ubo.froxelNz = fs.nz;
             ubo.volSteps = r_rtReflVol.GetBool() ? idMath::ClampInt(1, 32, r_rtReflVolSteps.GetInteger()) : 0;
             ubo.volGain = Max(0.0f, r_rtReflVolGain.GetFloat());
+            ubo.volStepLen = Max(0.0f, r_rtReflVolStepLen.GetFloat());
             // Same clamp as vk_vol_froxel.cpp, so both evaluate one phase function.
             ubo.volIsoMix = idMath::ClampFloat(0.0f, 1.0f, r_rtVolIsotropicMix.GetFloat());
         }

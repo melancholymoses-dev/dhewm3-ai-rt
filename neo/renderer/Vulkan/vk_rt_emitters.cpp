@@ -129,11 +129,38 @@ static bool IsAdditiveStage(const shaderStage_t *stage)
     return dst == GLS_DSTBLEND_ONE && (src == GLS_SRCBLEND_ONE || src == GLS_SRCBLEND_SRC_ALPHA);
 }
 
+static void IdentityTexMatrix(float out[2][4])
+{
+    memset(out, 0, sizeof(float) * 8);
+    out[0][0] = 1.0f;
+    out[1][1] = 1.0f;
+}
+
+// The stage's texture matrix (scroll, scale, rotate) from evaluated registers, in the
+// row layout draw_common.cpp builds for the raster path. Identity when the stage has none.
+static void EmitterTexMatrix(const shaderStage_t *stage, const float *regs, float out[2][4])
+{
+    IdentityTexMatrix(out);
+    if (!stage || !stage->texture.hasMatrix)
+        return;
+    for (int r = 0; r < 2; r++)
+    {
+        out[r][0] = regs[stage->texture.matrix[r][0]];
+        out[r][1] = regs[stage->texture.matrix[r][1]];
+        out[r][2] = 0.0f;
+        out[r][3] = regs[stage->texture.matrix[r][2]];
+        // Same wrap as the raster path: long-running scrolls lose float precision.
+        if (out[r][3] < -40.0f || out[r][3] > 40.0f)
+            out[r][3] -= (int)out[r][3];
+    }
+}
+
 // Brightest enabled additive stage of mat. tint multiplies the stage colour
-// (particle stage colour for .prt). Returns false if mat has none.
+// (particle stage colour for .prt). Returns false if mat has none. ioTexMat receives
+// the winner's texture matrix from the same register evaluation as its colour.
 static bool PickAdditiveStage(const idMaterial *mat, const renderEntity_t &parms, const viewDef_t *viewDef,
                               const idVec3 &tint, idVec3 &ioRgb, idImage *&ioImage, float &ioLum,
-                              const shaderStage_t **ioStage = NULL)
+                              const shaderStage_t **ioStage = NULL, float (*ioTexMat)[4] = NULL)
 {
     if (!mat)
         return false;
@@ -163,6 +190,8 @@ static bool PickAdditiveStage(const idMaterial *mat, const renderEntity_t &parms
             ioImage = stage->texture.image;
             if (ioStage)
                 *ioStage = stage;
+            if (ioTexMat)
+                EmitterTexMatrix(stage, regs, ioTexMat);
             found = true;
         }
     }
@@ -223,7 +252,7 @@ static float ParticleStageEnvelope(const idParticleStage *ps, const renderEntity
 // io values only when a stage beats ioLum.
 static bool PickParticleStage(const idDeclParticle *prt, const renderEntity_t &parms, const viewDef_t *viewDef,
                               idVec3 &ioRgb, idImage *&ioImage, float &ioLum, const idMaterial *&ioMat, float &ioRadius,
-                              const shaderStage_t **ioStage)
+                              const shaderStage_t **ioStage, float (*ioTexMat)[4])
 {
     bool found = false;
     for (int i = 0; i < prt->stages.Num(); i++)
@@ -234,7 +263,8 @@ static bool PickParticleStage(const idDeclParticle *prt, const renderEntity_t &p
         const float env = ParticleStageEnvelope(ps, parms, viewDef);
         if (env <= 0.0f)
             continue;
-        if (PickAdditiveStage(ps->material, parms, viewDef, ps->color.ToVec3() * env, ioRgb, ioImage, ioLum, ioStage))
+        if (PickAdditiveStage(ps->material, parms, viewDef, ps->color.ToVec3() * env, ioRgb, ioImage, ioLum, ioStage,
+                              ioTexMat))
         {
             ioMat = ps->material;
             ioRadius = Max(ps->size.from, ps->size.to);
@@ -242,6 +272,28 @@ static bool PickParticleStage(const idDeclParticle *prt, const renderEntity_t &p
         }
     }
     return found;
+}
+
+// Model-space centre and half-width of a deform-sprite surface, sized the way
+// R_AutospriteDeform sizes its billboards (4 consecutive verts per quad). False if the
+// surface has no usable geometry (an uninstantiated MD5 base surface).
+static bool SpriteExtent(const srfTriangles_t *tri, idVec3 &centre, float &radius)
+{
+    if (!tri || !tri->verts || tri->numVerts < 4)
+        return false;
+    idBounds b;
+    b.Clear();
+    for (int v = 0; v + 3 < tri->numVerts; v += 4)
+    {
+        const idDrawVert *q = &tri->verts[v];
+        const idVec3 mid = (q[0].xyz + q[1].xyz + q[2].xyz + q[3].xyz) * 0.25f;
+        const float r = (q[0].xyz - mid).Length() * 0.707f;
+        b.AddBounds(idBounds(mid - idVec3(r, r, r), mid + idVec3(r, r, r)));
+    }
+    const idVec3 ext = b[1] - b[0];
+    centre = b.GetCenter();
+    radius = 0.5f * Max(ext.x, Max(ext.y, ext.z));
+    return radius > 0.0f;
 }
 
 // Evaluates one tagged entity. Returns false if it has nothing that glows.
@@ -257,21 +309,37 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
     float lum = 0.0f;
     float radius = 0.0f;
     idVec3 pos = parms.origin;
+    float texMat[2][4];
+    IdentityTexMatrix(texMat);
 
     const bool isPrt = model->IsDynamicModel() == DM_CONTINUOUS && idStr::CheckExtension(model->Name(), ".prt");
     if (isPrt)
     {
         const idDeclParticle *prt =
             static_cast<const idDeclParticle *>(declManager->FindType(DECL_PARTICLE, model->Name(), false));
-        if (!prt || !PickParticleStage(prt, parms, viewDef, rgb, image, lum, chosenMat, radius, &chosenStage))
+        if (!prt || !PickParticleStage(prt, parms, viewDef, rgb, image, lum, chosenMat, radius, &chosenStage, texMat))
             return false;
     }
     else
     {
+        // Held weapon world model: only its deform-sprite muzzle flashes glow. Other additive
+        // stages on weapons (grenade eyes, soul cube runes) are lit all the time. The sprite
+        // quads come from the posed MD5, which the TLAS pass already instantiated this frame.
+        const bool spritesOnly = parms.rtPlayer;
+        if (spritesOnly)
+        {
+            model = R_EntityDefDynamicModel(const_cast<idRenderEntityLocal *>(ent));
+            if (!model)
+                return false;
+        }
+
         // Winner's surface bounds (model space); cleared = use the entity's bounds.
         idBounds winBounds;
         winBounds.Clear();
         bool winIsParticle = false;
+        bool winIsSprite = false;
+        idVec3 spriteCentre(0.0f, 0.0f, 0.0f);
+        float spriteRadius = 0.0f;
 
         for (int i = 0; i < model->NumSurfaces(); i++)
         {
@@ -289,10 +357,12 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
             {
                 const idDeclParticle *prt = static_cast<const idDeclParticle *>(mat->GetDeformDecl());
                 float prtRadius = 0.0f;
-                if (prt && PickParticleStage(prt, parms, viewDef, rgb, image, lum, chosenMat, prtRadius, &chosenStage))
+                if (prt && PickParticleStage(prt, parms, viewDef, rgb, image, lum, chosenMat, prtRadius, &chosenStage,
+                                             texMat))
                 {
                     radius = prtRadius;
                     winIsParticle = true;
+                    winIsSprite = false;
                     if (surf->geometry)
                         winBounds = surf->geometry->bounds;
                     else
@@ -300,16 +370,43 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
                 }
                 continue;
             }
-            if (PickAdditiveStage(mat, parms, viewDef, idVec3(1.0f, 1.0f, 1.0f), rgb, image, lum, &chosenStage))
+            // deform sprite: a ray-facing disc is the billboard seen from the ray, so place
+            // and size it from the quad rather than the entity.
+            idVec3 sc;
+            float sr;
+            if (def == DFRM_SPRITE && SpriteExtent(surf->geometry, sc, sr))
+            {
+                if (PickAdditiveStage(mat, parms, viewDef, idVec3(1.0f, 1.0f, 1.0f), rgb, image, lum, &chosenStage,
+                                      texMat))
+                {
+                    chosenMat = mat;
+                    winIsParticle = false;
+                    winIsSprite = true;
+                    spriteCentre = sc;
+                    spriteRadius = sr;
+                    winBounds.Clear();
+                }
+                continue;
+            }
+            if (spritesOnly)
+                continue;
+            if (PickAdditiveStage(mat, parms, viewDef, idVec3(1.0f, 1.0f, 1.0f), rgb, image, lum, &chosenStage,
+                                  texMat))
             {
                 chosenMat = mat;
                 winIsParticle = false;
+                winIsSprite = false;
                 winBounds.Clear();
             }
         }
 
         const idBounds &b = winBounds.IsCleared() ? ent->referenceBounds : winBounds;
-        if (!b.IsCleared())
+        if (winIsSprite)
+        {
+            R_LocalPointToGlobal(ent->modelMatrix, spriteCentre, pos);
+            radius = spriteRadius;
+        }
+        else if (!b.IsCleared())
         {
             R_LocalPointToGlobal(ent->modelMatrix, b.GetCenter(), pos);
             // Half the largest extent: the size of a deform-sprite quad.
@@ -332,6 +429,7 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
     out.e.rgb[1] = rgb.y;
     out.e.rgb[2] = rgb.z;
     out.e.texIndex = EmitterTexIndex(image, chosenStage);
+    memcpy(out.e.texMat, texMat, sizeof(texMat));
     out.distSq = (pos - viewDef->renderView.vieworg).LengthSqr();
     out.ent = ent;
     out.matName = chosenMat->GetName();
@@ -340,7 +438,13 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
 }
 
 // ---------------------------------------------------------------------------
-// The first-person muzzle flash (= the flashlight) as a reflection emitter.
+// The first-person flashlight lamp as a reflection emitter.
+//
+// idWeapon builds ONE muzzleFlash light from the weapon def's mtr_flashShader, so
+// this light is the flashlight lamp when the flashlight is out and the firing flash
+// of whatever else the player is holding otherwise. `pointLight` separates them:
+// flashPointLight defaults to 1 and only weapon_flashlight.def sets it to 0. Firing
+// flashes reach reflections as their authored deform-sprite surface (EvalEmitter).
 //
 // Its lamp face cannot reach reflections as geometry by any route: the view model
 // is excluded from the TLAS, the entity walk below skips weaponDepthHack outright,
@@ -362,10 +466,10 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
 
 static idCVar r_rtReflFlashGlow("r_rtReflFlashGlow", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
                                 "show the first-person flashlight as a bright disc in reflections");
-static idCVar r_rtReflFlashGlowRadius("r_rtReflFlashGlowRadius", "1.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+static idCVar r_rtReflFlashGlowRadius("r_rtReflFlashGlowRadius", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                                       "radius of that disc in world units (invented — the lamp has no geometry "
                                       "in the TLAS to measure)");
-static idCVar r_rtReflFlashGlowGain("r_rtReflFlashGlowGain", "1.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+static idCVar r_rtReflFlashGlowGain("r_rtReflFlashGlowGain", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                                     "scale on the light's own colour for that disc. Above 1 so it reads as a "
                                     "source rather than a lit surface, and clears the bloom threshold.");
 static idCVar r_rtReflFlashGlowOffset("r_rtReflFlashGlowOffset", "0.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
@@ -403,11 +507,6 @@ static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_
     if (!r_rtReflFlashGlow.GetBool())
         return;
 
-    const float gain = Max(0.0f, r_rtReflFlashGlowGain.GetFloat());
-    const float radius = Max(0.0f, r_rtReflFlashGlowRadius.GetFloat());
-    if (gain <= 0.0f || radius <= 0.0f)
-        return;
-
     // Geometry source, found once: the view flash's world counterpart sits on the end
     // of the third-person flashlight joint, which is the model a reflection shows.
     const idRenderLightLocal *worldFlash = FindWorldMuzzleFlash(viewDef);
@@ -419,6 +518,15 @@ static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_
             continue;
         const renderLight_t &p = lightLocal->parms;
         if (!VK_RT_PlayerSuppressesLight(p.lightId))
+            continue;
+
+        // pointLight: a weapon's firing flash, drawn from its sprite surface instead.
+        if (p.pointLight)
+            continue;
+
+        const float gain = Max(0.0f, r_rtReflFlashGlowGain.GetFloat());
+        const float radius = Max(0.0f, r_rtReflFlashGlowRadius.GetFloat());
+        if (gain <= 0.0f || radius <= 0.0f)
             continue;
 
         // Colour from the view light (this is the one the player sees lit); position and
@@ -446,6 +554,8 @@ static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_
                 r = regs[stage->color.registers[0]];
                 g = regs[stage->color.registers[1]];
                 b = regs[stage->color.registers[2]];
+                // The image (lights/flashlight5) is a cone projection with a hotspot, wrong
+                // on a ray-facing disc, so the lamp keeps the procedural falloff.
                 break; // first passing stage, matching the GI upload's choice
             }
         }
@@ -471,17 +581,19 @@ static void CollectViewFlashEmitters(const viewDef_t *viewDef, emitterCandidate_
         c.e.rgb[0] = r * gain;
         c.e.rgb[1] = g * gain;
         c.e.rgb[2] = b * gain;
-        c.e.texIndex = 0; // procedural falloff — no authored sprite to point at
+        c.e.texIndex = EmitterTexIndex(NULL, NULL);
+        IdentityTexMatrix(c.e.texMat);
         c.distSq = (pos - viewDef->renderView.vieworg).LengthSqr();
         c.ent = NULL;
         c.matName = lightShader ? lightShader->GetName() : "<no light shader>";
         c.imageName = "<procedural>";
 
         if (log)
-            common->Printf("VK RT Emitter: view flash lightId=%d mtr='%s' placed=%s pos=(%.0f %.0f %.0f) "
-                           "viewPos=(%.0f %.0f %.0f) r=%.1f rgb=(%.2f %.2f %.2f)\n",
-                           p.lightId, c.matName, (worldFlash != NULL) ? "worldJoint" : "viewFlash(fallback)", pos.x,
-                           pos.y, pos.z, lightLocal->globalLightOrigin.x, lightLocal->globalLightOrigin.y,
+            common->Printf("VK RT Emitter: flashlight lamp lightId=%d mtr='%s' img='%s' placed=%s "
+                           "pos=(%.0f %.0f %.0f) viewPos=(%.0f %.0f %.0f) r=%.1f rgb=(%.2f %.2f %.2f)\n",
+                           p.lightId, c.matName, c.imageName,
+                           (worldFlash != NULL) ? "worldJoint" : "viewFlash(fallback)", pos.x, pos.y, pos.z,
+                           lightLocal->globalLightOrigin.x, lightLocal->globalLightOrigin.y,
                            lightLocal->globalLightOrigin.z, c.e.radius, c.e.rgb[0], c.e.rgb[1], c.e.rgb[2]);
 
         InsertNearest(list, num, c);
@@ -512,6 +624,7 @@ struct smokeCluster_t
     idImage *image;
     const idMaterial *mat;
     const shaderStage_t *stage;
+    float texMat[2][4];
 };
 
 // The smoke entity's quads (rebuilt this frame by its game callback, world space) merged
@@ -540,8 +653,9 @@ static void CollectSmokeEmitters(const idRenderEntityLocal *ent, const viewDef_t
         idImage *image = NULL;
         float stageLum = 0.0f;
         const shaderStage_t *stage = NULL;
+        float texMat[2][4];
         if (!PickAdditiveStage(surf->shader, ent->parms, viewDef, idVec3(1.0f, 1.0f, 1.0f), stageRgb, image, stageLum,
-                               &stage))
+                               &stage, texMat))
             continue;
         const stageVertexColor_t vertColorMode = stage ? stage->vertexColor : SVC_IGNORE;
         // (SRC_ALPHA, ONE): the fragment's alpha scales the whole contribution.
@@ -612,6 +726,7 @@ static void CollectSmokeEmitters(const idRenderEntityLocal *ent, const viewDef_t
                 sc.image = image;
                 sc.mat = surf->shader;
                 sc.stage = stage;
+                memcpy(sc.texMat, texMat, sizeof(texMat));
             }
             smokeCluster_t &sc = clusters[c];
             sc.bounds.AddBounds(idBounds(centre - idVec3(r, r, r), centre + idVec3(r, r, r)));
@@ -638,6 +753,7 @@ static void CollectSmokeEmitters(const idRenderEntityLocal *ent, const viewDef_t
         cand.e.rgb[1] = rgb.y;
         cand.e.rgb[2] = rgb.z;
         cand.e.texIndex = EmitterTexIndex(sc.image, sc.stage);
+        memcpy(cand.e.texMat, sc.texMat, sizeof(sc.texMat));
         cand.distSq = (pos - viewOrg).LengthSqr();
         cand.ent = ent;
         cand.matName = sc.mat->GetName();
@@ -672,6 +788,7 @@ struct glowSurfCandidate_t
     idVec3 rgb;
     idImage *image;
     const shaderStage_t *stage;
+    float texMat[2][4];
     float distSq;
 };
 
@@ -710,7 +827,7 @@ static void CollectGlowSurfaces(const idRenderEntityLocal *ent, const viewDef_t 
         c.image = NULL;
         c.stage = NULL;
         float lum = 0.0f;
-        if (!PickAdditiveStage(mat, parms, viewDef, idVec3(1.0f, 1.0f, 1.0f), c.rgb, c.image, lum, &c.stage))
+        if (!PickAdditiveStage(mat, parms, viewDef, idVec3(1.0f, 1.0f, 1.0f), c.rgb, c.image, lum, &c.stage, c.texMat))
             continue;
         c.ent = ent;
         c.tri = tri;
@@ -760,6 +877,7 @@ static int WriteGlowTris(const glowSurfCandidate_t *list, int num, vkRTGlowTri_t
             g.rgb[1] = c.rgb.y;
             g.rgb[2] = c.rgb.z;
             g.texIndex = texIndex;
+            memcpy(g.texMat, c.texMat, sizeof(c.texMat));
         }
         numSurfs++;
         if (log && numSurfs <= 8)
@@ -840,9 +958,11 @@ void VK_RT_BuildReflEmitters(const viewDef_t *viewDef)
         }
         if (log)
             common->Printf("VK RT Emitter: ent=%d model='%s' mtr='%s' img='%s' tex=%u r=%.1f rgb=(%.2f %.2f %.2f) "
-                           "dist=%.0f\n",
+                           "texMat=(%.3f %.3f %.3f | %.3f %.3f %.3f) dist=%.0f\n",
                            ent->parms.entityNum, ent->parms.hModel->Name(), c.matName, c.imageName, c.e.texIndex,
-                           c.e.radius, c.e.rgb[0], c.e.rgb[1], c.e.rgb[2], idMath::Sqrt(c.distSq));
+                           c.e.radius, c.e.rgb[0], c.e.rgb[1], c.e.rgb[2], c.e.texMat[0][0], c.e.texMat[0][1],
+                           c.e.texMat[0][3], c.e.texMat[1][0], c.e.texMat[1][1], c.e.texMat[1][3],
+                           idMath::Sqrt(c.distSq));
         if (c.distSq > maxDistSq)
             continue;
         InsertNearest(kept, numKept, c);
