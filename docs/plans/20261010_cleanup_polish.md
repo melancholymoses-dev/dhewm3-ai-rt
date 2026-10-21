@@ -236,13 +236,33 @@ relaunch keeps settings.
 
 ---
 
-## Phase 5b — Presets (needs the final cvar set)
+## Phase 5b — Presets (landed 2026-10-20, values not yet measured)
 
-Replace ~85 sliders with a preset and a small Advanced node; the player needs "make it
-faster / prettier", not `r_rtGIProbeHysteresis`.
+Three presets plus Custom, each tied to a frame-rate target. No `r_rtQuality` cvar: the
+combo shows whichever preset the live values match, so console edits read as Custom.
 
-| Item | Detail |
+| Preset | Target | Main levers |
+|---|---|---|
+| Low | 60 fps on an RTX 2070 | FSR 2 Balanced, `r_rtReflectionMode 1` (glass only), lowest ray counts |
+| High | steady 60 fps at 1440p on the Fast machine | FSR 2 Quality, current RT defaults |
+| Ultra | none, "for lol" | native resolution, full-res opaque reflections, highest ray counts |
+
+Values live in `rtQualityRows` (`Dhewm3SettingsMenu.cpp`) and in `Dhewm3-AI-RT-Settings.md` §3.
+Menu: Quality / Features / Look / Reflections on the RT tab, with everything else under a
+collapsed Advanced node.
+
+Check, per preset, using routes mchq and commfire with `r_vkRTProfileCSV`:
+
+| Preset | Pass condition |
 |---|---|
+| Low | Fast machine at 1920x1080: `frame.backend` p95 ≤ ~5.5 ms. This stands in for a 2070, assuming the 2070 is about 3x slower on RT |
+| High | Fast machine at 1440p: `frame.backend` p95 ≤ 16.6 ms on commfire, the worst route |
+| Ultra | Runs without device loss, and the froxel grid allocates at 320x180x128 |
+
+Not done here: the `pm_*` Player model group (§4), and reconciling the four eye-tuned
+reflection defaults. Neither touches a preset row.
+
+---|---|
 | `r_rtQuality` (Low / Medium / High / Custom) | Writes the cvars in `Dhewm3-AI-RT-Settings.md` §3 — re-derive **after** 1c, 2, 3 and 4, since the GI/vol screen cvars and the F0 group are gone by then. Editing any Advanced widget flips the combo to Custom |
 | Menu layout | Per `Dhewm3-AI-RT-Settings.md` §1 and §4; Advanced node collapsed |
 | Reflection modes | If `20261013_reflection_roughness.md` landed, mode 3 belongs on High/Ultra only (20-40% frame cost) |
@@ -301,7 +321,7 @@ Reordered 2026-10-13. Two principles, both from measurement rather than taste:
 | 3 Screen-space GI | med | 1a | Dead paths confirmed at 0.001 ms |
 | 4 Non-froxel vol | med | 1a | Done 2026-10-20, not yet validated in-game |
 | 5a Reset buttons | low | 0 | Landed 2026-10-20, pending in-game check |
-| 5b Presets | low | 1c, 1d, 2, 3, 4 (final cvar set) | |
+| 5b Presets | low | 1c, 1d, 2, 3, 4 (final cvar set) | Landed 2026-10-20. No preset row touches a Phase 2/3 cvar. Values need measuring |
 | 7 Comments | none | all of the above | Last by design; `git diff -w` must show no code change |
 
 Interleaving with other arcs is ROADMAP's job, not this table's. The one remaining external

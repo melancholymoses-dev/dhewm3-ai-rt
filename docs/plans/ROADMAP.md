@@ -45,7 +45,7 @@ this says *when*.
 | 8b | Cleanup Phase 2 (legacy reflection mode 2) | 8e | Rewritten 2026-10-17: F0 stays and becomes a menu knob; only mode 2 goes. Needs 8g Stage 5's knob fold first |
 | 9 | ~~Cleanup 3, 4~~ — **done 2026-10-20** | 8e | Both landed; neither validated in-game yet. Screen-space GI and the per-pixel vol march are gone, probe GI and the froxel grid are the only paths |
 | 9b | 8h muzzle flash sprite, Stages 1-3 | 8h | Unblocked. Stage 3 deletes cvars added 2026-10-20, so land it before cleanup 1c assigns them a tier |
-| 10 | Cleanup 5b presets, then Phase 7 comments | 8e | Needs the final cvar set |
+| 10 | Cleanup 5b presets, then Phase 7 comments | 8e | 5b landed 2026-10-20; preset values need measuring |
 
 
 ### Measured RT budget
