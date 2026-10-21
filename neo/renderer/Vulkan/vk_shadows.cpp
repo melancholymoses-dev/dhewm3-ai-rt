@@ -42,24 +42,18 @@ struct ShadowParamsUBO
     int32_t scissorOffsetY; // dispatch rect origin Y // offset 108
     int32_t screenWidth;    // full framebuffer width  // offset 112
     int32_t screenHeight;   // full framebuffer height // offset 116
-    int32_t shadowLayer;    // P1b: shadow mask array layer for this light // offset 120
+    int32_t shadowLayer;    // shadow mask array layer for this light // offset 120
     float biasErrCoeff;     // was _pad0 — depth-reconstruction bias floor, margin*ulp/znear // offset 124
 
-    // --- Phase 9 / Stage 1: anisotropic soft-shadow light shape ---
-    // Point lights: world-axis-aligned ellipsoid semi-axes (matches the box-extents
-    // convention already used by the froxel fill / vk_gi.cpp — light.axis rotation is
-    // intentionally ignored for point lights, consistent with those passes).
-    // Projected lights: aperture half-extents along the light's own right/up axes,
-    // scaled to the near-clip ("start") plane so softness reflects the physical
-    // fixture/lens size rather than the far-field beam spread.
+    // --- Anisotropic soft-shadow light shape ---
+    // Point lights: world-axis ellipsoid semi-axes (axis rotation ignored, as in GI/froxels).
+    // Projected lights: aperture half-extents on the light's right/up axes at the start plane.
     float lightAxisRight[4]; // xyz = world unit axis, w = half-extent (world units) // offset 128
     float lightAxisUp[4];    // xyz = world unit axis, w = half-extent               // offset 144
     float lightAxisFwd[4];   // xyz = world unit axis, w = half-extent (0 for projected — flat aperture) // offset 160
     uint32_t lightKind;      // 0 = point (ellipsoid), 1 = projected (aperture rect) // offset 176
-    // World units spanned by one render pixel per unit of view distance:
-    // 2*tan(fovx/2)/renderWidth.  The bias budget — an origin bias only becomes
-    // visible as peter-panning once it exceeds the pixel footprint, and the
-    // footprint grows as d while the reconstruction error grows as d^2.
+    // World units per render pixel per unit distance, 2*tan(fovx/2)/renderWidth.  Bias only
+    // shows as peter-panning past one pixel footprint (grows as d; the error grows as d^2).
     float biasFootprintCoeff; // offset 180
     // Fallback camera-to-pixel distance below which player instances are culled from
     // shadow rays, used only when playerClassValid is 0.  Separate from rayCullMask
@@ -68,7 +62,7 @@ struct ShadowParamsUBO
     // 1 = binding 4 holds this frame's G-buffer surface class, so the rgen can ask
     // per pixel whether it is the first-person body instead of guessing from distance.
     int32_t playerClassValid; // was _pad1 // offset 188
-    // Stage S2: idRenderLightLocal::frustum, global space, positive side outside, d already
+    // idRenderLightLocal::frustum, global space, positive side outside, d already
     // padded.  A pixel outside any plane gets no light from the interaction, so needs no ray.
     float lightPlanes[6][4]; // offset 192
 };
@@ -79,8 +73,7 @@ static_assert(sizeof(ShadowParamsUBO) <= 384, "ShadowParamsUBO exceeds the RT UB
 
 // ---------------------------------------------------------------------------
 // Push-constant block for shadow_blur.comp.  Must match its layout exactly.
-// `layer` (P1b) selects which shadow mask array layer this sweep operates on, so
-// one descriptor set covers every light and only the push constant changes.
+// `layer` selects the shadow mask array layer, so one descriptor set covers every light.
 // ---------------------------------------------------------------------------
 struct vkShadowBlurPush_t
 {
@@ -98,20 +91,13 @@ static_assert(sizeof(vkShadowBlurPush_t) == 36, "vkShadowBlurPush_t must match s
 
 static idCVar r_rtShadowRayBias("r_rtShadowRayBias", "0.25", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                 "ray origin bias for RT shadows (world units), helps remove near-light ring artifacts");
-// A12's floor carried a margin of 3 against a ONE-ulp model of the depth->world error.
-// That model is optimistic: the dominant term is the cancellation inside
-// invViewProj*vec4(ndc,1) when ndc.z ~ 0.999, worth many ulps rather than one.
-//
-// Raising r_znear was found to kill distant shadow flicker (2026-09-24).  It cannot have
-// worked by restoring the bias/error ratio — znear scales the error and this floor
-// identically — so it worked by pushing the ABSOLUTE error below the geometry's feature
-// scale.  A bigger margin buys the same thing with no near-clipping cost, because the
-// floor term only ever wins at range.  Its ceiling is peter-panning, which begins once
-// the bias reaches one pixel footprint; r_rtShadowDebugMode 9 shows that headroom.
+// The one-ulp error model is optimistic: cancellation in invViewProj*vec4(ndc,1) near
+// ndc.z ~ 0.999 costs many ulps.  A larger margin fixes distant flicker without the
+// near-clip cost of raising r_znear; its ceiling is peter-panning (r_rtShadowDebugMode 9).
 static idCVar r_rtShadowBiasErrMargin(
     "r_rtShadowBiasErrMargin", "6.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
     "safety multiple on the d^2*ulp/znear depth-reconstruction bias floor for RT shadows. "
-    "3 = the original A12 value. Raise it if distant geometry self-shadows or flickers; "
+    "Raise it if distant geometry self-shadows or flickers; "
     "r_rtShadowDebugMode 9 goes white when the bias reaches one pixel and peter-panning starts.");
 static idCVar r_rtShadowSoftRadiusScale(
     "r_rtShadowSoftRadiusScale", "0.08", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
@@ -134,7 +120,7 @@ static idCVar r_rtShadowBlurDepthThreshold(
 static idCVar r_rtShadowBlurMinRect(
     "r_rtShadowBlurMinRect", "64", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
     "skip the RT shadow blur when the light's dispatch rect is smaller than this on both sides "
-    "(P1a perf: tiny lights don't visibly benefit; 0 = always blur)");
+    "(tiny lights don't visibly benefit; 0 = always blur)");
 static idCVar r_vkRTDebugLights("r_vkRTDebugLights", "0", CVAR_RENDERER | CVAR_INTEGER,
                                 "log Vulkan RT shadow dispatch state (0=off, 1=filtered lights)");
 
@@ -142,17 +128,9 @@ static idCVar r_rtShadowPlayerExcludeDist(
     "r_rtShadowPlayerExcludeDist", "30", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
     "exclude player body from shadow rays when player-to-light distance is below this (0 = never exclude)");
 
-// Distinct from the cvar above, which keys on light-to-camera distance and exists so an
-// *invisible* body doesn't cast a shadow from nowhere.  This one decides, per pixel,
-// whether rays leaving it skip the player: the fp body stands inside the world body, so
-// without the exclusion it hits that duplicate and loses both direct light and bounce.
-// Shared with vk_gi.cpp — the same exclusion must apply to GI or the body still reads black.
-//
-// The per-pixel answer now comes from the G-buffer surface class, so this value is only a
-// fallback for frames with no G-buffer.  Distance cannot separate the body from a wall you
-// are standing against — both land in the same band — so the sphere also cancelled the
-// player's shadow on that wall, punching a hole in it.  Doubles as the off switch: 0 here
-// (or pm_showFirstPersonBody 0) disables the exclusion on both paths.
+// Per pixel: rays leaving the fp body skip the player, which it stands inside (shared with
+// vk_gi.cpp).  The G-buffer surface class decides normally; this radius is the fallback and
+// can't tell the body from a nearby wall.  0 (or pm_showFirstPersonBody 0) disables it.
 idCVar r_rtPlayerExcludeRadius("r_rtPlayerExcludeRadius", "40", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                "fallback radius for culling the player body from shadow/GI rays, used only when the "
                                "G-buffer surface class is unavailable; 0 disables the exclusion entirely");
@@ -181,23 +159,19 @@ float VK_RT_PlayerExcludeRadius(void)
     return r_rtPlayerExcludeRadius.GetFloat();
 }
 
-extern idCVar r_rtUnlockNoShadows; // defined in vk_light_classify.cpp — AR6 noShadows shadow unlock
+extern idCVar r_rtUnlockNoShadows; // defined in vk_light_classify.cpp — noShadows shadow unlock
 // vk_accelstruct.cpp — does player geometry carry suppressShadowInLightID for this light?
 extern bool VK_RT_PlayerSuppressesLight(int lightId);
 static idCVar r_rtShadowDebugMode(
     "r_rtShadowDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
     "visualize RT shadow pass internals in the shadow mask: "
     "0=normal, "
-    "9=bias budget (black=base rayBias/nDotL in charge, grey-to-white=the A12 depth-error floor in "
-    "charge with brightness = bias / pixel footprint; white means the bias has reached a full pixel "
-    "and raising r_rtShadowBiasErrMargin further will start detaching contact shadows), "
-    "10=player-body exclusion (white = this pixel drops the player instances from its shadow "
-    "rays; should cover the first-person body and nothing else — view it with "
-    "r_rtShadowBlurEnable 0 so the blur doesn't soften the boundary), "
-    "11=light-volume cull (traced pixels black, culled pixels lit: every RT-shadowed light should "
-    "vanish; any light still visible is a pixel the cull skipped but the light reaches). The cull "
-    "is unconditional now, so 11 is the only way to check it. "
-    "Retired, now no-ops (numbers kept stable): 1, 2, 3, 5, 7, 8.");
+    "9=bias budget (black=rayBias/nDotL in charge, grey-to-white=depth-error floor in charge, "
+    "brightness = bias / pixel footprint; white = a full pixel, contact shadows start detaching), "
+    "10=player-body exclusion (white = pixel skips player instances; should cover only the "
+    "first-person body, view with r_rtShadowBlurEnable 0), "
+    "11=light-volume cull (traced black, culled lit: any light still visible is a pixel the cull "
+    "skipped but the light reaches).");
 
 // One place decides which modes exist.  Without this a retired number would still
 // read as "a debug view is active" and suppress the blur, giving an unblurred
@@ -396,16 +370,9 @@ static void VK_RT_InitShadowPipeline(void)
 
     uint32_t handleSizeAligned = alignUp(handleSize, handleAlignment);
 
-    // 3 shader groups (rgen, miss, hit) but 5 SBT records.
-    //
-    // TLAS instances carry a hardcoded instanceShaderBindingTableRecordOffset of
-    // 0 or 2 (2 = rtPlayer body/held weapon, see vk_accelstruct.cpp).
-    // That offset is per-instance and shared by every pipeline that traces this
-    // TLAS, so the hit region here must be wide enough to contain record 2 or an
-    // out-of-range fetch pulls a garbage shader handle. Layout:
-    //   [0]=rgen  [1]=miss  [2..4]=hit (same handle in all three)
-    // Record 3 is unused padding — nothing traces with sbtRecordOffset 1 here —
-    // but it must exist for record 4 to be addressable.
+    // 3 groups, 5 SBT records.  TLAS instances use hit offset 0 or 2 (2 = rtPlayer, see
+    // vk_accelstruct.cpp) in every pipeline, so the hit region must reach record 2.
+    //   [0]=rgen  [1]=miss  [2..4]=hit (same handle; record 3 is padding)
     uint32_t sbtSize = 5 * alignUp(handleSizeAligned, baseAlignment);
 
     VK_CreateBuffer(sbtSize,
@@ -623,9 +590,8 @@ static void VK_RT_InitBlurPipeline(void)
 // Depth round-trip for the shadow pass.
 //
 // The depth image leaves the render pass in DEPTH_STENCIL_ATTACHMENT_OPTIMAL and
-// the rgen samples it, so it must be flipped to READ_ONLY and back.  Split out of
-// the per-light dispatch because the batched pass (P1b) pays this once for every
-// light instead of once per light.
+// the rgen samples it, so it must be flipped to READ_ONLY and back — once per batch,
+// not per light.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -661,10 +627,8 @@ static VkImageView VK_RT_ShadowClassView(void)
     return VK_RT_ShadowClassValid() ? vkRT.gbufAlbedo[vk.currentFrame].view : VK_RT_GetNullGbufNormalView();
 }
 
-// In-loop batches (S3) dispatch from inside the interaction loop, where gbufAlbedo is a
-// colour attachment of the (just-ended) HDR render pass rather than in the RT block's
-// SHADER_READ_ONLY window.  Round-trip it exactly like depth, so the descriptor's
-// declared layout is honest on both paths.
+// In-loop batches run where gbufAlbedo is still a colour attachment, so round-trip it like
+// depth to keep the descriptor's declared layout true on both paths.
 static void VK_RT_ShadowClassToRead(VkCommandBuffer cmd)
 {
     if (!VK_RT_ShadowClassValid())
@@ -744,14 +708,9 @@ static void VK_RT_ShadowDepthRestore(VkCommandBuffer cmd, VkPipelineStageFlags s
 // ---------------------------------------------------------------------------
 // VK_RT_RecordShadowTrace
 // Records the ray-trace dispatch for ONE light into `layer` of the shadow mask
-// array.  Records GPU work only — no barriers, no layout transitions: the caller
-// owns those so the batched path (P1b) can amortise one depth round-trip and one
-// barrier set across every light instead of paying them per light.
-//
-// The shadow-params UBO is allocated from the per-frame UBO ring (dynamic binding),
-// so per-light data is captured in the command buffer's bind offset — no per-call
-// alloc/free and no vkQueueWaitIdle.  Successive lights therefore differ only by
-// their dynamic offset; the descriptor set itself is refreshed once per frame.
+// array.  No barriers or layout transitions: the caller amortises those across the batch.
+// Per-light params come from the UBO ring via the dynamic offset; the descriptor set is
+// refreshed once per frame.
 // ---------------------------------------------------------------------------
 
 static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight,
@@ -779,11 +738,8 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
     }
 
     // --- Update frame-level descriptor set (TLAS, shadow mask, depth sampler, UBO base) ---
-    // The UBO binding is DYNAMIC: the descriptor stores the ring buffer base; the per-light
-    // offset is supplied at vkCmdBindDescriptorSets time, so this update only needs to happen
-    // once per frame slot per frameCount. Updating a descriptor set after it has already been
-    // used by recorded commands in the same in-flight command buffer invalidates that command
-    // buffer unless UPDATE_AFTER_BIND was explicitly enabled (it is not here).
+    // Once per slot per frameCount: the dynamic UBO offset carries per-light data, and updating
+    // a set already used in this command buffer is invalid without UPDATE_AFTER_BIND.
     {
         VkDescriptorSet ds = vkRT.shadowDescSets[frameIdx];
         bool refreshShadowSet = (vkRT.shadowDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount);
@@ -853,12 +809,8 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
             writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
             writes[3].pBufferInfo = &uboInfo;
 
-            // Binding 4: gbufAlbedo — alpha is the surface class.  texelFetch only in the
-            // rgen, so filter/wrap state is irrelevant; reuse the depth sampler.  The null
-            // 1x1 image stands in when there is no G-buffer, with playerClassValid 0 so the
-            // rgen never reads it.  Layout matches both dispatch paths: batch 0 runs
-            // inside vk_backend's SHADER_READ_ONLY window, in-loop batches round-trip it
-            // alongside depth.
+            // Binding 4: gbufAlbedo, alpha = surface class (texelFetch, so the depth sampler is
+            // fine).  Without a G-buffer the null image stands in with playerClassValid 0.
             VkDescriptorImageInfo gbufImgInfo = {};
             gbufImgInfo.sampler = vkRT.depthSampler;
             gbufImgInfo.imageView = VK_RT_ShadowClassView();
@@ -946,27 +898,9 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
             memcpy(ubo.invViewProj, invVP.ToFloatPtr(), 16 * sizeof(float));
         }
 
-        // Flashlight bias: push shadow origin forward along the view axis to reduce
-        // weapon/hand self-shadowing.  Identify the player's weapon light using
-        // allowLightInViewID — this is set on first-person weapon lights (flashlight,
-        // muzzle flash) and matches the player's viewID, so world lights are never affected.
-        // 2026-08-30: cast from globalLightOrigin (= parms.origin + axis * lightCenter),
-        // not parms.origin.
-        //
-        // This is what makes RT shadow *silhouettes* differ in shape from the stencil
-        // path rather than merely in softness. Every GL shadow-volume site extrudes from
-        // globalLightOrigin — tr_stencilshadow.cpp:312, :1161, :1236, :1253, :1404 and
-        // tr_turboshadow.cpp:274 — and R_MakeShadowFrustums even has an explicit
-        // "globalLightOrigin isn't centered" branch (tr_stencilshadow.cpp:1171) for the
-        // offset case. Casting from parms.origin instead moves the apex of the shadow
-        // cone, which rotates and rescales the silhouette; no amount of ray-bias tuning
-        // can compensate for that, because bias moves contact points, not shape.
-        //
-        // mars_city1's light_5253 offsets its emitter by ~920 units and light_4842 by
-        // ~5800, so the two paths were casting from visibly different places.
-        //
-        // Note this is a separate light path from the GI/vol light SSBO — that one
-        // carries the same correction as GILightEntry::emitPos (vk_gi.cpp).
+        // Cast from globalLightOrigin (parms.origin + axis * lightCenter) like every GL shadow
+        // volume; parms.origin moves the cone apex and changes silhouette shape, which bias
+        // can't fix.  Weapon lights (allowLightInViewID) also get the flashlight forward bias.
         idVec3 shadowOrigin = vLight->lightDef->globalLightOrigin;
         float flashlightBias = r_rtFlashlightBias.GetFloat();
         if (flashlightBias > 0.0f && light.allowLightInViewID != 0 &&
@@ -981,17 +915,9 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         ubo.lightOrigin[1] = shadowOrigin.y;
         ubo.lightOrigin[2] = shadowOrigin.z;
 
-        // --- Anisotropic soft-shadow light shape (Phase 9 / Stage 1) ---
-        // Doom 3 light volumes are frequently non-spherical (elongated point-light
-        // fixtures via a non-uniform lightRadius vector, or projected/spot frustums).
-        // Treating them as a single scalar radius gives every light a uniformly
-        // circular penumbra regardless of its actual shape. Compute up to three
-        // world-space axis/half-extent pairs instead; the shader projects them onto
-        // the tangent plane at each shading point to build an elliptical cone.
-        //
-        // r_rtShadowSoftRadiusScale/Min/Max remain the overall magnitude controls —
-        // applied per axis here exactly as the old code applied them once to the
-        // single scalar radius.
+        // --- Anisotropic soft-shadow light shape ---
+        // Up to three world axis/half-extent pairs, so elongated and projected lights get
+        // elliptical penumbrae.  r_rtShadowSoftRadiusScale/Min/Max apply per axis.
         idVec3 axisRightDir(1.0f, 0.0f, 0.0f), axisUpDir(0.0f, 1.0f, 0.0f), axisFwdDir(0.0f, 0.0f, 1.0f);
         float axisRightHalf = 0.0f, axisUpHalf = 0.0f, axisFwdHalf = 0.0f;
         uint32_t lightKind = 0u;
@@ -1015,11 +941,8 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         }
         else
         {
-            // Projected/spot light: the frustum tapers linearly from a point at the
-            // light origin, so the physical fixture/lens size is approximated by the
-            // cross-section at the near-clip ("start") plane, not the far "target"
-            // plane — a flashlight's beam can be metres wide at range even though the
-            // bulb itself is a couple of centimetres across.
+            // Projected light: approximate the fixture size by the frustum cross-section at the
+            // start plane, not the target plane (a beam is much wider than its bulb).
             const float targetLen = light.target.Length();
             const float startLen = light.start.Length();
             const float tStart = (targetLen > 0.001f) ? idMath::ClampFloat(0.0f, 1.0f, startLen / targetLen) : 0.0f;
@@ -1056,7 +979,7 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         ubo.lightAxisFwd[3] = axisFwdHalf;
         ubo.lightKind = lightKind;
         const float softRadius = ubo.lightOrigin[3]; // kept for the existing debug log line below
-        // Stage S2: the same 6 planes the frontend culls interactions with, built from the
+        // The same 6 planes the frontend culls interactions with, built from the
         // lightProject the interaction attenuates by, so point and projected lights agree.
         // Cull off writes (0,0,0,-1): every pixel is then 1 unit inside every plane.
         const bool volumeCull = true;
@@ -1073,14 +996,8 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         ubo.frameIndex = 0u;
 
         ubo.rayBias = r_rtShadowRayBias.GetFloat();
-        // A12: worldPos reconstruction error is d^2*ulp/znear; without this floor the
-        // bias is swamped at range and the origin self-shadows.  ulp ~6e-8; the margin
-        // is r_rtShadowBiasErrMargin (3 = A12's original).
-        //
-        // Near plane from the projection, not the r_znear cvar: game code writes that
-        // directly (3.0 -> 1.0 for cinematics), so a backend read can return a value
-        // this frame's depth buffer was never rasterised with, and the floor is then
-        // wrong for exactly the frames where znear moved. See VK_RT_EffectiveZNear.
+        // worldPos reconstruction error is d^2*ulp/znear (ulp ~6e-8); without this floor the
+        // origin self-shadows at range.  Near plane from the projection (VK_RT_EffectiveZNear).
         ubo.biasErrCoeff =
             Max(0.0f, r_rtShadowBiasErrMargin.GetFloat()) * 6.0e-8f / Max(0.001f, VK_RT_EffectiveZNear(viewDef));
 
@@ -1115,12 +1032,9 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         {
             ubo.rayCullMask = 0xFFu;
         }
-        // The game's own rule, which the RT path had never implemented (renderLight_t::lightId:
-        // "muzzle flash lights will not cast shadows from player and weapon world models").
-        // The first-person muzzle flash is also the flashlight beam, so without this the hand
-        // holding the light shadows its own beam.  Interaction.cpp applies the same test when
-        // it builds stencil shadow volumes; one TLAS serves every light, so here it has to be
-        // a per-light cull mask.
+        // Game rule (renderLight_t::lightId): muzzle-flash lights, which include the flashlight,
+        // cast no shadows from player/weapon models.  One TLAS serves every light, so it is a
+        // per-light cull mask here.
         if (VK_RT_PlayerSuppressesLight(light.lightId))
         {
             ubo.rayCullMask = VK_RT_MASK_NO_PLAYER;
@@ -1169,8 +1083,7 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
             fflush(NULL);
         }
 
-        // Launch area, batched and serial alike.  S2 culls inside this area, so it moves
-        // gpu time but not this counter; S5's rect shrink is what lowers it.
+        // Launch area, batched and serial alike.  The plane cull lowers GPU time, not this.
         VK_Prof_Add(VKPROF_SHADOW_MPIX, (double)dispatchW * (double)dispatchH * 1e-6);
 
         vkCmdTraceRaysKHR(cmd, &vkRT.rgenRegion, &vkRT.missRegion, &vkRT.hitRegion, &vkRT.callRegion, dispatchW,
@@ -1196,9 +1109,7 @@ static int VK_RT_ShadowBlurRadius(void)
     return Min(8, Max(0, r_rtShadowBlur.GetInteger()));
 }
 
-// P1a (rt_optimization_tuning.md): skip the blur for tiny lights — each blur is
-// two compute dispatches, and a light covering a small screen rect doesn't
-// visibly benefit.
+// Skip the blur (two dispatches) for lights with a small screen rect.
 static bool VK_RT_ShadowBlurWanted(VkRect2D dispatchRect)
 {
     if (VK_RT_ShadowBlurRadius() <= 0)
@@ -1316,18 +1227,12 @@ static void VK_RT_ShadowMemBarrier(VkCommandBuffer cmd, VkPipelineStageFlags src
 }
 
 // ---------------------------------------------------------------------------
-// P1b — batched shadow masks
+// Batched shadow masks
 //
-// One layer per shadow-casting light lets every light be traced and blurred in a
-// single block outside the render pass.  The old code paid, per light, a
-// vkCmdEndRenderPass + depth round-trip + ~4 barriers + vkCmdBeginRenderPass; the
-// batch pays that once regardless of light count.
-//
-// Stage S3 — looped batches.  Shadow light n goes to batch n / W, layer n % W.
-// Batch 0 traces before the render pass opens; each later batch is traced from
-// inside the interaction loop when its first light comes up, at the cost of one
-// render-pass break for the whole batch instead of one per light.  Lights are
-// additive, so drawing them batch by batch changes nothing visible.
+// One layer per shadow-casting light, so a batch is traced and blurred outside the render
+// pass with one render-pass break.  Light n goes to batch n / W, layer n % W.  Batch 0
+// traces before the render pass opens; later batches trace from the interaction loop when
+// their first light comes up.  Lights are additive, so batching changes nothing visible.
 // ---------------------------------------------------------------------------
 
 struct vkShadowBatchEntry_t
@@ -1363,9 +1268,8 @@ void VK_RT_ShadowBatchBegin(void)
     s_shadowBatchSerialCount = 0;
 }
 
-// Whether a capture met Phase 6a's condition at all.  Without this, a profile from an
-// area that fits in batch 0 is indistinguishable from one where the in-loop dispatch is
-// simply fast, because in-loop time is billed to Interactions.
+// Whether any lights spilled past batch 0; otherwise a profile can't tell "fits in batch 0"
+// from "in-loop dispatch is fast" (in-loop time is billed to Interactions).
 void VK_RT_GetShadowBatchStats(int *outCasters, int *outBatched, int *outSerial)
 {
     if (outCasters)
@@ -1394,16 +1298,12 @@ int VK_RT_ShadowBatchAddLight(const viewLight_t *vLight, VkRect2D dispatchRect)
     // Respect the same no-shadow flags the stencil renderer uses.
     //   lightDef->parms.noShadows — per light entity (e.g. fill lights inside geometry)
     //   LightCastsShadows()       — the light material's "noShadows" keyword
-    // These lights get no layer at all; the interaction pass clears u_UseShadowMask
-    // for them rather than sampling a mask cleared to white (which is what the
-    // single-image version had to do, at the cost of a clear plus two barriers).
+    // These lights get no layer; the interaction pass clears u_UseShadowMask for them.
     const renderLight_t &lp = vLight->lightDef->parms;
     bool castsShadows = !lp.noShadows && vLight->lightDef->lightShader->LightCastsShadows();
 
-    // AR6 (auto_relight.md §6): r_rtUnlockNoShadows gives placed colored accents —
-    // ACCENT per the shared classifier (noShadows, radius < r_rtLightAccentMaxRadius) —
-    // a real shadow layer anyway. AMBIENT_FILL (semantic mapper washes) and REAL lights
-    // are untouched; this can only turn a noShadows light on, never off.
+    // r_rtUnlockNoShadows gives ACCENT lights (see VK_RT_ClassifyLight) a shadow layer anyway.
+    // It can only turn a noShadows light on, never off.
     if (!castsShadows && r_rtUnlockNoShadows.GetBool() &&
         VK_RT_ClassifyLight(lp, vLight->lightDef->lightShader) == RT_LIGHT_ACCENT)
         castsShadows = true;
@@ -1449,8 +1349,7 @@ int VK_RT_GetShadowLayerForLight(const viewLight_t *vLight)
 }
 
 // Clear layers [0, layerCount) to 1.0.  The leading barrier also orders a reused
-// layer after the previous batch's interaction reads and blur, which is what makes
-// S3's in-loop reuse safe.
+// layer after the previous batch's interaction reads and blur, so in-loop reuse is safe.
 static void VK_RT_ClearShadowLayers(VkCommandBuffer cmd, int layerCount)
 {
     vkShadowMask_t &sm = vkRT.shadowMask[vk.currentFrame];

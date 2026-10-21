@@ -592,7 +592,7 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
 }
 
 // ===========================================================================
-// Atrous spatial filter (Step 5.2b)
+// Atrous spatial filter
 // ===========================================================================
 
 // Creates/destroys per-slot scratch images (same allocation path as history images).

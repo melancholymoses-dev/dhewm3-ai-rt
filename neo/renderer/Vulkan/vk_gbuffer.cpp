@@ -133,7 +133,7 @@ static void VK_RT_CreateGBufferImages(uint32_t width, uint32_t height)
         VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &gb.view));
 
         // Transition UNDEFINED → COLOR_ATTACHMENT_OPTIMAL so the render pass's
-        // COLOR_ATTACHMENT_OPTIMAL initial/final layout (Step 2) is honest from
+        // COLOR_ATTACHMENT_OPTIMAL initial/final layout is honest from
         // the first frame. One-time submit, same pattern as VK_RT_CreateReflImages.
         VkCommandBuffer tmpCmd = VK_NULL_HANDLE;
         {

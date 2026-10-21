@@ -529,7 +529,7 @@ void VK_RT_InitAO(void)
     // wait, which must not happen mid-frame.
     VK_RT_GetNullGbufNormalView();
     VK_RT_ResizeAOMask(vk.swapchainExtent.width, vk.swapchainExtent.height);
-    // Temporal history images and EMA pipeline (Step 5.2)
+    // Temporal history images and EMA pipeline
     VK_RT_InitTemporal();
 }
 

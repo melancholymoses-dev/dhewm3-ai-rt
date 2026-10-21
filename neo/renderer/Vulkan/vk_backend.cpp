@@ -42,11 +42,11 @@ static VkCommandBuffer s_frameCmdBuf = VK_NULL_HANDLE;
 static uint32_t s_frameImageIndex = 0;
 static bool s_frameNeedsImageAcquireWait = false;
 
-// FSR U0: set once the render sub-rect has been resolved to display resolution.
+// Set once the render sub-rect has been resolved to display resolution.
 // Everything drawn after this point (UI, HUD, ImGui) uses the full display extent.
 static bool s_upscaleDone = false;
 
-// Bloom B2: set once the blur chain and composite have run, so the SwapBuffers
+// Set once the bloom blur chain and composite have run, so the SwapBuffers
 // fallback does not composite a second time on a frame that had a GUI overlay view.
 static bool s_bloomDone = false;
 
@@ -105,7 +105,7 @@ static void VK_SetRenderStage(const char *stage)
     s_stageBreadcrumbHead = (s_stageBreadcrumbHead + 1) % VK_STAGE_BREADCRUMB_MAX;
 }
 
-// A0a: pass labels for GPU capture tools, independent of timestamp profiling.
+// Pass labels for GPU capture tools, independent of timestamp profiling.
 // Declared up here because both command-buffer exits (the split submit below and
 // the frame end) have to verify the depth is back to zero before vkEndCommandBuffer.
 static bool s_rtProfLabelsThisFrame = false;
@@ -115,7 +115,7 @@ static int s_rtProfLabelDepth = 0;
 // fail on it.  Returns the number it had to close.
 static int VK_RTProfile_CloseStrayLabels(VkCommandBuffer cmd);
 
-// Scoped label for regions that are not profiler phases (Stage L1: per-light interaction
+// Scoped label for regions that are not profiler phases (per-light interaction
 // regions).  The interaction loop has `continue` paths, and an unbalanced label makes
 // vkEndCommandBuffer fail, so the pop has to be automatic.  Gated on the same once-per-frame
 // latch the phase spans use, not on the cvar directly.
@@ -284,8 +284,7 @@ static idCVar r_vkSplitSubmitMask(
     "Bitmask: 1=after RT block, 2=after interactions, 4=after shader passes, 8=after fog, "
     "16=after TLAS, 32=after AO, 64=after reflections, 128=after RT renderpass resume, "
     "256=after GI dispatch (outside RP), 512=after GI composite (inside RP), "
-    "1024=after the whole GI chain, before volumetrics (isolates the vol passes from "
-    "probe trace/blend/resolve + albedo mod — both were previously one submit). "
+    "1024=after the whole GI chain, before volumetrics. "
     "Can be added together to trigger multiple submissions.");
 static idCVar r_vkLowPerturbationMode(
     "r_vkLowPerturbationMode", "1", CVAR_RENDERER | CVAR_INTEGER,
@@ -375,8 +374,7 @@ enum vkRTProfilePhase_t
 
     // Everything above is ray tracing and sums into the reported `total=`.
     // Everything below is the rest of the frame and sums into `raster=`.
-    // Keep the split: `total=` is the number every recorded RT budget is quoted
-    // against, and folding raster into it would silently invalidate all of them.
+    // Keep the split: RT budgets are quoted against `total=`.
     VK_RTPROF_PHASE_RT_COUNT,
 
     VK_RTPROF_PHASE_DEPTH_PREPASS = VK_RTPROF_PHASE_RT_COUNT,
@@ -797,14 +795,9 @@ static void VK_RTProfile_CollectAndLog(int slot)
         VK_Prof_SetSlot(slot, VKPROF_FRAME_PRESENT, fc.presentMs);
         VK_Prof_SetSlot(slot, VKPROF_FRAME_BACKEND, fc.backendMs);
 
-        // What the backend spent that no span accounts for.  Measured wall clock
-        // minus the frame spans minus the per-phase CPU: a large `other=` is the
-        // cue to put a sampling profiler on VK_RB_DrawView.
-        //
-        // The readback and serialize waits sit after the present stamp but before
-        // backendMs is taken, so they belong here explicitly — otherwise a whole
-        // frame of GPU wait lands in `other` under r_vkSerializeFrames 1 or during
-        // a screenshot, which is exactly when you would be reading this number.
+        // Wall clock minus spans minus per-phase CPU; a large `other=` means profile
+        // VK_RB_DrawView.  Readback/serialize waits are subtracted explicitly so they don't
+        // land in `other`.
         const double tailWaitMs = VK_Prof_GetSlot(slot, VK_Prof_WaitMetric(VKPROF_WAIT_READBACK, true)) +
                                   VK_Prof_GetSlot(slot, VK_Prof_WaitMetric(VKPROF_WAIT_SERIALIZE, true));
         const double accounted = fc.fenceWaitMs + fc.acquireMs + fc.drainMs + fc.uploadMs + fc.submitMs + fc.presentMs +
@@ -832,8 +825,7 @@ static void VK_RTProfile_CollectAndLog(int slot)
 
     // vcAlloc split by caller, printed once per window because it is a 2D table,
     // not one value per metric.  Cells are count/KB/ms; kind (static/cached/
-    // continuous/other) is only known for the two view-surface sites, so the other
-    // sites land entirely in "other".  X3 reads this with r_rtShadows 1.
+    // continuous/other) is only known for the two view-surface sites; the rest land in "other".
     if (haveCPU && VK_Prof_WindowJustClosed() && (VK_Prof_Groups() & VKPROF_GRP_UPLOAD) != 0)
     {
         static const char *const siteNames[VCS_COUNT] = {"UNKNOWN",    "ambient",  "indexView",  "lighting",
@@ -1009,7 +1001,7 @@ static VkDeviceSize VK_AllocDataRing(VkDeviceSize size, VkDeviceSize align, bool
         return VK_WHOLE_SIZE;
     }
     ring.offset = aligned + size;
-    // F1/F8: how much geometry is re-copied per frame, and how close the ring runs
+    // How much geometry is re-copied per frame, and how close the ring runs
     // to its 64 MB.  Counted after the overflow return so rejected requests, whose
     // draw is skipped, do not show up as bytes copied.
     VK_Prof_Add(isIndex ? VKPROF_RING_IDX_KB : VKPROF_RING_VERT_KB, (double)size / 1024.0);
@@ -1035,18 +1027,10 @@ static vkUBORing_t uboRings[VK_MAX_FRAMES_IN_FLIGHT];
 // Y flip is handled via negative viewport height, not here.
 static float s_projVk[16];
 
-// U2 motion vectors (docs/plans/completed/20260918_fsr_upscaling.md §13): the view-projection
-// pair the G-buffer prepass reprojects against, both UNJITTERED and left in GL clip
-// space — only xy/w is read, and the Z remap above rewrites row 2 alone.  For the same
-// reason weaponDepthHack/modelDepthHack are not applied: they only scale or shift
-// proj[14].
-//
-// When the view has no usable previous frame (first frame, subview, mirror, 2D overlay)
-// s_motionPrevValid is false and BOTH halves fall back to the current frame's — the
-// view-projection here, and the per-surface model matrix in VK_RB_FillDepthBuffer.
-// Both must fall back together: an entity first seen in a subview can have a genuine
-// prevModelMatrix from last frame, and pairing that with this frame's camera emits
-// object motion in a view whose contract says the vector is exactly zero.
+// Motion vectors: the view-projection pair the prepass reprojects against, UNJITTERED in GL
+// clip space (only xy/w is read, so the Z remap and depth hacks don't matter).
+// Without a usable previous frame, the view-projection AND the per-surface model matrix
+// both fall back to the current frame, so the vector is exactly zero.
 static float s_viewProjNoJitterGl[16];
 static float s_prevViewProjGl[16];
 static bool s_motionPrevValid = false;
@@ -1270,7 +1254,7 @@ static uint32_t VK_AllocUBO(void)
     }
     uint32_t off = ring.offset;
     ring.offset += ring.stride;
-    // F8: the clamp above draws wrong data silently, so the high-water mark is the
+    // The clamp above draws wrong data silently, so the high-water mark is the
     // number to size VK_UBO_RING_SIZE from.
     VK_Prof_Max(VKPROF_RING_UBO_PEAK_KB, (double)(ring.offset >> 10));
     return off;
@@ -1301,7 +1285,7 @@ static const char *s_shadowPhaseTag = "unknown";
 static int s_lightIdx = -1; // current light index (for per-interaction logging)
 static const char *s_interactionPipeTag = "opaque";
 static VkRect2D s_interactionLightScissor = {{0, 0}, {0, 0}};
-// P1b — shadow mask array layer of the light currently being drawn, or -1 when the
+// Shadow mask array layer of the light currently being drawn, or -1 when the
 // light casts no shadows.  Set once per light by VK_RB_DrawInteractions; read by
 // VK_RB_DrawInteraction for every surface of that light.
 static int s_shadowMaskLayer = -1;
@@ -1395,22 +1379,15 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     int *ip = (int *)f;
     *ip = r_gammaInShader.GetBool() ? 1 : 0;
 
-    // screenSize (used by shader to compute shadow mask / AO UV from gl_FragCoord).
-    // Stays swapchainExtent under FSR: the masks are display-sized and written
-    // identity-mapped into the render sub-rect, so uv = fragCoord / bufferSize.
-    // Using renderExtent here magnifies both masks by 1/renderScale.
+    // screenSize for the shadow mask / AO UV.  swapchainExtent even under FSR: the masks are
+    // display-sized, and renderExtent would magnify them by 1/renderScale.
     float *fsz = (float *)(ip + 1);
     fsz[0] = (float)vk.swapchainExtent.width;
     fsz[1] = (float)vk.swapchainExtent.height;
 
     // useShadowMask: 1 when RT shadow mask is valid this frame.
-    // Weapon depth-hack surfaces are rendered in a different depth range and should
-    // not be shadowed by the world-space screen mask; this can make viewmodels look
-    // ghostly or intermittently dark.
-    //
-    // P1b: s_shadowMaskLayer is this light's layer in the shadow mask array, set once
-    // per light by VK_RB_DrawInteractions.  A negative layer means the light casts no
-    // shadows at all — the mask isn't sampled rather than being cleared to white.
+    // Weapon depth-hack surfaces use a different depth range, so skip the screen mask.
+    // A negative s_shadowMaskLayer means the light casts no shadows and the mask isn't sampled.
     int *useSM = (int *)(fsz + 2);
     const bool hasShadowMask =
         VK_RTShadowsEnabled() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE && s_shadowMaskLayer >= 0;
@@ -1433,13 +1410,10 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
                           vkRT.giBuffer[vk.currentFrame].image != VK_NULL_HANDLE;
 
     // aoDirectStrength: how much AO darkens direct diffuse; 0 = off (weapon surfaces skip AO
-    // same as shadow).  While GI composites, AO belongs on the indirect term instead
-    // (docs/plans/completed/20260930_AO_GI_refine.md), so only r_rtAODirectStrength reaches here.
+    // same as shadow).  While GI composites, AO belongs on the indirect term, so only
+    // r_rtAODirectStrength reaches here.
     float *aoDirectPtr = (float *)(useSM + 1);
-    // A2 (amd_vulkan_cleanup.md): aoValid, not just image != NULL. The image existing says
-    // nothing about whether anything was written into it this frame — VK_RT_DispatchAO has
-    // several early-return paths (RT off, invalid TLAS across a level load, empty scissor)
-    // that leave it untouched, and the rgen only ever writes inside the view scissor.
+    // aoValid, not just image != NULL: VK_RT_DispatchAO can early-out and leave it unwritten.
     const bool hasAOMask = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtAO.GetBool() &&
                            vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE && vkRT.aoValid[vk.currentFrame];
     {
@@ -1458,7 +1432,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     *lightScalePtr = backEnd.overBright * (giActive ? directScale : 1.0f);
 
     // Four retired ints follow lightScale (VkInteractionUBO::_retired), then shadowMaskLayer.
-    // shadowMaskLayer (P1b) — ring memory is never cleared, so always write it.
+    // shadowMaskLayer — ring memory is never cleared, so always write it.
     int *shadowLayerPtr = (int *)(lightScalePtr + 1) + 4;
     *shadowLayerPtr = (s_shadowMaskLayer >= 0) ? s_shadowMaskLayer : 0;
 
@@ -1498,8 +1472,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         }
     }
 
-    // Binding 7: shadow mask.  sampler2DArray since P1b — the fallback must be an
-    // array view too, or the descriptor's view type disagrees with the shader.
+    // Binding 7: shadow mask, a sampler2DArray, so the fallback must be an array view too.
     extern void VK_Image_GetFallbackArrayDescriptorInfo(VkDescriptorImageInfo *);
     VkDescriptorImageInfo shadowMaskInfo = {};
     if (vk.rayTracingSupported && vkRT.isInitialized && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE)
@@ -1649,9 +1622,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     vkCmdBindIndexBuffer(s_cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
 
     // --- Per-surface dynamic state ---
-    // Polygon offset: mirrors GL qglPolygonOffset in the interaction pass.
-    // Both depth prepass AND interaction pass must apply the same bias so the biased
-    // prepass depth (D-ε) matches the biased interaction fragment depth (D-ε) for LEQUAL.
+    // Polygon offset as GL; prepass and interaction must apply the same bias for LEQUAL.
     {
         const idMaterial *mat = din->surf->material;
         float biasConstant = 0.0f;
@@ -1800,14 +1771,14 @@ struct VkSkyboxUBO
     float colorAdd[4];             // 16 bytes
 }; // 112 bytes total
 
-// G-buffer normal/F0 prepass UBO (Stage 3.5, must match gbuffer.vert/gbuffer.frag
+// G-buffer normal/F0 prepass UBO (must match gbuffer.vert/gbuffer.frag
 // and gbuffer_clip.frag's GBufferParams block, std140). See VK_RB_FillDepthBuffer.
 struct VkGBufferUBO
 {
     float modelViewProjection[16]; // 64 bytes
     float modelMatrix[16];         // 64 bytes — surf->space->modelMatrix (rigid transform)
-    float mvpNoJitter[16];         // 64 bytes — U2, GL clip space, no jitter
-    float prevMvpNoJitter[16];     // 64 bytes — U2, ditto, last frame (== mvpNoJitter when unavailable)
+    float mvpNoJitter[16];         // 64 bytes — GL clip space, no jitter
+    float prevMvpNoJitter[16];     // 64 bytes — ditto, last frame (== mvpNoJitter when unavailable)
     float bumpMatrixS[4];          // 16 bytes
     float bumpMatrixT[4];          // 16 bytes
     float diffuseMatrixS[4];       // 16 bytes — alpha-test UV (gbuffer_clip.frag only)
@@ -1817,14 +1788,13 @@ struct VkGBufferUBO
     float alphaTestThreshold;      // 4 bytes  — gbuffer_clip.frag only
     float specF0Scale;             // 4 bytes  — r_rtSpecF0Scale
     float specF0Gamma;             // 4 bytes  — r_rtSpecF0Gamma
-    // U4 transparency-and-composition class, 0 = ordinary surface, 1 = motion vectors here
-    // are known wrong.  Rides gbufAlbedo's alpha, extracted by fsr_tc_mask.comp; took
-    // over the old _pad0 slot, so the struct size is unchanged.
+    // FSR 2 transparency-and-composition class: 1 = motion vectors here are known wrong.
+    // Rides gbufAlbedo's alpha (fsr_tc_mask.comp); was _pad0.
     float tcClass; // 4 bytes
     // dhewm3-rt: 1 = view-local surface (first-person body, view weapon).  Shares that
     // alpha channel as a third level — see the encoding in gbuffer.frag.
     float viewLocal;      // 4 bytes
-    float roughnessFloor; // 4 bytes — r_rtReflRoughnessFloor (Stage 2)
+    float roughnessFloor; // 4 bytes — r_rtReflRoughnessFloor
 }; // 376 bytes total
 
 // Every UBO here comes out of the one ring, whose stride is sized from
@@ -1911,10 +1881,8 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         if (mat->SuppressInSubview())
             continue;
 
-        // Fog lights and blend lights have volume geometry in drawSurfs.
-        // The GUI pipeline has no depth test, so these volumes would render
-        // through floors/walls if not skipped here.  They will be handled
-        // by a future VK_RB_FogAllLights pass.
+        // Fog/blend light volumes would render through walls with the GUI pipeline (no depth
+        // test); VK_RB_FogAllLights handles them.
         if (mat->IsFogLight() || mat->IsBlendLight())
             continue;
 
@@ -2260,11 +2228,8 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 colorAdd[3] = color[3];
             }
 
-            // SS_SUBVIEW override (GL parity: draw_common.cpp:562-566)
-            // The `mirror` keyword renders the reflected scene directly into the
-            // framebuffer via a subview, then the mirror quad draws with multiplicative
-            // blend to darken it by 1/overBright.  GL forces DEPTHFUNC_LESS (not EQUAL)
-            // so the quad overwrites the subview's depth, and sets color to 1/overBright.
+            // SS_SUBVIEW override (GL parity, draw_common.cpp): the mirror quad multiplies the
+            // subview by 1/overBright with DEPTHFUNC_LESS, so it overwrites the subview's depth.
             int drawBitsOverride = pStage->drawStateBits;
             if (mat->GetSort() == SS_SUBVIEW)
             {
@@ -2430,10 +2395,8 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             writes[1].descriptorCount = 1;
             writes[1].pImageInfo = &imgInfo;
 
-            // Select (or lazily create) a pipeline matching the blend state.
-            // 3D world surfaces (GLS_DEPTHFUNC_ALWAYS not set) need depth testing so
-            // they respect the depth prepass and don't render through occluders or from
-            // behind the camera.  2D GUI surfaces (GLS_DEPTHFUNC_ALWAYS) skip depth.
+            // Pipeline for this blend state.  3D surfaces depth-test against the prepass; 2D GUI
+            // surfaces (GLS_DEPTHFUNC_ALWAYS) don't.
             extern VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest);
             const bool needDepth = isSkyboxStage ? true : !(drawBitsOverride & GLS_DEPTHFUNC_ALWAYS);
 
@@ -2518,13 +2481,8 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         }
 
         // --- RT reflection overlay for glass surfaces ---
-        // After all material stages have drawn for this surface, add one additional
-        // additive draw that composites the RT reflection buffer on top.  This gives
-        // flat glass panes visible reflections without needing to route them through
-        // the per-light interaction pass.
-        //
-        // Use SURFTYPE_GLASS to target only actual glass materials — not coronas,
-        // halos, particles, or other MC_TRANSLUCENT surfaces.
+        // One extra additive draw of the reflection buffer after the surface's stages.
+        // SURFTYPE_GLASS only, not coronas, halos or other MC_TRANSLUCENT surfaces.
         if (mat->GetSurfaceType() == SURFTYPE_GLASS && !reflDebugActive && r_useRayTracing.GetBool() &&
             r_rtReflections.GetBool() && vk.rayTracingSupported && vkRT.isInitialized &&
             vkPipes.glassReflPipeline != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE &&
@@ -2579,11 +2537,8 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         VkGuiUBO *ovUbo = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + ovUboOffset);
         memset(ovUbo, 0, sizeof(*ovUbo));
         memcpy(ovUbo->modelViewProjection, mvp, 64);
-        // Stash the reflection buffer's resolution in texGenS.xy — fragment divides
-        // gl_FragCoord by it to get the screen UV.  That buffer is display-sized and
-        // written identity-mapped into the render sub-rect, so this is swapchainExtent
-        // even under FSR; renderExtent would magnify the reflection by 1/renderScale.
-        // texMatrixS.z stays 0 so the vertex shader takes the normal (non-texgen) path.
+        // texGenS.xy = reflection buffer size for the screen UV: swapchainExtent even under FSR
+        // (the buffer is display-sized).  texMatrixS.z stays 0 (non-texgen vertex path).
         ovUbo->texGenS[0] = (float)vk.swapchainExtent.width;
         ovUbo->texGenS[1] = (float)vk.swapchainExtent.height;
 
@@ -2594,9 +2549,8 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
         VkDescriptorImageInfo ovReflInfo = {};
         ovReflInfo.sampler = vkRT.reflSampler;
-        // Stage 4b: the glass chain's view when the populations were split this frame,
-        // else the opaque chain's (glass behind the negative-alpha sentinel, as before).
-        // Either way: the denoised history/à-trous output when r_rtReflDenoise is on.
+        // Glass chain's view when populations were split, else the opaque chain's; denoised
+        // when r_rtReflDenoise is on.
         ovReflInfo.imageView = VK_RT_GetReflGlassReadView(vk.currentFrame);
         ovReflInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
@@ -2625,7 +2579,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 }
 
 // ---------------------------------------------------------------------------
-// VK_FindBumpSpecularStages (Stage 3.5 — G-buffer normal/F0 prepass)
+// VK_FindBumpSpecularStages (G-buffer normal/F0 prepass)
 // Finds the first active SL_BUMP / SL_SPECULAR / SL_DIFFUSE stage on a material
 // and resolves its image + texture matrix via the same R_SetDrawInteraction()
 // helper the interaction path uses (tr_render.cpp), so the G-buffer prepass
@@ -2633,9 +2587,8 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 // shading would.
 // Falls back to flatNormalMap / blackImage / whiteImage (identity matrix) when
 // no such stage exists, its condition register is false, or it has no image —
-// matching RB_SubmittInteraction's fallback for the same cases. The diffuse
-// fallback is whiteImage (docs/plans/gi_albedo_target.md): a material with no
-// diffuse stage should modulate GI by 1.0, the same as an unwritten pixel.
+// matching RB_SubmittInteraction's fallback for the same cases. whiteImage for
+// diffuse, so a material with no diffuse stage modulates GI by 1.0.
 //
 // outDiffuseImage/outDiffuseMatrix are only used by the MC_OPAQUE (non-clip)
 // caller — the MC_PERFORATED path already resolves its diffuse/alpha stage
@@ -2704,20 +2657,15 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
 
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
 
-    // Stage 3.5: write the G-buffer attachments instead of the depth-only pipelines (see
-    // Step 0 in docs/plans/gbuffer_normal_pass.md). RT wants gbufNormal/gbufAlbedo; FSR 2
-    // wants motionVectors, which is why this is no longer keyed on r_useRayTracing alone.
+    // G-buffer attachments instead of depth-only: RT wants gbufNormal/gbufAlbedo, FSR 2
+    // wants motionVectors.
     const bool useGBuffer = VK_GBufferPrepassActive();
     int gbufBumpFound = 0, gbufBumpFallback = 0, gbufSpecFound = 0, gbufSpecFallback = 0, gbufSurfCount = 0;
-    // gi_albedo_target.md: albedo resolution breadcrumb, opaque-path only (the clip
-    // path's diffuse always resolves — it's the material's alpha-test stage).
+    // Albedo resolution breadcrumb, opaque path only (the clip path's diffuse always resolves).
     int gbufAlbedoFound = 0, gbufAlbedoFallback = 0;
 
-    // GL parity: when the current (non-subview) view contains mirror surfaces,
-    // the depth fill pass must also guard the color buffer so previously rendered
-    // mirror subview color does not leak through unrelated geometry.
-    // Remote cameras/xray have no SS_SUBVIEW surface in the parent view, but their
-    // crop still sits in the colour buffer, so any earlier subview also triggers it.
+    // GL parity: after any subview (mirrors, remote cameras, xray), the depth fill also
+    // guards the colour buffer so the subview's colour doesn't leak through geometry.
     bool guardSubviewColor = s_frameDrewSubview;
     if (!guardSubviewColor && !backEnd.viewDef->isSubview)
     {
@@ -2759,11 +2707,8 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         if (coverage != MC_OPAQUE && coverage != MC_PERFORATED)
             continue;
 
-        // Mirror/subview surfaces must not write depth when rendering their own
-        // reflected subview — the mirror quad sits between the reflected camera
-        // and the reflected scene, so its depth would occlude the reflection.
-        // The GL path clips these via glTexGenfv clip planes; for now we simply
-        // skip them in mirror views.
+        // In a mirror view, skip the mirror quad's depth: it would occlude the reflection
+        // (GL clips it with clip planes).
         if (backEnd.viewDef->numClipPlanes > 0 && mat->GetSort() == SS_SUBVIEW)
         {
             if (r_vkLogRT.GetInteger() >= 1)
@@ -3013,11 +2958,8 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
         };
 
-        // Records one G-buffer prepass draw (Stage 3.5): same depth-write role as
-        // drawDepthSurf above, plus a world-space bump normal + F0 to gbufNormal.
-        // useClipPipeline/alphaStage/stageRegs/alphaThreshold mirror drawDepthSurf's
-        // perforated-material handling exactly, so the depth buffer this produces is
-        // pixel-identical to what drawDepthSurf would have written.
+        // One G-buffer prepass draw: drawDepthSurf's depth (pixel-identical, same perforated
+        // handling) plus bump normal + F0 to gbufNormal.
         auto drawGBufferSurf = [&](bool useClipPipeline, const shaderStage_t *alphaStage, const float *stageRegs,
                                    float alphaThreshold, float alphaScale) {
             extern idCVar r_rtSpecF0Scale;
@@ -3050,11 +2992,8 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             VkGBufferUBO *ubo = (VkGBufferUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
             memcpy(ubo->modelViewProjection, mvp, 64);
             memcpy(ubo->modelMatrix, surf->space->modelMatrix, 64);
-            // U2 motion vectors: this surface's unjittered clip transform for both
-            // frames.  The world's own space is the identity in both, so static
-            // geometry's motion comes entirely from the camera term.  Without a valid
-            // previous frame both halves use the current transform, so the two products
-            // are identical and the motion vector is exactly zero.
+            // Motion vectors: unjittered clip transform for both frames.  Without a valid
+            // previous frame both use the current transform, so motion is exactly zero.
             const float *prevModel = s_motionPrevValid ? surf->space->prevModelMatrix : surf->space->modelMatrix;
             VK_MultiplyMatrix4(s_viewProjNoJitterGl, surf->space->modelMatrix, ubo->mvpNoJitter);
             VK_MultiplyMatrix4(s_prevViewProjGl, prevModel, ubo->prevMvpNoJitter);
@@ -3084,29 +3023,21 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             }
             else
             {
-                // Opaque path (gi_albedo_target.md): no alpha-test stage to reuse, so use
+                // Opaque path: no alpha-test stage to reuse, so use
                 // the SL_DIFFUSE stage VK_FindBumpSpecularStages just resolved — same
                 // texture-matrix convention (R_SetDrawInteraction) as bump/specular.
                 memcpy(ubo->diffuseMatrixS, diffuseImageMatrix[0].ToFloatPtr(), 16);
                 memcpy(ubo->diffuseMatrixT, diffuseImageMatrix[1].ToFloatPtr(), 16);
             }
-            // gbuffer_clip.frag compares the raw sampled alpha against a single threshold
-            // (no stage-alpha-scale multiply in the shader); fold depth_clip.frag's
-            // "sampledAlpha * alphaScale <= threshold" into an equivalent single value
-            // here instead, so the two shaders discard on the exact same pixels.
-            // alphaScale > 0 is guaranteed by the caller (MC_PERFORATED loop skips <= 0).
+            // Fold depth_clip.frag's "alpha * alphaScale <= threshold" into one threshold so both
+            // shaders discard the same pixels (alphaScale > 0 is guaranteed by the caller).
             ubo->alphaTestThreshold = useClipPipeline ? (alphaThreshold / alphaScale) : alphaThreshold;
             ubo->specF0Scale = r_rtSpecF0Scale.GetFloat();
             ubo->specF0Gamma = r_rtSpecF0Gamma.GetFloat();
 
-            // U4 T&C class.  Two families of surface reach the prepass with motion vectors
-            // FSR 2 must not trust:
-            //   - deformedSurface: MD5 skinned meshes and liquid, whose verts are
-            //     regenerated into the vertex cache every frame, so the prepass reprojects
-            //     them from the entity transform alone and limb motion is simply absent
-            //   - weaponDepthHack: the viewmodel, whose depth is remapped into [0, 0.5] and
-            //     therefore disagrees with its own screen motion
-            // Everything else (static world, rigid props) has exact motion vectors.
+            // T&C class for surfaces whose motion vectors FSR 2 must not trust: deformed
+            // surfaces (skinned/liquid, reprojected from the entity transform only) and the
+            // weaponDepthHack viewmodel.  Static world and rigid props are exact.
             const bool tcDeformed = surf->geo->deformedSurface;
             const bool tcViewmodel = surf->space->weaponDepthHack;
             ubo->tcClass = (tcDeformed || tcViewmodel) ? 1.f : 0.f;
@@ -3127,9 +3058,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             bufInfo.offset = uboOffset;
             bufInfo.range = sizeof(VkGBufferUBO);
 
-            // Both pipeline variants now sample binding 2 (diffuse/albedo,
-            // gi_albedo_target.md) — the clip variant for alpha test (as before) and
-            // the opaque variant to write the receiver-albedo G-buffer target.
+            // Both variants sample binding 2: alpha test on clip, albedo write on both.
             VkWriteDescriptorSet writes[4] = {};
             writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[0].dstBinding = 0;
@@ -3271,10 +3200,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         }
     }
 
-    // Breadcrumb for the new Stage 3.5 mechanism (see docs/plans/gbuffer_normal_pass.md) —
-    // per project convention of logging new mechanisms immediately, not after they break.
-    // albedo found/fallback (gi_albedo_target.md) covers opaque-path surfaces only —
-    // the clip path's diffuse always resolves (it's the alpha-test stage itself).
+    // G-buffer prepass breadcrumb.  Albedo found/fallback counts opaque-path surfaces only.
     if (useGBuffer && r_vkLogRT.GetInteger() >= 1 && gbufSurfCount > 0)
     {
         common->Printf("VK GBUFFER: %d surfaces (bump found=%d fallback=%d, spec found=%d fallback=%d, "
@@ -3453,10 +3379,8 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
 
     const bool mirrorView = backEnd.viewDef && backEnd.viewDef->isMirror;
     const bool flipShadowOps = false;
-    // Vulkan face classification is opposite our original assumption for the
-    // current viewport/frontFace convention. Default to inverted selection so
-    // non-mirrored views pick the pipeline variant that matches GL stencil
-    // behavior;
+    // With our viewport/frontFace convention, Vulkan's face classification is inverted, so
+    // non-mirrored views pick the variant that matches GL stencil behaviour.
     const bool effectiveMirrorOps = (!mirrorView) ^ flipShadowOps;
     VkPipeline shadowPipe;
     if (external)
@@ -3635,10 +3559,8 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
 // Vulkan scissor rects are Y-down (y=0 at top), so the top edge flips:
 //   vulkan_top = framebuffer_height - 1 - opengl_top_edge
 //
-// Shared by the interaction loop and the P1b shadow batch pass so both agree on
-// exactly which pixels a light owns — the batch traces this rect and the light's
-// draws are scissored to it, which is what keeps one light's layer from being
-// sampled outside its own region.
+// Shared by the interaction loop and the shadow batch pass so both agree on which pixels a
+// light owns; its layer is never sampled outside this rect.
 // ---------------------------------------------------------------------------
 
 static VkRect2D VK_ComputeLightScissor(const viewLight_t *vLight)
@@ -3671,9 +3593,8 @@ static VkRect2D VK_ComputeLightScissor(const viewLight_t *vLight)
 
 // ---------------------------------------------------------------------------
 // VK_RB_LightDrawsInteractions
-// The filter the interaction loop applies before drawing a light.  Factored out so
-// the P1b shadow-layer assignment pass walks exactly the same set of lights, in the
-// same order — a mismatch would hand a light the wrong layer.
+// The interaction loop's light filter, shared with shadow-layer assignment so both walk the
+// same lights in the same order (a mismatch hands a light the wrong layer).
 // ---------------------------------------------------------------------------
 
 static bool VK_RB_LightDrawsInteractions(const viewLight_t *vLight)
@@ -3687,8 +3608,8 @@ static bool VK_RB_LightDrawsInteractions(const viewLight_t *vLight)
 
 // ---------------------------------------------------------------------------
 // VK_RB_AssignShadowLayers
-// P1b: hand every shadow-casting light in this view its own shadow mask array
-// layer, before any RT dispatch.  Must run before VK_RT_ShadowBatchClearLayers
+// Give every shadow-casting light in this view its own shadow mask array layer, before
+// any RT dispatch.  Must run before VK_RT_ShadowBatchClearLayers
 // (which clears only the layers in use) and VK_RT_DispatchShadowBatch.
 // ---------------------------------------------------------------------------
 
@@ -3772,7 +3693,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
     }
 
     int lightIdx = 0;
-    int shadowBatchDone = 0; // S3: highest shadow batch traced so far; batch 0 ran before the pass
+    int shadowBatchDone = 0; // highest shadow batch traced so far; batch 0 ran before the pass
     for (viewLight_t *vLight = backEnd.viewDef->viewLights; vLight; vLight = vLight->next, lightIdx++)
     {
         backEnd.vLight = vLight;
@@ -3780,11 +3701,8 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         if (!VK_RB_LightDrawsInteractions(vLight))
             continue;
 
-        // Stage L1: one debug-label region per light, so a GPU capture can attribute
-        // draws and screen coverage to a named light rather than to one flat
-        // "Interactions" block.  Surface counts ride along so the label answers
-        // "which light draws the most" without cross-referencing a capture CSV.
-        // Built only when labels are latched on; the list walks are short.
+        // One debug-label region per light, with surface counts, so GPU captures attribute
+        // draws to named lights.  Built only when labels are latched on.
         char lightLabel[128];
         lightLabel[0] = '\0';
         if (VK_LightLabelsActive())
@@ -3811,8 +3729,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // Per-interaction draws further intersect this with drawSurf->scissorRect.
         s_interactionLightScissor = lightScissor;
 
-        // P1b: which shadow mask layer this light's interactions sample.  -1 means the
-        // light casts no shadows (noShadows entity or material) — no mask is read.
+        // This light's shadow mask layer; -1 = casts no shadows, no mask read.
         s_shadowMaskLayer = VK_RTShadowsEnabled() ? VK_RT_GetShadowLayerForLight(vLight) : -1;
 
         // Set the file-static light index used by VK_RB_DrawInteraction logging
@@ -3834,11 +3751,8 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             for (const drawSurf_t *s = vLight->localShadows; s; s = s->nextOnLight)
                 nLocalShadow++;
             const char *lName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
-            // lightId/suppressPlayer: the view muzzle flash (the flashlight beam included)
-            // carries a lightId the player's own models name in suppressShadowInLightID,
-            // meaning they must not cast shadows from it.  suppressPlayer=1 is the shadow
-            // pass actually honouring that; 0 on a flashlight means the hand shadows its
-            // own beam.  See VK_RT_PlayerSuppressesLight (vk_accelstruct.cpp).
+            // The muzzle flash (flashlight included) carries a lightId the player's models list in
+            // suppressShadowInLightID; suppressPlayer=1 honours it (VK_RT_PlayerSuppressesLight).
             extern bool VK_RT_PlayerSuppressesLight(int lightId);
             const int lightId = vLight->lightDef->parms.lightId;
             common->Printf("VK LIGHT[%d]: shader='%s' sc=(%d,%d %u,%u) local=%d global=%d trans=%d gs=%d ls=%d rt=%d "
@@ -3853,10 +3767,8 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         }
 
         // --- In-loop RT shadow dispatch ---
-        // Batch 0 was traced before the render pass opened.  S3: the first light of each
-        // later batch ends the pass and traces its whole batch, reusing batch 0's layers
-        // now that their draws are recorded.  Batch order follows this loop's light
-        // order (VK_RB_AssignShadowLayers walks the same list with the same filter).
+        // Batch 0 was traced before the pass opened.  The first light of each later batch ends
+        // the pass and traces its batch, reusing the layers (same order as VK_RB_AssignShadowLayers).
         const int shadowBatch = VK_RTShadowsEnabled() ? VK_RT_GetShadowBatchForLight(vLight) : -1;
         if (shadowBatch > shadowBatchDone)
         {
@@ -3877,13 +3789,8 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             s_interactionPipeTag = "opaque";
         }
 
-        // Clear stencil to 128 within this light's scissor rect before processing it.
-        // Mirrors the GL path: qglClear(GL_STENCIL_BUFFER_BIT) before each light with shadows,
-        // or qglStencilFunc(GL_ALWAYS,...) for lights without shadows.
-        // Our interaction pipeline uses EQUAL 128, so clearing to 128 = "always pass" for
-        // unlit surfaces, while shadow volumes will re-mark their areas correctly.
-        // Without this, shadow volumes from light N bleed into light N+1's stencil test,
-        // causing black trailing regions behind moving lights.
+        // Clear stencil to 128 in this light's scissor, as GL clears per light.  128 passes the
+        // EQUAL test; without it one light's shadow volumes bleed into the next light.
         {
             VkClearAttachment clearAtt = {};
             clearAtt.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
@@ -3907,8 +3814,6 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         //   2. local interactions (unshadowed by global volumes — local means near-light)
         //   3. local shadow volumes (only affect global interactions)
         //   4. global interactions (shadowed by both global and local volumes)
-        // This ordering is required for correctness: local interactions must be drawn
-        // BEFORE local shadows so they are not incorrectly darkened by them.
 
         // Step 1: global shadow volumes
         // VK_RB_DrawShadowSurface binds the correct pipeline (Z-pass or Z-fail) per surface.
@@ -4306,7 +4211,7 @@ static void VK_RB_FogAllLights(VkCommandBuffer cmd)
 }
 
 // ---------------------------------------------------------------------------
-// VK_RB_DrawGuiTextures — GUI reflections Stage 1 (docs/plans/20261015_gui_reflections.md).
+// VK_RB_DrawGuiTextures — live GUI textures for RT reflections.
 // Draws the GUI views queued by the frontend into their slot textures, reusing the
 // shader-pass path against vk_gui_texture.cpp's hdrRenderPass-compatible target.
 // Runs once per frame, outside any render pass, before the first view opens it, so
@@ -4473,10 +4378,8 @@ void VK_RB_DrawView(const void *data)
 
     VK_RT_UpdateRenderExtent();
 
-    // When RT shadows are toggled on or off, cached interactions may be missing
-    // stencil shadow volumes (skipped during creation when RT was on) or have
-    // stale ones (present when RT was off). Invalidate all interactions so they
-    // rebuild next frame with the correct shadow data for the new mode.
+    // Toggling RT shadows invalidates cached interactions, whose stencil shadow volumes were
+    // built for the other mode.
     {
         static bool s_lastRTShadows = false;
         bool rtShadows = r_useRayTracing.GetBool() && r_rtShadows.GetBool();
@@ -4511,7 +4414,7 @@ void VK_RB_DrawView(const void *data)
         {
             s_projVk[c * 4 + 2] = 0.5f * src[c * 4 + 2] + 0.5f * src[c * 4 + 3];
         }
-        // U2: the unjittered view-projection pair, for the motion-vector attachment.
+        // The unjittered view-projection pair, for the motion-vector attachment.
         VK_MultiplyMatrix4(backEnd.viewDef->unjitteredProjectionMatrix, backEnd.viewDef->worldSpace.modelViewMatrix,
                            s_viewProjNoJitterGl);
         s_motionPrevValid = backEnd.viewDef->prevFrameValid;
@@ -4562,15 +4465,8 @@ void VK_RB_DrawView(const void *data)
         VK_RTProfile_CollectAndLog((int)vk.currentFrame);
         const double collectMs = VK_RTProfile_TicksToMs(cpuCollectStart, VK_RTProfile_CPUStamp());
 
-        // Clearing the slot here, not at command-buffer begin, is what makes the next
-        // ~40 lines of counters land in the right frame: VK_FlushPendingUploads and the
-        // garbage drain both run before the command buffer opens, so a clear down there
-        // wiped their counters (upload.flushes read 0 while frame.upload read 0.164).
-        //
-        // The collect cost has to be carried in by hand because it is paid before the
-        // slot it belongs to can be cleared.  It is real work — ~40 common->Printf calls
-        // on a window-close frame — and it was landing in frame.other, which made the
-        // profiler look like a 15-20 ms engine hitch every 30th frame.
+        // Clear the slot here, before the upload flush and garbage drain record into it.  The
+        // print/collect cost is paid before the clear, so it is carried in by hand.
         VK_Prof_BeginFrameSlot((int)vk.currentFrame);
         VK_Prof_Set(VKPROF_FRAME_PROFILEPRINT, collectMs);
 
@@ -4600,11 +4496,8 @@ void VK_RB_DrawView(const void *data)
         vkResetFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame]);
         common->DPrintf("VK: frame slot %u, image %u\n", vk.currentFrame, imageIndex);
 
-        // Flush any texture/buffer uploads queued since the last frame.
-        // Submits one command buffer + one fence wait, replacing the previous
-        // per-upload vkQueueWaitIdle pattern that caused area-entry hitching.
-        // Must precede the drain: the open batch can hold copies into buffers that were
-        // allocated and freed since the last flush, and destroying those first poisons it.
+        // Flush queued uploads (one submit + one fence wait).  Before the drain: the batch can
+        // copy into buffers freed since the last flush.
         const uint64_t cpuUploadStart = VK_RTProfile_CPUStamp();
         VK_FlushPendingUploads();
         const uint64_t cpuUploadEnd = VK_RTProfile_CPUStamp();
@@ -4619,9 +4512,8 @@ void VK_RB_DrawView(const void *data)
             VK_RT_DrainBLASGarbage();
         const uint64_t cpuDrainEnd = VK_RTProfile_CPUStamp();
 
-        // U3a: recreate every VkSampler if the FSR render scale (or image_lodbias /
-        // filter / anisotropy / the mip-bias cvars) moved.  Here because it is the one
-        // point in the frame past the fence with no command buffer recording.
+        // Recreate samplers if the render scale or sampler cvars moved: past the fence, with no
+        // command buffer recording.
         VK_Image_CheckSamplerCvars();
         VK_Image_ApplyPendingSamplerRebuild();
 
@@ -4665,13 +4557,9 @@ void VK_RB_DrawView(const void *data)
         }
 
         // Begin render pass (one pass for the entire EndFrame; all views composite into it)
-        // clearValues[2] (gbufNormal, Stage 3.5) = {0.5, 0.5, 1.0, 0.0}: B == 1.0 is the
-        // "prepass never wrote this pixel" sentinel (rt_gbuf_normal_fmt.glsl), F0 0 —
-        // only consumed when vk.gbufferSupported, but harmless to fill in unconditionally.
-        // clearValues[3] (gbufAlbedo, gi_albedo_target.md) = {1,1,1,1}: WHITE, so a pixel
-        // the prepass never writes modulates GI by 1.0 (legacy behavior), not by 0.
-        // clearValues[4] (motionVectors, U2) = (0,0): a pixel the prepass never writes
-        // reports no motion.  Sky, translucent surfaces and particles all land here.
+        // [2] gbufNormal {0.5, 0.5, 1.0, 0}: B == 1.0 = "never written" (rt_gbuf_normal_fmt.glsl).
+        // [3] gbufAlbedo WHITE, so unwritten pixels leave GI unmodulated.
+        // [4] motionVectors (0,0): unwritten pixels (sky, translucents, particles) report no motion.
         VkClearValue clearValues[5] = {};
         clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
         clearValues[1].depthStencil = {1.0f, 128};
@@ -4679,10 +4567,8 @@ void VK_RB_DrawView(const void *data)
         clearValues[3].color = {{1.0f, 1.0f, 1.0f, 1.0f}};
         clearValues[4].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
 
-        // A frame whose *first* view is already the 2D overlay (main menu, PDA,
-        // loading screens) has no 3D content to downscale, so it renders straight
-        // at display resolution and needs no resolve.  Declaring that up front is
-        // what makes VK_CurrentDrawExtent below return the right answer.
+        // A frame whose first view is the 2D overlay (menus, PDA, loading) renders at display
+        // resolution with no resolve; set up front for VK_CurrentDrawExtent.
         const bool firstIsGui = backEnd.viewDef->renderView.viewaxis[0].LengthSqr() <= 0.0001f;
         s_upscaleDone = firstIsGui;
         // Same reasoning for bloom: a frame that opens on the 2D overlay has no 3D
@@ -4727,13 +4613,8 @@ void VK_RB_DrawView(const void *data)
     else
     {
         // === Subsequent RC_DRAW_VIEW: render pass already open; reset viewport/scissor ===
-        // The 2D GUI/HUD overlay arrives as a second RC_DRAW_VIEW with a zeroed
-        // viewaxis.  That is the boundary between 3D (render resolution) and UI
-        // (display resolution), so resolve the sub-rect here, before the UI draws.
-        // Bloom's composite belongs to the same boundary, and unlike the resolve it runs
-        // at every render scale — the glow has to land before the UI does whether or not
-        // anything was upscaled.  So the two share one end/resume, entered if EITHER
-        // wants it.
+        // The 2D overlay (zeroed viewaxis) is the 3D→UI boundary: resolve the sub-rect and run
+        // the bloom composite here, before the UI, under one end/resume.
         const bool isGuiOverlay = backEnd.viewDef->renderView.viewaxis[0].LengthSqr() <= 0.0001f;
         const bool needUpscale = !s_upscaleDone && VK_RT_UpscaleActive();
         const bool needBloom = !s_bloomDone && VK_RT_BloomCompositeActive();
@@ -4768,16 +4649,11 @@ void VK_RB_DrawView(const void *data)
             VK_ResumeHdrRenderPass(s_frameCmdBuf, NULL);
         }
 
-        // Compute this view's scissor first; GL clears depth/stencil through the
-        // active scissor for each view (important for subviews/mirrors).
-        // VK_ComputeViewScissor already skips the render-scale conversion once the
-        // frame is display-space, so no special case is needed here.
+        // Scissor first: GL clears depth/stencil through each view's scissor (subviews/mirrors).
         s_viewScissor = VK_ComputeViewScissor(backEnd.viewDef);
 
-        // Each view has its own projection matrix, so depth values from the previous view
-        // are meaningless (and harmful) here.  Clear depth+stencil so this view's depth
-        // prepass and EQUAL interaction tests work against a fresh buffer, matching GL's
-        // per-view depth state.  vkCmdClearAttachments is legal inside a render pass.
+        // Each view has its own projection, so clear depth+stencil for its prepass and EQUAL
+        // tests, as GL does per view.
         {
             const bool hasStencil =
                 (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
@@ -4816,11 +4692,8 @@ void VK_RB_DrawView(const void *data)
 
     VkCommandBuffer cmdBuf = s_frameCmdBuf;
 
-    // U3: latch this view's near plane, fov and applied jitter for the FSR 2 dispatch,
-    // which runs after the last view and cannot read them from backEnd.viewDef by then.
-    // Same signature the RT dispatches use, and the same one U2 gave prevViewProjMatrix:
-    // the primary 3D view only.  Deliberately outside the RT gate — the resolution split
-    // works with ray tracing off.
+    // Latch near plane, fov and jitter for the FSR 2 dispatch, which runs after the last view.
+    // Primary 3D view only; outside the RT gate since upscaling works without RT.
     if (!backEnd.viewDef->isSubview && !backEnd.viewDef->isMirror &&
         backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f)
     {
@@ -4873,7 +4746,7 @@ void VK_RB_DrawView(const void *data)
     // Rendering order matches vkDOOM3 reference and GL path (draw_common.cpp RB_STD_DrawView):
     //   1. Depth prepass — populate depth buffer for early-Z rejection
     //   2. TLAS rebuild + RT dispatches (if RT active) — outside the render pass, on the
-    //      filled depth: shadow batch (P1b), AO, reflections, GI, volumetrics
+    //      filled depth: shadow batch, AO, reflections, GI, volumetrics
     //   3. Interactions — one render pass for every light, each sampling its own shadow
     //      mask layer (only batch-overflow lights still break the pass)
     //   4. Shader passes — unlit/2D surfaces (decals, sky, GUI overlays)
@@ -4891,25 +4764,14 @@ void VK_RB_DrawView(const void *data)
     if (backEnd.viewDef->isSubview)
         s_frameDrewSubview = true;
 
-    // Rebuild TLAS after the depth prepass so that depth values are populated before any
-    // RT dispatch (shadow batch, AO, reflections, GI) reads from them.
-    // The TLAS build must be outside a render pass, so we end/reopen here once.
-    // Since P1b the shadow rays ride along in this same block, so the interaction
-    // loop no longer breaks the render pass per light (only overflow lights do).
+    // After the depth prepass, which RT dispatches read.  End/reopen the pass once; shadow rays
+    // ride along, so only batch-overflow lights break the pass later.
     if (VK_RTAnyEffectEnabled())
     {
         vkCmdEndRenderPass(cmdBuf);
 
-        // Stage 3.5 (see docs/plans/gbuffer_normal_pass.md): gbufNormal was just
-        // written by the depth prepass above; the reflection rgen (and later AO/GI)
-        // needs to sample it. Unlike the depth barrier pattern in
-        // VK_RT_DispatchReflections (round-tripped per-dispatch), this is done once
-        // here for the whole RT block below, since multiple RT passes will read it.
-        // gbufAlbedo (gi_albedo_target.md) rides the same round-trip — the GI albedo
-        // modulate pass at the end of the RT block needs it in SHADER_READ_ONLY too.
-        // motionVectors (Stage 1, 20261013_reflection_roughness.md) joins the same
-        // round-trip: VK_RT_DispatchReflTemporal samples it later in this block and
-        // was otherwise reading it straight out of COLOR_ATTACHMENT_OPTIMAL.
+        // gbufNormal, gbufAlbedo and motionVectors go to SHADER_READ_ONLY once for the whole
+        // RT block (several passes sample them) and come back before the pass resumes.
         if (vk.gbufferSupported)
         {
             vkRTImage_t *gbufImages[3] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame],
@@ -4930,13 +4792,8 @@ void VK_RB_DrawView(const void *data)
                                  0, NULL, 0, NULL, 3, gbufToRead);
         }
 
-        // P1b: assign one shadow mask array layer per shadow-casting light, then clear
-        // just those layers to 1.0 (fully lit).  Without the clear, pixels inside a
-        // light's scissor rect that it never traces retain stale values from the
-        // previous frame and appear as a stuck black afterimage.
-        // The assignment must happen before the clear (it decides which layers are in
-        // use) and before the batch dispatch and the interaction loop, both of which
-        // look up each light's layer.
+        // Assign one shadow layer per shadow-casting light, then clear those layers to 1.0 so
+        // untraced pixels aren't stale.  Assignment precedes the clear, dispatch and loop.
         if (VK_RTShadowsEnabled())
         {
             VK_RB_AssignShadowLayers();
@@ -4973,15 +4830,12 @@ void VK_RB_DrawView(const void *data)
         // projectile texture gets its bindless slot written this frame.
         VK_RT_BuildReflEmitters(backEnd.viewDef);
 
-        // rt_projected_light_cookies.md: light collection above may have just
-        // registered a brand-new cookie image (VK_RT_GetOrAssignTexIndex) — this
-        // runs after VK_RT_RebuildTLAS's own bindless flush, so without a second
-        // flush here that slot stays unwritten until next frame's TLAS rebuild.
+        // Light collection may have registered a new cookie image after the TLAS rebuild's
+        // bindless flush; flush again so the slot is written this frame.
         VK_RT_FlushBindlessTextures();
 
-        // P1b: trace + blur every batched light here, in one block, while the render
-        // pass is already closed for the RT work.  Runs for subviews/mirrors too —
-        // unlike the temporal passes below, the shadow mask carries no history.
+        // Trace + blur batch 0 while the pass is closed.  Runs for subviews/mirrors too: the
+        // shadow mask has no history.
         if (VK_RTShadowsEnabled())
         {
             VK_SetRenderStage("RT_Shadows");
@@ -4992,15 +4846,8 @@ void VK_RB_DrawView(const void *data)
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_SHADOWS, rtCpuShadowStart);
         }
 
-        // RT passes use temporal accumulation buffers that span the entire screen.
-        // Mirrors and subviews re-render the view, which incorrectly replaces the
-        // main view's history buffers with their alternate perspective, causing ghosting.
-        //
-        // 2026-08-31 (rt_temporal_cut_detection.md follow-up): Doom 3 submits the 2D
-        // GUI/HUD overlay as a second RC_DRAW_VIEW every frame, with a renderView that's never populated
-        //  (no camera makessense for a 2D pass). Uses the actual confirmed signature:
-        // the GUI overlay's viewaxis is the zero vector,
-        //  which no real camera (with or without visible entities) ever has.
+        // Temporal passes skip mirrors/subviews, which would overwrite the main view's history,
+        // and the 2D GUI/HUD overlay view, identified by its zero viewaxis.
         const bool hasRealCamera = backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f;
         if (!backEnd.viewDef->isSubview && !backEnd.viewDef->isMirror && hasRealCamera)
         {
@@ -5016,13 +4863,8 @@ void VK_RB_DrawView(const void *data)
                     return;
             }
 
-            // Froxel grid fill — the volumetric integrator.
-            //
-            // Runs here, ahead of reflections, because the reflection rgen marches
-            // froxelScatter for in-scatter along the reflected ray and a volume filled after it would be
-            // two frames stale on a moving light. Only needs the TLAS and the vol light
-            // selection, both ready well before this point. Integrate and resolve stay
-            // after GI, where the rest of the vol chain lives.
+            // Froxel grid fill, ahead of reflections, which march froxelScatter.
+            // Integrate and resolve stay after GI.
             VK_SetRenderStage("RT_VolFroxelFill");
             const uint64_t rtCpuFroxelFillStart = VK_RTProfile_CPUStamp();
             int rtProfFroxelFill = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_FROXEL_FILL);
@@ -5042,9 +4884,8 @@ void VK_RB_DrawView(const void *data)
                     return;
             }
 
-            // Stage 1 (20261013_reflection_roughness.md): temporal EMA denoise of
-            // reflBuffer, consumed instead of the raw buffer by every downstream
-            // reader (VK_RT_GetReflReadView). No-op when r_rtReflDenoise is 0.
+            // Temporal EMA denoise of reflBuffer (read via VK_RT_GetReflReadView).
+            // No-op when r_rtReflDenoise is 0.
             VK_SetRenderStage("RT_Reflections_Temporal");
             const uint64_t rtCpuReflTemporalStart = VK_RTProfile_CPUStamp();
             int rtProfReflTemporal = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_REFL_TEMPORAL);
@@ -5052,8 +4893,7 @@ void VK_RB_DrawView(const void *data)
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfReflTemporal);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_REFL_TEMPORAL, rtCpuReflTemporalStart);
 
-            // Stage 1 addendum: roughness-gated à-trous spatial filter on top of the
-            // temporal result. No-op below r_rtReflDenoise 2.
+            // Roughness-gated à-trous over the temporal result.  No-op below r_rtReflDenoise 2.
             VK_SetRenderStage("RT_Reflections_Atrous");
             const uint64_t rtCpuReflAtrousStart = VK_RTProfile_CPUStamp();
             int rtProfReflAtrous = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_REFL_ATROUS);
@@ -5073,10 +4913,7 @@ void VK_RB_DrawView(const void *data)
                     return;
             }
 
-            // Probe GI (20260906_froxel_probe_gi.md Part B). The trace MUST come
-            // after VK_RT_DispatchGI: it reuses the GIParams dynamic-UBO binding
-            // that call establishes, because gi_ray.rchit is shared between the
-            // two raygens and reads that block.
+            // Probe GI.  Must follow VK_RT_DispatchGI: it reuses that call's GIParams UBO binding.
             VK_SetRenderStage("RT_GI_ProbeTrace");
             const uint64_t rtCpuProbeTraceStart = VK_RTProfile_CPUStamp();
             int rtProfProbeTrace = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_PROBE_TRACE);
@@ -5100,9 +4937,7 @@ void VK_RB_DrawView(const void *data)
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfProbeRes);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_PROBE_RESOLVE, rtCpuProbeResStart);
 
-            // gi_albedo_target.md. Runs AFTER the probe resolve, which is what
-            // produces the radiance it modulates (G2). Skips itself while a probe
-            // overlay owns giBuffer, so a measurement reaches the composite unscaled.
+            // After the probe resolve it modulates; skips while a probe overlay owns giBuffer.
             VK_SetRenderStage("RT_GI_AlbedoMod");
             const uint64_t rtCpuGIAlbedoStart = VK_RTProfile_CPUStamp();
             int rtProfGIAlbedo = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_ALBEDO);
@@ -5133,11 +4968,8 @@ void VK_RB_DrawView(const void *data)
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_FROXEL_RESOLVE, rtCpuFroxelResStart);
         }
 
-        // Stage 3.5: restore gbufNormal (+ gbufAlbedo, gi_albedo_target.md, +
-        // motionVectors — Stage 1, 20261013_reflection_roughness.md) to
-        // COLOR_ATTACHMENT_OPTIMAL before the resume render pass reopens — their
-        // declared initialLayout for these attachments (Step 2 in the plan) expects
-        // that, matching the depth-barrier round-trip symmetry.
+        // Restore gbufNormal, gbufAlbedo and motionVectors to COLOR_ATTACHMENT_OPTIMAL, the
+        // resume pass's declared initialLayout.
         if (vk.gbufferSupported)
         {
             vkRTImage_t *gbufImages[3] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame],
@@ -5173,14 +5005,8 @@ void VK_RB_DrawView(const void *data)
                 return;
         }
 
-        // The screen-space composites belong to the view that produced the buffers.
-        // The 2D GUI/HUD overlay arrives as a second RC_DRAW_VIEW with a zeroed
-        // viewaxis (see hasRealCamera above, which already stands the RT dispatches
-        // down for it) and was compositing GI/refl/vol a second time over the
-        // finished frame.  Under FSR that second pass lands 1:1 on an
-        // already-upscaled image and paints the GI buffer into the top-left
-        // renderExtent corner; at native it just doubled the contribution
-        // invisibly.  Same guard, same reason.
+        // Composites belong to the view that produced the buffers, not the 2D overlay (which
+        // would composite a second time, into the corner under FSR).
         if (hasRealCamera)
         {
             // GI composite: blend the GI buffer onto the framebuffer once per view.
@@ -5198,16 +5024,12 @@ void VK_RB_DrawView(const void *data)
                     return;
             }
 
-            // Reflection composite (Stage 3.5 / Step 8, see docs/plans/gbuffer_normal_pass.md):
-            // blend reflBuffer onto the framebuffer once per view, replacing the disabled
-            // per-light reflection block in interaction.frag. Same resume-pass slot as GI.
+            // Reflection composite: blend reflBuffer onto the framebuffer once per view.
             VK_SetRenderStage("Refl_Composite");
             VK_RT_CompositeReflections(cmdBuf);
 
-            // F6: with r_rtVolAttenuateBackground the composite multiplies the scene by
-            // the path transmittance, so it has to run after the surfaces exist —
-            // attenuating here would dim only GI and ambient and let every direct light
-            // land on top unattenuated. The late site below is the same render pass.
+            // When attenuating, the composite runs at the late site instead, after direct
+            // lighting exists.
             if (!VK_RT_VolCompositeAfterSurfaces())
             {
                 VK_SetRenderStage("Vol_Composite");
@@ -5243,13 +5065,8 @@ void VK_RB_DrawView(const void *data)
         fflush(NULL);
     }
 
-    // Build FSR 2's mask inputs here, after
-    //  the interactions and before the blend stages — that boundary is the whole point of
-    //  the pre-alpha snapshot.
-    //  Bloom B1a shares the same slot and the same gate for the same reasons: its
-    //  snapshot is only meaningful before the blend stages, it is a compute dispatch
-    //  that cannot be recorded inside a render pass, and a mirror/subview would
-    //  overwrite the primary view's snapshot with its own.  One end/resume covers both.
+    // FSR 2 mask inputs and the bloom prepass snapshot, after the interactions and before the
+    // blend stages, primary view only.  Both are compute, so one end/resume covers them.
     const bool fsrWantsCapture = VK_RT_UpscaleNeedsReactiveMask() || VK_RT_UpscaleNeedsTcMask();
     const bool bloomWantsCapture = VK_RT_BloomActive();
     if ((fsrWantsCapture || bloomWantsCapture) && backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f &&
@@ -5290,11 +5107,8 @@ void VK_RB_DrawView(const void *data)
             return;
     }
 
-    // Bloom B1b: diff against the B1a snapshot while the frame holds exactly the
-    // interactions plus the blend stages.  Everything after this point — the late vol
-    // composite and Doom 3's fog lights — is a separate medium that must not bloom, so
-    // this is the last honest moment.  Same real-camera gate as the prepass; compute,
-    // so it needs the pass closed.
+    // Bloom extract: diff against the snapshot now, before the late vol composite and fog
+    // lights (separate media that must not bloom).
     if (VK_RT_BloomActive() && backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f &&
         !backEnd.viewDef->isSubview && !backEnd.viewDef->isMirror)
     {
@@ -5308,18 +5122,9 @@ void VK_RB_DrawView(const void *data)
         VK_ResumeHdrRenderPass(cmdBuf, &s_viewScissor);
     }
 
-    // F6 late composite site: after interactions and blend stages (surface radiance,
-    // which must be attenuated) and before Doom 3's own fog lights (a separate
-    // artist-placed medium — attenuating those too would double-count). The
-    // interaction/shader-pass loops set scissor and viewport per surface, so both
-    // are restored here before the fullscreen triangle. Same profiler phase as the
-    // early site; phases accumulate, so captures stay comparable across the toggle.
-    //
-    // Gated on the SAME signature as the vol dispatches above (see hasRealCamera
-    // there): the 2D GUI/HUD overlay is a second RC_DRAW_VIEW with a zeroed
-    // viewaxis, and subviews/mirrors never ran the dispatch at all. Additive
-    // compositing onto those was invisible; multiplying blacked out the HUD and the
-    // settings menu.
+    // Late vol composite: after surface radiance, before Doom 3's fog lights (attenuating those
+    // would double-count).  Scissor/viewport are restored first.  Same real-camera gate as
+    // the dispatches: multiplying onto the 2D overlay blacks out the HUD.
     const bool volHasRealCamera = backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f;
     if (VK_RT_VolCompositeAfterSurfaces() && volHasRealCamera && !backEnd.viewDef->isSubview &&
         !backEnd.viewDef->isMirror)
@@ -5552,10 +5357,7 @@ void VK_RB_CopyRender(const void *data)
     VK_TransitionImageLayout(cmdBuf, vkRT.hdrScene[vk.currentFrame].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
-    // Resume render pass so the rest of the frame can continue.  The helper's extent is
-    // VK_CurrentDrawExtent: post-upscale the frame is display-space, and restoring
-    // renderExtent here would silently shrink everything drawn after a mid-frame
-    // _currentRender capture.
+    // Resume at VK_CurrentDrawExtent: post-upscale the frame is display-space.
     VK_ResumeHdrRenderPass(cmdBuf, &s_viewScissor);
 }
 
@@ -5610,7 +5412,7 @@ void VK_RB_SwapBuffers()
         s_upscaleDone = true;
     }
 
-    // Bloom B2 fallback, same shape and the same cause as the resolve above: a frame
+    // Bloom composite fallback, same cause as the resolve above: a frame
     // with no 2D overlay view never reached the 3D->GUI boundary.  Still after the
     // resolve, and still before the tonemap.
     if (!s_bloomDone && VK_RT_BloomCompositeActive())
@@ -5624,13 +5426,13 @@ void VK_RB_SwapBuffers()
         s_bloomDone = true;
     }
 
-    // U2 motion-vector overlay (r_fsrDebug 7).  After the resolve so it draws crisp at
+    // Motion-vector overlay (r_fsrDebug 7).  After the resolve so it draws crisp at
     // display resolution, before the tonemap so hdrScene is still the thing being read.
     // No-op unless the mode is selected.
     VK_SetRenderStage("RT_MotionDebug");
     VK_RT_DispatchMotionDebug(cmdBuf);
 
-    // U4 mask overlay (r_fsrDebug 3).  Same slot and the same reasoning; the two modes are
+    // Mask overlay (r_fsrDebug 3).  Same slot and the same reasoning; the two modes are
     // mutually exclusive, so ordering between them does not matter.
     VK_SetRenderStage("RT_MaskDebug");
     VK_RT_DispatchMaskDebug(cmdBuf);
@@ -5670,10 +5472,8 @@ void VK_RB_SwapBuffers()
         s_readbackSubmitted = true;
     }
 
-    // Debug labels turn the PhaseBegin/PhaseEnd pairing into a hard requirement: an
-    // unmatched PhaseBegin used to cost one timing, but now leaves an open label and
-    // vkEndCommandBuffer fails.  Say which frame did it instead of surfacing a driver
-    // error from VK_CHECK below.
+    // An unmatched PhaseBegin leaves an open label and vkEndCommandBuffer fails; name the
+    // frame instead of surfacing a driver error.
     if (const int stray = VK_RTProfile_CloseStrayLabels(cmdBuf))
         common->Warning("VK PROFILE: %d debug label(s) left open at end of frame %d — an RT phase span is unbalanced",
                         stray, tr.frameCount);
@@ -5948,13 +5748,9 @@ void VKimp_PostInit(int width, int height)
         VK_RT_InitVolumetrics();
     }
 
-    // Tonemap and upscale are not RT work despite the VK_RT_ prefix: hdrScene is the main
-    // render target for every Vulkan draw and the tonemap blit is the only thing that
-    // reaches the swapchain, so a device without RT extensions needs both or it renders
-    // into a NULL framebuffer. This matches the swapchain-recreate path, which already
-    // resizes these two unguarded and guards only bloom (vk_swapchain.cpp).
-    // Tonemap also allocates/resizes the G-buffer normal/F0 images (Stage 3.5) and wires
-    // them into the HDR framebuffers — see vk_tonemap.cpp.
+    // Tonemap and upscale aren't RT despite the prefix: hdrScene is every draw's target and the
+    // tonemap blit reaches the swapchain, so non-RT devices need both.  Tonemap also owns the
+    // G-buffer images and HDR framebuffers.
     common->Printf("VK: initializing tonemapping\n");
     VK_RT_InitTonemap();
     VK_RT_InitUpscale();

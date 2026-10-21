@@ -343,7 +343,7 @@ void VK_CreateRenderPass(void)
 
     hdrNorm.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     // initialLayout stays COLOR_ATTACHMENT_OPTIMAL — the barrier in vk_backend.cpp
-    // (Step 6) round-trips it through SHADER_READ_ONLY_OPTIMAL and back before resume.
+    // round-trips it through SHADER_READ_ONLY_OPTIMAL and back before resume.
     hdrAlb = hdrNorm; // albedo rides the same LOAD + round-trip contract
     hdrMotion.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
 
