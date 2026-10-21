@@ -40,12 +40,12 @@ Code release.
 idCVar r_rtGI("r_rtGI", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
               "Enable one-bounce GI (ambient colour bleeding)");
 
-idCVar r_rtGIRadius("r_rtGIRadius", "128.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "Max GI bounce ray distance in world units");
+idCVar r_rtGIRadius("r_rtGIRadius", "256.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "Max GI bounce ray distance in world units");
 
-idCVar r_rtGIStrength("r_rtGIStrength", "0.20", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+idCVar r_rtGIStrength("r_rtGIStrength", "1.00", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                       "Global scale applied to the GI buffer before compositing");
 
-idCVar r_rtGIContrast("r_rtGIContrast", "0.6", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtGIContrast("r_rtGIContrast", "0.8", CVAR_RENDERER | CVAR_FLOAT,
                       "GI colour contrast boost [0-1]: subtracts minimum channel and rescales to original brightness. "
                       "0 = off, 1 = full effect");
 

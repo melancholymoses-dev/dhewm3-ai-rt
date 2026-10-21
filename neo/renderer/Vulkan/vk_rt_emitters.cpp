@@ -368,10 +368,10 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
 
 static idCVar r_rtReflFlashGlow("r_rtReflFlashGlow", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
                                 "show the first-person flashlight as a bright disc in reflections");
-static idCVar r_rtReflFlashGlowRadius("r_rtReflFlashGlowRadius", "1.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+static idCVar r_rtReflFlashGlowRadius("r_rtReflFlashGlowRadius", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                                       "radius of that disc in world units (invented — the lamp has no geometry "
                                       "in the TLAS to measure)");
-static idCVar r_rtReflFlashGlowGain("r_rtReflFlashGlowGain", "1.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+static idCVar r_rtReflFlashGlowGain("r_rtReflFlashGlowGain", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                                     "scale on the light's own colour for that disc. Above 1 so it reads as a "
                                     "source rather than a lit surface, and clears the bloom threshold.");
 static idCVar r_rtReflFlashGlowOffset("r_rtReflFlashGlowOffset", "0.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
