@@ -7,9 +7,7 @@ Owns the single-scatter medium coefficients (extinction, albedo, per-class
 radiance gains and phase parameters), the screen-sized `volBuffer` the
 in-scattering lands in, and the fullscreen pass that blends it onto the frame.
 The integrator itself is the froxel grid in vk_vol_froxel.cpp, which is the only
-thing that writes volBuffer — the per-pixel ray march it replaced was deleted in
-Phase 4 of 20261010_cleanup_polish.md, along with its temporal EMA and bilateral
-upsample.
+thing that writes volBuffer.
 
 Dispatch order in the RT frame (outside render pass):
   ... VK_RT_DispatchGIAlbedoMod ...
@@ -42,17 +40,13 @@ Code release.
 // ---------------------------------------------------------------------------
 
 idCVar r_rtVol("r_rtVol", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-               "Enable volumetric light scattering (Phase 7.2). On by default.");
+               "Enable volumetric light scattering.");
 
 // NOT static, from here down through the flashlight block: vk_vol_froxel.cpp externs
 // every medium/phase/strength knob so the froxel fill reads them directly.
 
-// Interleaved Gradient Noise is a fixed, low-discrepancy diagonal pattern —
-// spatially coherent by design, which is what fixed the original "volumetric beams
-// read as noise" problem, but that same regularity reads as diagonal striping once
-// the eye locks onto the grid.  A little decorrelated white noise breaks the
-// periodic pattern up without fully reintroducing beam decorrelation, as long as the
-// mix stays small.  0 = pure IGN (striping), 1 = pure white noise.
+// IGN jitter is spatially coherent (beams don't read as noise) but stripes diagonally;
+// a small white-noise mix breaks the pattern.  Keep it small.
 idCVar r_rtVolWhiteNoiseMix("r_rtVolWhiteNoiseMix", "0.025", CVAR_RENDERER | CVAR_FLOAT,
                             "Fraction of white noise blended into the IGN sampling jitter to soften visible "
                             "dither stripes/fringes (0 = pure IGN, 1 = pure white noise).");
@@ -65,7 +59,7 @@ idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_INTEGER,
                         "Max lights in the dedicated volumetric light selection (separate from "
                         "GI's own light buffer/cap).");
 
-// --- Medium coefficients (20260917_vol_transport_coefficients.md) -----------
+// --- Medium coefficients ---------------------------------------------------
 // Single-scatter transport has exactly two: extinction (drives transmittance) and
 // scattering (drives in-scatter), constrained by albedo = sigma_s/sigma_t <= 1.
 
@@ -79,18 +73,14 @@ idCVar r_rtVolAlbedo("r_rtVolAlbedo", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR
                      "darkens without glowing), 1 = pure scatterer (bright mist, no net darkening).  "
                      "Values above 1 would create energy and are clamped.");
 
-// Per-class gains multiply the LIGHT's radiance, not the medium — legitimate,
-// because Doom 3 light intensities are authored rather than radiometric, and it
-// leaves the transport equation alone.  The default 28 is 0.01275/(0.9*5e-4), the
-// factor that preserves the old point-light brightness at the new sigma_s.
+// Per-class gains scale the light's radiance, not the medium: Doom 3 intensities are
+// authored, not radiometric, so this leaves the transport equation alone.
 idCVar r_rtVolGain("r_rtVolGain", "25.0", CVAR_RENDERER | CVAR_FLOAT,
                    "Radiance gain for point-light in-scatter (compensates Doom 3's non-radiometric "
                    "light intensities).  Brightness only — does not affect transmittance.");
 
-// F6 (20260906_froxel_probe_gi.md): the composite only ever did the additive half
-// and never the attenuating half, so fog created light instead of redistributing it.
-// Now that sigma_t is a real extinction coefficient this is the physically correct
-// mode, and 0 is the approximation — but it stays togglable until Stage 2 tunes.
+// 1 is physically correct with a real sigma_t; 0 (additive only) makes fog create light
+// rather than redistribute it.
 static idCVar r_rtVolAttenuateBackground(
     "r_rtVolAttenuateBackground", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
     "Multiply the scene by the volumetric path transmittance as well as adding "
@@ -100,11 +90,8 @@ static idCVar r_rtVolAttenuateBackground(
 idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.4", CVAR_RENDERER | CVAR_FLOAT,
                          "Henyey-Greenstein g parameter (0=isotropic, 0.8=flashlight shaft)");
 
-// Two-lobe phase blend.  HG is normalised, so a single lobe can only trade
-// side-on visibility for forward contrast — at the directed default g=0.6 that is
-// a 25x swing between looking into a shaft and viewing it from the side, which
-// reads as no scattering at all at high angles.
-// Global rather than per-class: it is a visibility floor, not a medium property.
+// HG is normalised, so one lobe trades side-on visibility for forward contrast (25x at
+// g=0.6).  Global rather than per-class: a visibility floor, not a medium property.
 idCVar r_rtVolIsotropicMix("r_rtVolIsotropicMix", "0.45", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                            "Fraction of the volumetric phase function that is isotropic rather than the "
                            "Henyey-Greenstein forward lobe (0 = pure HG, 1 = fully isotropic).  Raises "
@@ -462,10 +449,8 @@ static void VK_RT_InitVolCompositePipeline(void)
     pipelineInfo.subpass = 0;
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.volCompositePipeline));
 
-    // --- Attenuating variant (F6): dst = src.rgb + dst * src.a.  Identical to the
-    // additive pipeline except dstColorBlendFactor, so the only thing the toggle
-    // changes at runtime is which handle is bound.  Alpha factors and write mask
-    // stay put — the framebuffer's alpha is not ours to touch. ---
+    // --- Attenuating variant: dst = src.rgb + dst * src.a.  Only dstColorBlendFactor
+    // differs, so the toggle swaps handles.  Alpha is untouched: not ours to write. ---
     VkPipelineColorBlendAttachmentState attenBlend = colorBlend;
     attenBlend.dstColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
 
@@ -548,7 +533,7 @@ void VK_RT_InitVolumetrics(void)
 {
     VK_RT_InitVolCompositePipeline();
     VK_RT_ResizeVolumetrics(vk.swapchainExtent.width, vk.swapchainExtent.height);
-    // Froxel grid (20260906_froxel_probe_gi.md Part A). Last, so it can assume
+    // Froxel grid.  Last, so it can assume
     // volSampler and volBuffer exist; its own images are screen-size independent
     // and so take no part in VK_RT_ResizeVolumetrics.
     VK_RT_InitVolFroxel();
@@ -616,7 +601,7 @@ void VK_RT_ResizeVolumetrics(uint32_t width, uint32_t height)
 // backend calls it from the later, post-shader-passes site instead.
 // ---------------------------------------------------------------------------
 
-// Double-composite guard for F6's two call sites (see below).
+// Double-composite guard for the two call sites (see below).
 static int s_volCompositeFrame = -1;
 static const void *s_volCompositeView = NULL;
 
@@ -627,10 +612,8 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
     if (vkRT.volCompositePipeline == VK_NULL_HANDLE)
         return;
 
-    // The froxel resolve is the only writer of volBuffer. If it stood down this
-    // frame the buffer holds either black (freshly created) or a stale view, and
-    // the attenuating pipeline would multiply the scene by that alpha — a
-    // black-cleared buffer blanks the screen outright.
+    // The froxel resolve is the only writer of volBuffer.  If it stood down, the buffer is
+    // black or stale and the attenuating pipeline would blank the screen.
     if (!VK_RT_VolFroxelActive())
         return;
 
@@ -639,10 +622,8 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
     if (vb.image == VK_NULL_HANDLE || vkRT.volSampler == VK_NULL_HANDLE)
         return;
 
-    // F6 gave this function two possible call sites in VK_RB_DrawView (before the
-    // interactions, or after the shader passes when attenuating); the backend picks
-    // one, and this makes compositing the same view twice impossible either way.
-    // Keyed on the view, not just the frame: a frame can legitimately draw several.
+    // Two call sites in VK_RB_DrawView (before the interactions, or after the shader passes
+    // when attenuating).  Keyed on the view, since a frame can legitimately draw several.
     if (s_volCompositeFrame == tr.frameCount && s_volCompositeView == (const void *)backEnd.viewDef)
     {
         if (r_vkLogRT.GetInteger() >= 1)
@@ -685,7 +666,7 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
     if (VK_RT_VolFroxelDebugMode() != 0)
         pc.debugMode = 2;
 
-    // Debug modes win over F6's attenuating pipeline: a visualization wants the
+    // Debug modes win over the attenuating pipeline: a visualization wants the
     // replace blend, not a multiply against the scene.
     const bool debugActive = pc.debugMode >= 1 && pc.debugMode <= 2;
     VkPipeline pipe = vkRT.volCompositePipeline;
