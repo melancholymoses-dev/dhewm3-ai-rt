@@ -2465,7 +2465,6 @@ struct RTCVars
     idCVar *rtAO = nullptr;
     idCVar *rtReflections = nullptr;
     idCVar *rtGI = nullptr;
-    idCVar *rtDenoise = nullptr;
 
     // Shadow fine-tuning
     idCVar *rtShadowSamples = nullptr;
@@ -2581,101 +2580,139 @@ struct RTCVars
 
 static RTCVars rtCVars;
 
+// Per-tab reset lists, filled as InitRTOptionsMenu looks the cvars up.
+static idList<idCVar *> rtTabCVars;
+static idList<idCVar *> upscalingTabCVars;
+
+static idCVar *FindTabCVar(const char *name, idList<idCVar *> &tabList)
+{
+    idCVar *cvar = cvarSystem->Find(name);
+    if (cvar != nullptr)
+        tabList.AddUnique(cvar);
+    return cvar;
+}
+
 static void InitRTOptionsMenu()
 {
-    rtCVars.useRayTracing = cvarSystem->Find("r_useRayTracing");
-    rtCVars.showplayershadow = cvarSystem->Find("g_showplayershadow");
-    rtCVars.rtShadows = cvarSystem->Find("r_rtShadows");
-    rtCVars.rtAO = cvarSystem->Find("r_rtAO");
-    rtCVars.rtReflections = cvarSystem->Find("r_rtReflections");
-    rtCVars.rtGI = cvarSystem->Find("r_rtGI");
-    rtCVars.rtShadowSamples = cvarSystem->Find("r_rtShadowSamples");
-    rtCVars.rtShadowBlur = cvarSystem->Find("r_rtShadowBlur");
-    rtCVars.rtShadowBlurEnable = cvarSystem->Find("r_rtShadowBlurEnable");
-    rtCVars.rtShadowBlurDepthAware = cvarSystem->Find("r_rtShadowBlurDepthAware");
-    rtCVars.rtShadowRayBias = cvarSystem->Find("r_rtShadowRayBias");
-    rtCVars.rtShadowBiasErrMargin = cvarSystem->Find("r_rtShadowBiasErrMargin");
-    rtCVars.rtShadowSoftRadiusScale = cvarSystem->Find("r_rtShadowSoftRadiusScale");
-    rtCVars.rtShadowSoftRadiusMin = cvarSystem->Find("r_rtShadowSoftRadiusMin");
-    rtCVars.rtShadowSoftRadiusMax = cvarSystem->Find("r_rtShadowSoftRadiusMax");
-    rtCVars.rtFlashlightBias = cvarSystem->Find("r_rtFlashlightBias");
-    rtCVars.rtAOSamples = cvarSystem->Find("r_rtAOSamples");
-    rtCVars.rtAORadius = cvarSystem->Find("r_rtAORadius");
-    rtCVars.rtAOFalloff = cvarSystem->Find("r_rtAOFalloff");
-    rtCVars.rtAOIndirectStrength = cvarSystem->Find("r_rtAOIndirectStrength");
-    rtCVars.rtAODirectStrength = cvarSystem->Find("r_rtAODirectStrength");
-    rtCVars.rtTemporal = cvarSystem->Find("r_rtAOTemporal");
-    rtCVars.rtTemporalAlpha = cvarSystem->Find("r_rtAOTemporalAlpha");
-    rtCVars.rtAtrousIterations = cvarSystem->Find("r_rtAtrousIterations");
-    rtCVars.rtReflectionDistance = cvarSystem->Find("r_rtReflectionDistance");
-    rtCVars.rtReflectionBlend = cvarSystem->Find("r_rtReflectionBlend");
-    rtCVars.rtSpecF0Scale = cvarSystem->Find("r_rtSpecF0Scale");
-    rtCVars.rtSpecF0Gamma = cvarSystem->Find("r_rtSpecF0Gamma");
-    rtCVars.rtReflGlow = cvarSystem->Find("r_rtReflGlow");
-    rtCVars.rtReflVol = cvarSystem->Find("r_rtReflVol");
-    rtCVars.rtReflVolStepLen = cvarSystem->Find("r_rtReflVolStepLen");
-    rtCVars.rtReflFlashGlow = cvarSystem->Find("r_rtReflFlashGlow");
-    rtCVars.rtReflMuzzleGlow = cvarSystem->Find("r_rtReflMuzzleGlow");
-    rtCVars.rtReflMuzzleGlowGain = cvarSystem->Find("r_rtReflMuzzleGlowGain");
-    rtCVars.rtGuiReflections = cvarSystem->Find("r_rtGuiReflections");
-    rtCVars.rtReflOpaqueHalfRes = cvarSystem->Find("r_rtReflOpaqueHalfRes");
-    rtCVars.rtReflAtrousFireflyClamp = cvarSystem->Find("r_rtReflAtrousFireflyClamp");
-    rtCVars.rtReflMaxLuminance = cvarSystem->Find("r_rtReflMaxLuminance");
-    rtCVars.rtReflRoughLumExp = cvarSystem->Find("r_rtReflRoughLumExp");
-    rtCVars.rtGIMaxLights = cvarSystem->Find("r_rtGIMaxLights");
-    rtCVars.rtGILightCollectRadiusScale = cvarSystem->Find("r_rtGILightCollectRadiusScale");
-    rtCVars.rtGIRadius = cvarSystem->Find("r_rtGIRadius");
-    rtCVars.rtGIStrength = cvarSystem->Find("r_rtGIStrength");
-    rtCVars.rtGIDirectScale = cvarSystem->Find("r_rtGIDirectScale");
-    rtCVars.rtGIEmissiveScale = cvarSystem->Find("r_rtGIEmissiveScale");
-    rtCVars.rtGIMaxBounceLights = cvarSystem->Find("r_rtGIMaxBounceLights");
-    rtCVars.rtGIStochasticLights = cvarSystem->Find("r_rtGIStochasticLights");
-    rtCVars.rtGbufNormals = cvarSystem->Find("r_rtGbufNormals");
-    rtCVars.rtGIBounceScale = cvarSystem->Find("r_rtGIBounceScale");
-    rtCVars.rtGIFalloffMode = cvarSystem->Find("r_rtGIFalloffMode");
-    rtCVars.rtGIFalloffReach = cvarSystem->Find("r_rtGIFalloffReach");
-    rtCVars.rtGIContrast = cvarSystem->Find("r_rtGIContrast");
-    rtCVars.rtVol = cvarSystem->Find("r_rtVol");
-    rtCVars.rtVolMaxDist = cvarSystem->Find("r_rtVolMaxDist");
-    rtCVars.rtVolMaxLights = cvarSystem->Find("r_rtVolMaxLights");
-    rtCVars.rtVolExtinction = cvarSystem->Find("r_rtVolExtinction");
-    rtCVars.rtVolAlbedo = cvarSystem->Find("r_rtVolAlbedo");
-    rtCVars.rtVolAttenuateBackground = cvarSystem->Find("r_rtVolAttenuateBackground");
-    rtCVars.rtVolGain = cvarSystem->Find("r_rtVolGain");
-    rtCVars.rtVolAnisotropy = cvarSystem->Find("r_rtVolAnisotropy");
-    rtCVars.rtVolIsotropicMix = cvarSystem->Find("r_rtVolIsotropicMix");
-    rtCVars.rtVolDirectedGain = cvarSystem->Find("r_rtVolDirectedGain");
-    rtCVars.rtVolDirectedAnisotropy = cvarSystem->Find("r_rtVolDirectedAnisotropy");
-    rtCVars.rtVolFlashlightGain = cvarSystem->Find("r_rtVolFlashlightGain");
-    rtCVars.rtVolFlashlightAnisotropy = cvarSystem->Find("r_rtVolFlashlightAnisotropy");
-    rtCVars.rtAutoRelight = cvarSystem->Find("r_rtAutoRelight");
-    rtCVars.rtAutoRelightMaxPerArea = cvarSystem->Find("r_rtAutoRelightMaxPerArea");
-    rtCVars.rtAutoRelightDebugColor = cvarSystem->Find("r_rtAutoRelightDebugColor");
-    rtCVars.rtTonemap = cvarSystem->Find("r_rtTonemap");
-    rtCVars.rtTonemapExposure = cvarSystem->Find("r_rtTonemapExposure");
-    rtCVars.rtTonemapToe = cvarSystem->Find("r_rtTonemapToe");
-    rtCVars.rtTonemapLinStart = cvarSystem->Find("r_rtTonemapLinStart");
-    rtCVars.rtTonemapLinLen = cvarSystem->Find("r_rtTonemapLinLen");
+    rtTabCVars.Clear();
+    upscalingTabCVars.Clear();
+    rtCVars.useRayTracing = cvarSystem->Find("r_useRayTracing"); // master toggle stays out of the reset
+    rtCVars.showplayershadow = FindTabCVar("g_showplayershadow", rtTabCVars);
+    rtCVars.rtShadows = FindTabCVar("r_rtShadows", rtTabCVars);
+    rtCVars.rtAO = FindTabCVar("r_rtAO", rtTabCVars);
+    rtCVars.rtReflections = FindTabCVar("r_rtReflections", rtTabCVars);
+    rtCVars.rtGI = FindTabCVar("r_rtGI", rtTabCVars);
+    rtCVars.rtShadowSamples = FindTabCVar("r_rtShadowSamples", rtTabCVars);
+    rtCVars.rtShadowBlur = FindTabCVar("r_rtShadowBlur", rtTabCVars);
+    rtCVars.rtShadowBlurEnable = FindTabCVar("r_rtShadowBlurEnable", rtTabCVars);
+    rtCVars.rtShadowBlurDepthAware = FindTabCVar("r_rtShadowBlurDepthAware", rtTabCVars);
+    rtCVars.rtShadowRayBias = FindTabCVar("r_rtShadowRayBias", rtTabCVars);
+    rtCVars.rtShadowBiasErrMargin = FindTabCVar("r_rtShadowBiasErrMargin", rtTabCVars);
+    rtCVars.rtShadowSoftRadiusScale = FindTabCVar("r_rtShadowSoftRadiusScale", rtTabCVars);
+    rtCVars.rtShadowSoftRadiusMin = FindTabCVar("r_rtShadowSoftRadiusMin", rtTabCVars);
+    rtCVars.rtShadowSoftRadiusMax = FindTabCVar("r_rtShadowSoftRadiusMax", rtTabCVars);
+    rtCVars.rtFlashlightBias = FindTabCVar("r_rtFlashlightBias", rtTabCVars);
+    rtCVars.rtAOSamples = FindTabCVar("r_rtAOSamples", rtTabCVars);
+    rtCVars.rtAORadius = FindTabCVar("r_rtAORadius", rtTabCVars);
+    rtCVars.rtAOFalloff = FindTabCVar("r_rtAOFalloff", rtTabCVars);
+    rtCVars.rtAOIndirectStrength = FindTabCVar("r_rtAOIndirectStrength", rtTabCVars);
+    rtCVars.rtAODirectStrength = FindTabCVar("r_rtAODirectStrength", rtTabCVars);
+    rtCVars.rtTemporal = FindTabCVar("r_rtAOTemporal", rtTabCVars);
+    rtCVars.rtTemporalAlpha = FindTabCVar("r_rtAOTemporalAlpha", rtTabCVars);
+    rtCVars.rtAtrousIterations = FindTabCVar("r_rtAtrousIterations", rtTabCVars);
+    rtCVars.rtReflectionDistance = FindTabCVar("r_rtReflectionDistance", rtTabCVars);
+    rtCVars.rtReflectionBlend = FindTabCVar("r_rtReflectionBlend", rtTabCVars);
+    rtCVars.rtSpecF0Scale = FindTabCVar("r_rtSpecF0Scale", rtTabCVars);
+    rtCVars.rtSpecF0Gamma = FindTabCVar("r_rtSpecF0Gamma", rtTabCVars);
+    rtCVars.rtReflGlow = FindTabCVar("r_rtReflGlow", rtTabCVars);
+    rtCVars.rtReflVol = FindTabCVar("r_rtReflVol", rtTabCVars);
+    rtCVars.rtReflVolStepLen = FindTabCVar("r_rtReflVolStepLen", rtTabCVars);
+    rtCVars.rtReflFlashGlow = FindTabCVar("r_rtReflFlashGlow", rtTabCVars);
+    rtCVars.rtReflMuzzleGlow = FindTabCVar("r_rtReflMuzzleGlow", rtTabCVars);
+    rtCVars.rtReflMuzzleGlowGain = FindTabCVar("r_rtReflMuzzleGlowGain", rtTabCVars);
+    rtCVars.rtGuiReflections = FindTabCVar("r_rtGuiReflections", rtTabCVars);
+    rtCVars.rtReflOpaqueHalfRes = FindTabCVar("r_rtReflOpaqueHalfRes", rtTabCVars);
+    rtCVars.rtReflAtrousFireflyClamp = FindTabCVar("r_rtReflAtrousFireflyClamp", rtTabCVars);
+    rtCVars.rtReflMaxLuminance = FindTabCVar("r_rtReflMaxLuminance", rtTabCVars);
+    rtCVars.rtReflRoughLumExp = FindTabCVar("r_rtReflRoughLumExp", rtTabCVars);
+    rtCVars.rtGIMaxLights = FindTabCVar("r_rtGIMaxLights", rtTabCVars);
+    rtCVars.rtGILightCollectRadiusScale = FindTabCVar("r_rtGILightCollectRadiusScale", rtTabCVars);
+    rtCVars.rtGIRadius = FindTabCVar("r_rtGIRadius", rtTabCVars);
+    rtCVars.rtGIStrength = FindTabCVar("r_rtGIStrength", rtTabCVars);
+    rtCVars.rtGIDirectScale = FindTabCVar("r_rtGIDirectScale", rtTabCVars);
+    rtCVars.rtGIEmissiveScale = FindTabCVar("r_rtGIEmissiveScale", rtTabCVars);
+    rtCVars.rtGIMaxBounceLights = FindTabCVar("r_rtGIMaxBounceLights", rtTabCVars);
+    rtCVars.rtGIStochasticLights = FindTabCVar("r_rtGIStochasticLights", rtTabCVars);
+    rtCVars.rtGbufNormals = FindTabCVar("r_rtGbufNormals", rtTabCVars);
+    rtCVars.rtGIBounceScale = FindTabCVar("r_rtGIBounceScale", rtTabCVars);
+    rtCVars.rtGIFalloffMode = FindTabCVar("r_rtGIFalloffMode", rtTabCVars);
+    rtCVars.rtGIFalloffReach = FindTabCVar("r_rtGIFalloffReach", rtTabCVars);
+    rtCVars.rtGIContrast = FindTabCVar("r_rtGIContrast", rtTabCVars);
+    rtCVars.rtVol = FindTabCVar("r_rtVol", rtTabCVars);
+    rtCVars.rtVolMaxDist = FindTabCVar("r_rtVolMaxDist", rtTabCVars);
+    rtCVars.rtVolMaxLights = FindTabCVar("r_rtVolMaxLights", rtTabCVars);
+    rtCVars.rtVolExtinction = FindTabCVar("r_rtVolExtinction", rtTabCVars);
+    rtCVars.rtVolAlbedo = FindTabCVar("r_rtVolAlbedo", rtTabCVars);
+    rtCVars.rtVolAttenuateBackground = FindTabCVar("r_rtVolAttenuateBackground", rtTabCVars);
+    rtCVars.rtVolGain = FindTabCVar("r_rtVolGain", rtTabCVars);
+    rtCVars.rtVolAnisotropy = FindTabCVar("r_rtVolAnisotropy", rtTabCVars);
+    rtCVars.rtVolIsotropicMix = FindTabCVar("r_rtVolIsotropicMix", rtTabCVars);
+    rtCVars.rtVolDirectedGain = FindTabCVar("r_rtVolDirectedGain", rtTabCVars);
+    rtCVars.rtVolDirectedAnisotropy = FindTabCVar("r_rtVolDirectedAnisotropy", rtTabCVars);
+    rtCVars.rtVolFlashlightGain = FindTabCVar("r_rtVolFlashlightGain", rtTabCVars);
+    rtCVars.rtVolFlashlightAnisotropy = FindTabCVar("r_rtVolFlashlightAnisotropy", rtTabCVars);
+    rtCVars.rtAutoRelight = FindTabCVar("r_rtAutoRelight", rtTabCVars);
+    rtCVars.rtAutoRelightMaxPerArea = FindTabCVar("r_rtAutoRelightMaxPerArea", rtTabCVars);
+    rtCVars.rtAutoRelightMax = FindTabCVar("r_rtAutoRelightMax", rtTabCVars);
+    rtCVars.rtAutoRelightIntensity = FindTabCVar("r_rtAutoRelightIntensity", rtTabCVars);
+    rtCVars.rtAutoRelightDebugColor = FindTabCVar("r_rtAutoRelightDebugColor", rtTabCVars);
+    rtCVars.rtTonemap = FindTabCVar("r_rtTonemap", rtTabCVars);
+    rtCVars.rtTonemapExposure = FindTabCVar("r_rtTonemapExposure", rtTabCVars);
+    rtCVars.rtTonemapToe = FindTabCVar("r_rtTonemapToe", rtTabCVars);
+    rtCVars.rtTonemapLinStart = FindTabCVar("r_rtTonemapLinStart", rtTabCVars);
+    rtCVars.rtTonemapLinLen = FindTabCVar("r_rtTonemapLinLen", rtTabCVars);
 
-    rtCVars.rtBloom = cvarSystem->Find("r_rtBloom");
-    rtCVars.rtBloomStrength = cvarSystem->Find("r_rtBloomStrength");
-    rtCVars.rtBloomThreshold = cvarSystem->Find("r_rtBloomThreshold");
-    rtCVars.rtBloomLitWeight = cvarSystem->Find("r_rtBloomLitWeight");
-    rtCVars.rtBloomMips = cvarSystem->Find("r_rtBloomMips");
-    rtCVars.rtGIProbeHysteresis = cvarSystem->Find("r_rtGIProbeHysteresis");
-    rtCVars.fsr = cvarSystem->Find("r_fsr");
-    rtCVars.fsrRenderScale = cvarSystem->Find("r_fsrRenderScale");
-    rtCVars.fsrSharpness = cvarSystem->Find("r_fsrSharpness");
-    rtCVars.fsrJitter = cvarSystem->Find("r_fsrJitter");
-    rtCVars.fsrAutoReactive = cvarSystem->Find("r_fsrAutoReactive");
-    rtCVars.fsrReactiveCutoff = cvarSystem->Find("r_fsrReactiveCutoff");
-    rtCVars.fsrReactiveScale = cvarSystem->Find("r_fsrReactiveScale");
-    rtCVars.fsrTcMask = cvarSystem->Find("r_fsrTcMask");
-    rtCVars.fsrQuality = cvarSystem->Find("r_fsrQuality");
-    rtCVars.fsrMipBias = cvarSystem->Find("r_fsrMipBias");
-    rtCVars.fsrMipBiasOffset = cvarSystem->Find("r_fsrMipBiasOffset");
-    rtCVars.imageAnisotropy = cvarSystem->Find("image_anisotropy");
-    rtCVars.vkBumpMipBias = cvarSystem->Find("r_vkBumpMipBias");
+    rtCVars.rtBloom = FindTabCVar("r_rtBloom", rtTabCVars);
+    rtCVars.rtBloomStrength = FindTabCVar("r_rtBloomStrength", rtTabCVars);
+    rtCVars.rtBloomThreshold = FindTabCVar("r_rtBloomThreshold", rtTabCVars);
+    rtCVars.rtBloomLitWeight = FindTabCVar("r_rtBloomLitWeight", rtTabCVars);
+    rtCVars.rtBloomMips = FindTabCVar("r_rtBloomMips", rtTabCVars);
+    rtCVars.rtGIProbeHysteresis = FindTabCVar("r_rtGIProbeHysteresis", rtTabCVars);
+    rtCVars.fsr = FindTabCVar("r_fsr", upscalingTabCVars);
+    rtCVars.fsrRenderScale = FindTabCVar("r_fsrRenderScale", upscalingTabCVars);
+    rtCVars.fsrSharpness = FindTabCVar("r_fsrSharpness", upscalingTabCVars);
+    rtCVars.fsrJitter = FindTabCVar("r_fsrJitter", upscalingTabCVars);
+    rtCVars.fsrAutoReactive = FindTabCVar("r_fsrAutoReactive", upscalingTabCVars);
+    rtCVars.fsrReactiveCutoff = FindTabCVar("r_fsrReactiveCutoff", upscalingTabCVars);
+    rtCVars.fsrReactiveScale = FindTabCVar("r_fsrReactiveScale", upscalingTabCVars);
+    rtCVars.fsrTcMask = FindTabCVar("r_fsrTcMask", upscalingTabCVars);
+    rtCVars.fsrQuality = FindTabCVar("r_fsrQuality", upscalingTabCVars);
+    rtCVars.fsrMipBias = FindTabCVar("r_fsrMipBias", upscalingTabCVars);
+    rtCVars.fsrMipBiasOffset = FindTabCVar("r_fsrMipBiasOffset", upscalingTabCVars);
+    rtCVars.imageAnisotropy = FindTabCVar("image_anisotropy", upscalingTabCVars);
+    rtCVars.vkBumpMipBias = FindTabCVar("r_vkBumpMipBias", upscalingTabCVars);
+}
+
+// Button plus confirm popup that sets every cvar in the list back to its declared default.
+// SetString(nullptr) restores the reset string and raises the modified flags, unlike the console reset.
+static void DrawResetTabButton(const char *label, const idList<idCVar *> &cvars)
+{
+    if (ImGui::Button(label))
+        ImGui::OpenPopup(label);
+    if (ImGui::BeginPopupModal(label, NULL, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::Text("Set the %d settings on this tab back to their defaults?", cvars.Num());
+        if (ImGui::Button("Reset"))
+        {
+            for (int i = 0; i < cvars.Num(); i++)
+                cvars[i]->SetString(nullptr);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel"))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
 }
 
 // Helper: draw a bool CVar as a checkbox, with CVar name + description as tooltip.
@@ -2725,6 +2762,7 @@ static void RTCombo(const char *label, idCVar *cvar, const char *const *items, i
 static void DrawRTOptionsMenu()
 {
     ImGui::Spacing();
+    DrawResetTabButton("Reset Ray Tracing to Defaults", rtTabCVars);
 
     // ---- Master toggle -------------------------------------------------------
     ImGui::SeparatorText("Ray Tracing");
@@ -2745,7 +2783,6 @@ static void DrawRTOptionsMenu()
         ImGui::TableNextColumn();
         RTCheckbox("RT Global Illumination", rtCVars.rtGI);
         RTCheckbox("RT Volumetric Lighting", rtCVars.rtVol);
-        RTCheckbox("Temporal Denoising", rtCVars.rtDenoise);
         ImGui::EndTable();
     }
 
@@ -2958,6 +2995,7 @@ static void DrawRTOptionsMenu()
 static void DrawUpscalingOptionsMenu()
 {
     ImGui::Spacing();
+    DrawResetTabButton("Reset Upscaling and Filtering to Defaults", upscalingTabCVars);
     ImGui::SeparatorText("Resolution Scaling / Upscaling");
 
     static const char *const fsrQualityModes[] = {"Custom (use Render Scale)", "Quality (1.5x)", "Balanced (1.7x)",

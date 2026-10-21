@@ -35,7 +35,7 @@ this says *when*.
 | 1 | ~~Stage S~~ — **done 2026-10-13** | 8 | S2 + S3 landed; S2b reverted; S5-S7 dropped. Close-out in `completed/20261010_vk_core_audit_closed.md` |
 | 2 | ~~Validate 8c Stages 5 + 6 in-game~~ — **done 2026-10-15** | 8c | Both validated. Stage 4's debug overlay not built. Doc in `completed/` |
 | 3 | ~~8b glass crease fix~~ — **done 2026-10-15** | 8b | `r_rtGlassNormalMode 2` default; refl debug mode 9. Doc in `completed/` |
-| 4 | Cleanup 1a + 5a | 8e | Unblocked; land whenever convenient |
+| 4 | Cleanup 1a + 5a | 8e | 1a done; 5a landed 2026-10-20, pending in-game check |
 | 4b | ~~8f GUI reflections Stages 0-3~~ — **done 2026-10-16** | 8f | Doc in `completed/` |
 | 5 | Cleanup 1b (+ Stage S4 serial-path deletion) | 8e | Unblocked — Stage S closed |
 | 6 | ~~Optimization Stage L~~ — **parked 2026-10-14.** L1 landed (per-light labels); L2 blocked, L3 dropped | 8 | Four candidate causes measured negative. If optimization resumes, start with the AO ray budget. |

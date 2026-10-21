@@ -211,10 +211,20 @@ now `FroxelFill`/`FroxelIntegrate`/`FroxelResolve`/`VolComposite` only); shader 
 
 ---
 
-## Phase 5a — Reset buttons (no cvar-set dependency)
+## Phase 5a — Reset buttons (Done, pending check)
 
-| Item | Detail |
+| Item | Landed |
 |---|---|
+| Default accessor | `idCVar::SetString(nullptr)` falls back to `resetString` and raises the modified flags. The console `reset` does not raise them, so it is not used |
+| Lists | `FindTabCVar` in `InitRTOptionsMenu` adds each cvar to `rtTabCVars` or `upscalingTabCVars` as it is looked up. `r_useRayTracing` is excluded |
+| Buttons | "Reset Ray Tracing to Defaults" (RT tab), "Reset Upscaling and Filtering to Defaults" (Upscaling tab), each behind a confirm popup |
+| Persistence | `CVAR_ARCHIVE` added to the 29 menu cvars that lacked it (AO, temporal, refl distance/blend, GI, vol, auto-relight, probe hysteresis). Left unarchived: `r_rtAutoRelightDebugColor`, and the off-menu `r_rtGIEmissiveScale`, `r_rtGIStochasticLights`, `r_rtGIContrast` |
+| Menu fixes | Dropped the dead "Temporal Denoising" checkbox (`r_rtDenoise` was deleted in b4e7694b). Added the missing lookups for `r_rtAutoRelightMax` and `r_rtAutoRelightIntensity`, whose sliders never drew |
+
+Check: change several RT and Upscaling values, press Reset, then compare `cvarlist r_rt*` with a
+fresh config. Change a GI slider, quit, relaunch, and confirm the value is still set.
+
+---|---|
 | "Reset ray tracing to defaults" | Loop over a static list of RT cvars, set each to its default string. Needs a default accessor: check `idCVar`/`idCVarSystem` for one, else store defaults in the menu table |
 | "Reset graphics to defaults" | Same for the non-RT graphics group |
 | Persistence | Add `CVAR_ARCHIVE` to cvars that stay in the menu without it |
@@ -254,7 +264,7 @@ Both were optimization and now live in `20261010_vk_core_audit.md`:
 
 ---
 
-## Phase 7 — Comment sweep
+## Phase 7 — Comment sweep (Done)
 
 Policy (`.claude/rules/RULES.md`): inline comments 1-2 sentences of rationale; long motivation goes to file-top or function header, or to memory/docs.
 
@@ -290,7 +300,7 @@ Reordered 2026-10-13. Two principles, both from measurement rather than taste:
 | 2 Reflection legacy mode 2 | low-med | 1c, 8g Stage 5 | Unblocked except for Stage 5's knob fold |
 | 3 Screen-space GI | med | 1a | Dead paths confirmed at 0.001 ms |
 | 4 Non-froxel vol | med | 1a | Done 2026-10-20, not yet validated in-game |
-| 5a Reset buttons | low | 0 | No cvar-set dependency; can land any time |
+| 5a Reset buttons | low | 0 | Landed 2026-10-20, pending in-game check |
 | 5b Presets | low | 1c, 1d, 2, 3, 4 (final cvar set) | |
 | 7 Comments | none | all of the above | Last by design; `git diff -w` must show no code change |
 

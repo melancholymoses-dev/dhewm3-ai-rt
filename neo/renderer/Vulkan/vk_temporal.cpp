@@ -49,10 +49,10 @@ of the original Doom 3 GPL Source Code release.
 // CVars
 // ---------------------------------------------------------------------------
 
-idCVar r_rtAOTemporal("r_rtAOTemporal", "1", CVAR_RENDERER | CVAR_BOOL,
+idCVar r_rtAOTemporal("r_rtAOTemporal", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
                       "Enable temporal EMA accumulation for AO (requires r_rtAO 1)");
 
-idCVar r_rtAOTemporalAlpha("r_rtAOTemporalAlpha", "0.5", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtAOTemporalAlpha("r_rtAOTemporalAlpha", "0.5", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                            "EMA blend factor: 0=use only history, 1=use only current frame (reset). "
                            "Lower values are smoother but ghost more during movement.");
 
@@ -66,7 +66,7 @@ idCVar r_rtTemporalCutAngleThreshold("r_rtTemporalCutAngleThreshold", "4", CVAR_
                                      "temporal history is discarded (camera cut / teleport detection). "
                                      "Shared by AO, GI and volumetrics.");
 
-idCVar r_rtAtrousIterations("r_rtAtrousIterations", "4", CVAR_RENDERER | CVAR_INTEGER,
+idCVar r_rtAtrousIterations("r_rtAtrousIterations", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                             "Atrous spatial AO filter passes after EMA (0=off, 2 or 4 recommended). "
                             "Requires r_rtAO 1 and r_rtAOTemporal 1.");
 

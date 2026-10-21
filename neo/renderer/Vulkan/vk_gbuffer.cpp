@@ -56,7 +56,7 @@ bool VK_GBufferPrepassActive(void)
 
 // 0 = AO/GI rebuild normals from depth gradients (costlier, no bump detail), for A/B.
 // Reflections always read the G-buffer.
-idCVar r_rtGbufNormals("r_rtGbufNormals", "1", CVAR_RENDERER | CVAR_BOOL,
+idCVar r_rtGbufNormals("r_rtGbufNormals", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
                        "AO/GI take their shading normal from the G-buffer "
                        "(0 = depth-gradient reconstruction, for A/B)");
 

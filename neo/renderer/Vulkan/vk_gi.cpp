@@ -40,22 +40,22 @@ Code release.
 idCVar r_rtGI("r_rtGI", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
               "Enable one-bounce GI (ambient colour bleeding)");
 
-idCVar r_rtGIRadius("r_rtGIRadius", "128.0", CVAR_RENDERER | CVAR_FLOAT, "Max GI bounce ray distance in world units");
+idCVar r_rtGIRadius("r_rtGIRadius", "128.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "Max GI bounce ray distance in world units");
 
-idCVar r_rtGIStrength("r_rtGIStrength", "0.20", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtGIStrength("r_rtGIStrength", "0.20", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                       "Global scale applied to the GI buffer before compositing");
 
 idCVar r_rtGIContrast("r_rtGIContrast", "0.6", CVAR_RENDERER | CVAR_FLOAT,
                       "GI colour contrast boost [0-1]: subtracts minimum channel and rescales to original brightness. "
                       "0 = off, 1 = full effect");
 
-idCVar r_rtGIDirectScale("r_rtGIDirectScale", "1.", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtGIDirectScale("r_rtGIDirectScale", "1.", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                          "Multiplier on direct interaction lighting when GI is active. Reduce below 1.0 "
                          "to compensate for GI-added luminance and keep overall brightness consistent "
                          "with the original game. Independent of r_rtGIStrength");
 
 static idCVar r_rtGIBounceScale(
-    "r_rtGIBounceScale", "2.0", CVAR_RENDERER | CVAR_FLOAT,
+    "r_rtGIBounceScale", "2.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
     "Multiplier applied to each light's irradiance contribution in the GI bounce");
 
 static idCVar r_rtGIEmissiveScale("r_rtGIEmissiveScale", "2.0", CVAR_RENDERER | CVAR_FLOAT,
@@ -64,18 +64,18 @@ static idCVar r_rtGIEmissiveScale("r_rtGIEmissiveScale", "2.0", CVAR_RENDERER | 
 // Point-light falloff shape shared by every indirect consumer
 // — GI, reflections, volumetrics. Direct surface lighting is
 // unaffected: the raster interaction pass samples Doom's real falloff images.
-static idCVar r_rtGIFalloffMode("r_rtGIFalloffMode", "1", CVAR_RENDERER | CVAR_INTEGER,
+static idCVar r_rtGIFalloffMode("r_rtGIFalloffMode", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                                 "Point-light falloff for RT indirect lighting: 0 = legacy (flat to 80%% of the "
                                 "box, then a knee), 1 = (1-t)^2 raster-like, 2 = (1-t^2)^2 smooth");
 
 // 1.0 is Doom's own light volume;
 // Also sizes the sphere pre-cull, which must not clip the falloff.
-static idCVar r_rtGIFalloffReach("r_rtGIFalloffReach", "1.0", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtGIFalloffReach("r_rtGIFalloffReach", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                  "How far past the light's box a point light reaches, in box-normalised units. "
                                  "1.0 = stop at the box face (vanilla containment), 1.5 = initial RT throw");
 
 static idCVar r_rtGIMaxBounceLights(
-    "r_rtGIMaxBounceLights", "16", CVAR_RENDERER | CVAR_INTEGER,
+    "r_rtGIMaxBounceLights", "16", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
     "Max uploaded lights evaluated by GI bounce shading (GI pass only; reflections unaffected)");
 
 static idCVar r_rtGIStochasticLights("r_rtGIStochasticLights", "2", CVAR_RENDERER | CVAR_INTEGER,
@@ -83,7 +83,7 @@ static idCVar r_rtGIStochasticLights("r_rtGIStochasticLights", "2", CVAR_RENDERE
                                      "unshadowed contribution and divided by their selection probability (unbiased). "
                                      "0 = one shadow ray for every light up to r_rtGIMaxBounceLights");
 
-static idCVar r_rtGIMaxLights("r_rtGIMaxLights", "128", CVAR_RENDERER | CVAR_INTEGER,
+static idCVar r_rtGIMaxLights("r_rtGIMaxLights", "128", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                               "Max GI lights to sample per frame (1-128, capped at VK_GI_MAX_LIGHTS)");
 
 static idCVar r_rtGILightStratify(
@@ -92,7 +92,7 @@ static idCVar r_rtGILightStratify(
     "hysteresis, uploaded importance-first. 0 = nearest-to-camera sort (A/B)");
 
 static idCVar r_rtGILightCollectRadiusScale(
-    "r_rtGILightCollectRadiusScale", "4.0", CVAR_RENDERER | CVAR_FLOAT,
+    "r_rtGILightCollectRadiusScale", "4.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
     "Camera-space GI light collection radius scale. Effective collect radius = r_rtGIRadius * scale. "
     "Only used by the sphere collector (r_rtGIAreaLights 0, or the camera outside the world)");
 

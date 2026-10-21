@@ -50,7 +50,7 @@ Code release.
 // CVars
 // ---------------------------------------------------------------------------
 
-idCVar r_rtAutoRelight("r_rtAutoRelight", "0", CVAR_RENDERER | CVAR_BOOL,
+idCVar r_rtAutoRelight("r_rtAutoRelight", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
                        "Master toggle for engine-synthesized lights from emissive "
                        "world surfaces; regenerates on map load.");
 
@@ -59,17 +59,17 @@ idCVar r_rtAutoRelightDebug("r_rtAutoRelightDebug", "1", CVAR_RENDERER | CVAR_IN
                             "(centroid/area/score/verdict/material) printed once, at the next map load. "
                             "Independent of r_rtAutoRelight, to check scoring before enabling synthesis.");
 
-idCVar r_rtAutoRelightMax("r_rtAutoRelightMax", "64", CVAR_RENDERER | CVAR_INTEGER,
+idCVar r_rtAutoRelightMax("r_rtAutoRelightMax", "64", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                           "Map-wide ceiling on synthesized lights, applied after the per-area cap "
                           "(a safety valve for maps with many areas).");
 
 // Primary budget knob.  Per area because score favours sheer size: under one global cap a
 // couple of large fixtures took the whole map's budget.
-idCVar r_rtAutoRelightMaxPerArea("r_rtAutoRelightMaxPerArea", "4", CVAR_RENDERER | CVAR_INTEGER,
+idCVar r_rtAutoRelightMaxPerArea("r_rtAutoRelightMaxPerArea", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                                  "Max synthesized lights kept per portal area, by descending score, before "
                                  "the map-wide r_rtAutoRelightMax ceiling.");
 
-idCVar r_rtAutoRelightIntensity("r_rtAutoRelightIntensity", "0.5", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtAutoRelightIntensity("r_rtAutoRelightIntensity", "0.5", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                 "Brightness scale for synthesized lights, multiplied into their RGB. "
                                 "Start dim: these are accents, not primary illumination.");
 
