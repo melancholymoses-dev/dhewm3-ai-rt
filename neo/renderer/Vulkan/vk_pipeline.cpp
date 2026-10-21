@@ -59,7 +59,7 @@ struct VkInteractionUBO
     float lightScale;    // backEnd.overBright — final color multiplier before gamma
     int _retired[4];     // were useReflections, specF0Scale/Gamma, reflDebugMode (mode 1) — kept so
                          // shadowMaskLayer's offset doesn't move
-    int shadowMaskLayer; // P1b — shadow mask array layer for this light (see VK_RT_SHADOW_LAYERS)
+    int shadowMaskLayer; // shadow mask array layer for this light (see VK_RT_SHADOW_LAYERS)
     int _pad2;           // std140 rounds the GLSL block up to a 16-byte multiple (384)
 };
 // Must match INTERACTION_UBO_SIZE (vk_backend.cpp) and the std140 block in interaction.frag.
@@ -278,13 +278,9 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout, bool ena
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    // Depth+stencil: depth test with caller-supplied compare op (default EQUAL).
-    // Opaque interactions use EQUAL to match the GL path (backEnd.depthFunc = GLS_DEPTHFUNC_EQUAL):
-    // only pixels that were written by the depth prepass get lit, preventing any double-drawing.
-    // Translucent interactions use LEQUAL since translucent surfaces skip the prepass.
-    // Stencil: GEQUAL 128 — matches Doom3 GL path after shadow pass.
-    // Lit pixels are >=128; shadowed pixels decrement below 128.
-    // With no rasterised shadow pass this always passes; RT shadow mask is applied in-shader.
+    // Depth: EQUAL for opaque (as GL; only prepass pixels get lit), LEQUAL for translucent
+    // (skips the prepass).  Stencil GEQUAL 128 as GL after the shadow pass; with RT shadows
+    // it always passes and the mask is applied in-shader.
     VkPipelineDepthStencilStateCreateInfo depthStencil = {};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = VK_TRUE;
@@ -418,11 +414,9 @@ static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout, bool mir
     // Y-flip viewport inverts winding — same correction as interaction pipeline.
     // Carmack's Reverse front/back stencil ops depend on correct face identification.
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
-    rasterizer.depthClampEnable = VK_FALSE; // Doom 3 uses infinite-far-plane projection (z=-0.999),
-                                            // so shadow vertices at infinity stay within [0,1] — no clamping
-                                            // needed.  Disabling matches GL behavior: fragments outside the
-                                            // frustum are clipped rather than clamped, preventing spurious
-                                            // stencil marks from near-plane overflow.
+    // Infinite far plane keeps shadow vertices at infinity in [0,1].  Clipping (as GL) rather
+    // than clamping avoids spurious stencil marks from near-plane overflow.
+    rasterizer.depthClampEnable = VK_FALSE;
     rasterizer.lineWidth = 1.0f;
     // Match GL shadow polygon offset behavior; values are set dynamically from cvars per draw.
     rasterizer.depthBiasEnable = VK_TRUE;
@@ -433,15 +427,8 @@ static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout, bool mir
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    // Z-fail / Carmack's Reverse uses depthFailOp only.
-    // For a shadowed pixel (between near and far shadow caps):
-    //   near cap (front face, faces camera): d_sv < d_scene → depth PASSES → no event
-    //   far  cap (back  face, faces away  ): d_sv > d_scene → depth FAILS  → stencil fires
-    // Correct convention (matching GL): front=INCR, back=DECR
-    //   non-mirror: front=INCR, back=DECR
-    //   mirror:     front=DECR, back=INCR (winding reversed in mirrored view)
-    // In this Vulkan pipeline, front/back refer to post-viewport face classification
-    // (with our Y-flipped viewport and frontFace=CLOCKWISE convention).
+    // Z-fail (Carmack's Reverse) uses depthFailOp only.  As GL: front=INCR, back=DECR, swapped
+    // for mirrored views.  Front/back are post-viewport (Y-flipped, frontFace=CLOCKWISE).
     VkStencilOpState front = {};
     front.failOp = VK_STENCIL_OP_KEEP;
     front.passOp = VK_STENCIL_OP_KEEP;
@@ -586,11 +573,8 @@ static VkPipeline VK_CreateShadowPipelineZPass(VkPipelineLayout layout, bool mir
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    // GL parity note (keep in sync with draw_common.cpp RB_T_Shadow):
-    // Z-pass uses passOp only.
-    //   non-mirror: back=INCR, front=DECR
-    //   mirror:     back=DECR, front=INCR (swapped)
-    // depthFailOp stays KEEP for both faces in Z-pass.
+    // Z-pass uses passOp only (keep in sync with draw_common.cpp RB_T_Shadow): back=INCR,
+    // front=DECR, swapped for mirrored views.  depthFailOp stays KEEP.
     VkStencilOpState front = {};
     front.failOp = VK_STENCIL_OP_KEEP;
     front.passOp = mirrorView ? VK_STENCIL_OP_INCREMENT_AND_WRAP : VK_STENCIL_OP_DECREMENT_AND_WRAP;
@@ -977,8 +961,7 @@ static VkPipeline VK_CreateDepthPipeline(VkPipelineLayout layout)
 
 // ---------------------------------------------------------------------------
 // VK_CreateGBufferDescLayout / VK_CreateGBufferPipelineEx
-// G-buffer normal/F0 prepass (Stage 3.5, see docs/plans/gbuffer_normal_pass.md).
-// Only ever created when vk.gbufferSupported (see VK_InitPipelines) — replaces
+// G-buffer normal/F0 prepass.  Only ever created when vk.gbufferSupported (see VK_InitPipelines) — replaces
 // depthPipeline/depthClipPipeline in VK_RB_FillDepthBuffer when RT is active,
 // writing world-space bump-mapped normal + F0 to gbufNormal (attachment 1)
 // while keeping attachment 0 write-masked off exactly like the depth pipelines.
@@ -986,7 +969,7 @@ static VkPipeline VK_CreateDepthPipeline(VkPipelineLayout layout)
 //   "glprogs/glsl/gbuffer.frag.spv"      — opaque (SL_DIFFUSE stage, or white fallback)
 //   "glprogs/glsl/gbuffer_clip.frag.spv" — alpha-clip (MC_PERFORATED; diffuse doubles
 //                                          as the alpha-test source)
-// Both variants write gbufAlbedo (attachment 2, gi_albedo_target.md) from binding 2.
+// Both variants write gbufAlbedo (attachment 2) from binding 2.
 // ---------------------------------------------------------------------------
 
 static VkDescriptorSetLayout VK_CreateGBufferDescLayout(void)
@@ -1005,8 +988,7 @@ static VkDescriptorSetLayout VK_CreateGBufferDescLayout(void)
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // Binding 2: diffuse map (both pipeline variants — alpha test on the clip
-    // variant, receiver-albedo G-buffer write on both, gi_albedo_target.md)
+    // Binding 2: diffuse map (alpha test on the clip variant; albedo write on both)
     bindings[2].binding = 2;
     bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[2].descriptorCount = 1;
@@ -1108,10 +1090,8 @@ static VkPipeline VK_CreateGBufferPipelineEx(VkPipelineLayout layout, const char
     VkPipelineColorBlendAttachmentState colorBlend = {};
     colorBlend.colorWriteMask = 0;
 
-    // Attachments 1-3 (gbufNormal, gbufAlbedo, motionVectors): full RGBA write, no
-    // blending. This is the one pipeline that actually produces the data every other
-    // hdrRenderPass pipeline write-masks away. All three share the same write-all state
-    // (motionVectors is R16G16, so the unused BA bits are simply ignored).
+    // Attachments 1-3 (gbufNormal, gbufAlbedo, motionVectors): full write, no blending.  The one
+    // pipeline that produces what other hdrRenderPass pipelines write-mask away.
     VkPipelineColorBlendAttachmentState gbufBlend = {};
     gbufBlend.blendEnable = VK_FALSE;
     gbufBlend.colorWriteMask =
@@ -1233,7 +1213,7 @@ static int s_blendCacheCount = 0;
 
 // Convert Doom3 inverse channel mask bits to Vulkan colorWriteMask bits.
 // In Doom3, GLS_*MASK means "disable writes" for that channel.
-// Important: stage drawState 0x00000f00 (breakyglass3_nvp stage 0) is alpha-only.
+// Important: stage drawState 0x00000f00 (breakyglass3_nvp's first stage) is alpha-only.
 // If this mapping is skipped and RGBA is always enabled, the glass pass turns white.
 static VkColorComponentFlags VK_GlsColorMaskToVk(int stateBits)
 {
@@ -1338,11 +1318,8 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
     depthStencil.stencilTestEnable = VK_FALSE;
     if (depthTest)
     {
-        // 3D world surface: test against depth prepass, don't write depth.
-        // depthOp comes from the material stage's drawStateBits:
-        //   GLS_DEPTHFUNC_EQUAL  → EQUAL   (opaque/perforated, must match prepass exactly)
-        //   GLS_DEPTHFUNC_LESS   → LEQUAL  (translucent, extends past prepass depth)
-        //   GLS_DEPTHFUNC_ALWAYS → ALWAYS  (post-process or depth-ignored)
+        // 3D world surface: test against the prepass, no depth write.  depthOp from drawStateBits:
+        // EQUAL → EQUAL (opaque/perforated), LESS → LEQUAL (translucent), ALWAYS → ALWAYS.
         depthStencil.depthTestEnable = VK_TRUE;
         depthStencil.depthWriteEnable = VK_FALSE;
         depthStencil.depthCompareOp = depthOp;
@@ -1547,10 +1524,8 @@ VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest)
     const VkColorComponentFlags colorMask = VK_GlsColorMaskToVk(drawStateBits);
     const uint32_t colorMaskNibble = (uint32_t)(colorMask & 0xFu);
 
-    // Determine depth compare op from the stage's drawStateBits, matching GL_State() in gl_backend.cpp.
-    // GLS_DEPTHFUNC_EQUAL (0x20000): opaque/perforated stages must match prepass exactly.
-    // GLS_DEPTHFUNC_ALWAYS (0x10000): depth test disabled (depth-ignored stages).
-    // Default (GLS_DEPTHFUNC_LESS = 0x0): translucent stages, use LEQUAL (extends past prepass).
+    // Depth op from drawStateBits, as GL_State(): EQUAL for opaque/perforated, ALWAYS for
+    // depth-ignored, else LEQUAL (translucent extends past the prepass).
     VkCompareOp depthOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     if (drawStateBits & GLS_DEPTHFUNC_EQUAL)
         depthOp = VK_COMPARE_OP_EQUAL;
@@ -1562,10 +1537,8 @@ VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest)
     VkBlendFactor src = VK_GlsSrcBlendToVk(drawStateBits);
     VkBlendFactor dst = VK_GlsDstBlendToVk(drawStateBits);
 
-    // Build cache key including blend factors and color mask to avoid collisions.
-    // Example: (ONE, ZERO) and (ZERO, ONE) both have blendBits=0 but need different pipelines.
-    // Bits[31]: depthTest. Bits[29:28]: depthOp. Bits[27:24]: src factor.
-    // Bits[23:20]: dst factor. Bits[19:16]: color write mask nibble.
+    // Key includes blend factors and colour mask: (ONE,ZERO) and (ZERO,ONE) share blendBits.
+    // Bits[31] depthTest, [29:28] depthOp, [27:24] src, [23:20] dst, [19:16] colour mask.
     uint32_t depthOpIdx = (depthOp == VK_COMPARE_OP_EQUAL) ? 1u : (depthOp == VK_COMPARE_OP_ALWAYS) ? 2u : 0u;
     const uint32_t srcIdx = (uint32_t)src & 0xFu;
     const uint32_t dstIdx = (uint32_t)dst & 0xFu;
@@ -1615,7 +1588,7 @@ VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest)
     // be enabled, not treated as an opaque surface.
     bool blend = (src != VK_BLEND_FACTOR_ONE || dst != VK_BLEND_FACTOR_ZERO);
 
-    // X4: there is no VkPipelineCache in the tree, so a first-use pipeline build is a
+    // There is no VkPipelineCache in the tree, so a first-use pipeline build is a
     // mid-frame hitch.  Timed to show whether they stop after the first seconds of a map.
     const uint64_t freq = SDL_GetPerformanceFrequency();
     const uint64_t start = SDL_GetPerformanceCounter();
@@ -1878,12 +1851,8 @@ void VK_InitPipelines(void)
         layoutInfo.pSetLayouts = &vkPipes.interactionDescLayout;
         VK_CHECK(vkCreatePipelineLayout(vk.device, &layoutInfo, NULL, &vkPipes.interactionLayout));
     }
-    // Opaque interactions: EQUAL matches GL (backEnd.depthFunc = GLS_DEPTHFUNC_EQUAL).
-    // Opaque weapon-depthhack interactions: LEQUAL to tolerate depth interpolation
-    // mismatch between depth prepass and interaction shaders in Vulkan.
-    // If that still rejects valid fragments, a stencil+ALWAYS variant is available
-    // as a targeted fallback for weapon/viewmodel surfaces.
-    // Translucent interactions: LEQUAL since translucent surfaces skip the depth prepass.
+    // Opaque: EQUAL as GL.  Weapon depth-hack: LEQUAL tolerates prepass/interaction depth
+    // mismatch, with a stencil+ALWAYS fallback.  Translucent: LEQUAL (no prepass).
     vkPipes.interactionPipeline = VK_CreateInteractionPipeline(vkPipes.interactionLayout, true, VK_COMPARE_OP_EQUAL);
     vkPipes.interactionPipelineStencilLEqual =
         VK_CreateInteractionPipeline(vkPipes.interactionLayout, true, VK_COMPARE_OP_LESS_OR_EQUAL);
@@ -1926,10 +1895,8 @@ void VK_InitPipelines(void)
     vkPipes.depthPipeline = VK_CreateDepthPipeline(vkPipes.guiLayout);
     vkPipes.depthClipPipeline = VK_CreateDepthPipelineEx(vkPipes.guiLayout, "glprogs/glsl/depth_clip.frag.spv");
 
-    // --- G-buffer normal/F0 prepass pipelines (Stage 3.5) ---
-    // Only created when vk.gbufferSupported (independentBlend) — see Step 0 in
-    // docs/plans/gbuffer_normal_pass.md. When unsupported these stay VK_NULL_HANDLE
-    // and VK_RB_FillDepthBuffer keeps using depthPipeline/depthClipPipeline instead.
+    // --- G-buffer normal/F0 prepass pipelines ---
+    // Only when vk.gbufferSupported; otherwise VK_RB_FillDepthBuffer keeps the depth pipelines.
     if (vk.gbufferSupported)
     {
         vkPipes.gbufferDescLayout = VK_CreateGBufferDescLayout();
@@ -1997,7 +1964,7 @@ void VK_InitPipelines(void)
                    vkPipes.guiOpaquePipeline ? "OK" : "FAIL", vkPipes.guiAlphaPipeline ? "OK" : "FAIL",
                    vkPipes.skyboxPipeline ? "OK" : "FAIL");
 
-    // Breadcrumb for the new Stage 3.5 mechanism — see docs/plans/gbuffer_normal_pass.md.
+    // Startup confirmation for the G-buffer prepass.
     if (vk.gbufferSupported)
         common->Printf("VK: G-buffer normal/F0 prepass pipelines (gbuffer=%s/%s)\n",
                        vkPipes.gbufferPipeline ? "OK" : "FAIL", vkPipes.gbufferClipPipeline ? "OK" : "FAIL");

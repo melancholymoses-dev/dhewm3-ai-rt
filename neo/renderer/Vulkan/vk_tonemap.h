@@ -3,7 +3,7 @@
 
 dhewm3-rt Vulkan — vk_tonemap.h — HDR scene buffer and Uchimura tonemap resolve.
 
-Phase 8.1: allocates a per-frame RGBA16F HDR accumulation image that replaces
+Allocates a per-frame RGBA16F HDR accumulation image that replaces
 the swapchain as the colour attachment for scene + composite passes.  A final
 compute dispatch reads the HDR image, applies the Uchimura filmic curve, and
 writes the tonemapped result to the swapchain storage image.

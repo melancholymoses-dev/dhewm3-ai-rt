@@ -1,45 +1,30 @@
 /*
 ===========================================================================
 
-dhewm3-rt Vulkan ray tracing — auto-relight (docs/plans/auto_relight.md AR1-5).
+dhewm3-rt Vulkan ray tracing — auto-relight.
 
 Load-time CPU pass that turns Doom 3's glowing fixtures (LED screens, light
 panels, strip lights, consoles) into real, shadow-casting idRenderLights with
 zero map editing. The pipeline:
 
-  AR1  Surface harvest  — walk every world-model surface, keep triangles
-       whose material is emissive (shared judgment with the material table,
-       VK_RT_MaterialIsEmissive), and bucket them into a world-space grid.
-  AR2  Clustering        — union adjacent occupied grid cells (6-connectivity)
-       into physical fixtures; reject clusters whose triangle normals
-       disagree too much (wraparound glow strips).
-  AR3a Scoring (AR_Score)      — score = area x emissive luminance x style
-       weight, tag each cluster with its resolved portal area.
-  AR4  Dedupe (AR_Dedupe)      — drop clusters within r_rtAutoRelightDedupeDist
-       of an existing, color-similar map light (the mappers already lit it).
-       Runs BEFORE the budget caps below (2026-08-23, code review finding —
-       used to run after: a room's highest-scoring fixtures could consume its
-       whole quota and only THEN get rejected as already-lit, starving
-       genuinely-uncovered lower-scored fixtures in the same room of a slot
-       they should have won).
-  AR3b Budget (AR_ApplyBudget) — over whatever AR4 left as CANDIDATE, keep the
-       top r_rtAutoRelightMaxPerArea clusters PER PORTAL AREA, then the top
-       r_rtAutoRelightMax clusters map-wide as an overall ceiling (2026-08-23:
-       was a single map-wide cap, which let one or two large/bright fixture
-       clusters starve every other room's budget — see the cvar comment above
-       AR_ApplyBudget for the in-game finding).
-  AR5  Light synthesis   — AddLightDef() a real point light per surviving
-       cluster: origin offset off the surface, a world-axis-aligned bound of
-       the fixture's (tangent x2.5, normal reach) footprint as lightRadius,
-       average bright-texel color scaled by r_rtAutoRelightIntensity (baked into
-       the RGB parms — slot 3 on a light is TIMESCALE, not intensity; 2026-08-30).
-       Always shadow-casting (noShadows = false) — see AR5 comment below for
-       why that matters. Tagged with a distinct light material
-       (lights/rtAutoRelight, base/materials/rt_auto_relight.mtr) instead of
-       the generic default, so debug dumps can identify them (2026-08-23).
-
-AR6 (noShadows unlock) and AR7 (weapon/projectile def patches) are separate
-companion rules per the doc, not implemented here.
+  Harvest     — walk every world-model surface, keep triangles whose material is
+                emissive (VK_RT_MaterialIsEmissive, shared with the material
+                table), and bucket them into a world-space grid.
+  Cluster     — union adjacent occupied cells (6-connectivity) into fixtures;
+                reject clusters whose normals disagree (wraparound glow strips).
+  Score       — area x emissive luminance x style weight, tagged with the
+                cluster's portal area (AR_Score).
+  Dedupe      — drop clusters within r_rtAutoRelightDedupeDist of an existing,
+                color-similar map light (AR_Dedupe).  Runs before the budget, or
+                already-lit fixtures use up a room's quota.
+  Budget      — top r_rtAutoRelightMaxPerArea per portal area, then
+                r_rtAutoRelightMax map-wide (AR_ApplyBudget).  Per-area so a few
+                large fixtures can't take every room's budget.
+  Synthesize  — AddLightDef() a point light per survivor: origin offset off the
+                surface, lightRadius bounding the fixture footprint, bright-texel
+                color scaled by r_rtAutoRelightIntensity (baked into RGB; parm 3
+                is TIMESCALE, not intensity).  Always shadow-casting, with the
+                lights/rtAutoRelight material so debug dumps can identify them.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -66,67 +51,50 @@ Code release.
 // ---------------------------------------------------------------------------
 
 idCVar r_rtAutoRelight("r_rtAutoRelight", "0", CVAR_RENDERER | CVAR_BOOL,
-                       "auto_relight.md: master toggle for engine-synthesized lights from emissive "
+                       "Master toggle for engine-synthesized lights from emissive "
                        "world surfaces; regenerates on map load.");
 
 idCVar r_rtAutoRelightDebug("r_rtAutoRelightDebug", "1", CVAR_RENDERER | CVAR_INTEGER,
-                            "auto_relight.md: 0 = off; 1 = console table of every harvested cluster "
+                            "0 = off; 1 = console table of every harvested cluster "
                             "(centroid/area/score/verdict/material) printed once, at the next map load. "
-                            "Independent of r_rtAutoRelight so the harvest/cluster/score step can be "
-                            "validated before enabling synthesis.");
+                            "Independent of r_rtAutoRelight, to check scoring before enabling synthesis.");
 
 idCVar r_rtAutoRelightMax("r_rtAutoRelightMax", "64", CVAR_RENDERER | CVAR_INTEGER,
-                          "auto_relight.md AR3: overall map-wide ceiling, applied AFTER the per-area cap below "
-                          "(safety valve for maps with many areas, not the primary budget knob anymore).");
+                          "Map-wide ceiling on synthesized lights, applied after the per-area cap "
+                          "(a safety valve for maps with many areas).");
 
-// 2026-08-23: added after in-game validation on alphalabs2 showed the single global
-// top-16-by-score cap letting two physically large/bright fixture clusters (a pulsing
-// floor grate, a wall light bank) consume the ENTIRE map's budget between them, leaving
-// every other room with zero synthesized lights despite having plenty of emissive
-// fixtures of their own (score = area * luminance * styleWeight lets sheer physical
-// size dominate). This is the primary budget knob now: score/keep top-N PER PORTAL
-// AREA (world->PointInArea on the cluster centroid) so "a few per scene" actually
-// holds as the player moves between rooms, instead of two rooms eating the whole map.
+// Primary budget knob.  Per area because score favours sheer size: under one global cap a
+// couple of large fixtures took the whole map's budget.
 idCVar r_rtAutoRelightMaxPerArea("r_rtAutoRelightMaxPerArea", "4", CVAR_RENDERER | CVAR_INTEGER,
-                                 "auto_relight.md AR3: max synthesized lights kept per portal area, by "
-                                 "descending score, before the map-wide r_rtAutoRelightMax ceiling is applied.");
+                                 "Max synthesized lights kept per portal area, by descending score, before "
+                                 "the map-wide r_rtAutoRelightMax ceiling.");
 
 idCVar r_rtAutoRelightIntensity("r_rtAutoRelightIntensity", "0.5", CVAR_RENDERER | CVAR_FLOAT,
-                                "auto_relight.md AR5: brightness scale for synthesized lights, multiplied "
-                                "into their RGB — start dim, these are accents, not primary illumination. "
-                                "(Was written to SHADERPARM_ALPHA until 2026-08-30, which made it a "
-                                "GI/volumetric-only control with no effect on direct lighting.)");
+                                "Brightness scale for synthesized lights, multiplied into their RGB. "
+                                "Start dim: these are accents, not primary illumination.");
 
-// 2026-08-23: temporary debug visualization, not a gameplay setting — forces every
-// synthesized light to hot pink at a high fixed intensity so the AR3 placement/budget
-// decisions are trivially spottable while walking the level, the same way cranking
-// r_rtVolAnisotropy to 1 makes beams obvious. Applied only at the AR5 synthesis step
-// (below), after AR4 dedupe has already used the real emissive color for its hue
-// match, so this can't affect dedupe correctness — it only overrides what the
-// resulting light actually looks like once created.
+// Applied at synthesis, after dedupe has matched on the real colour, so it can't change
+// which lights are created.
 idCVar r_rtAutoRelightDebugColor("r_rtAutoRelightDebugColor", "0", CVAR_RENDERER | CVAR_BOOL,
-                                 "auto_relight.md: DEBUG — force all synthesized lights to hot pink at high "
-                                 "intensity, overriding r_rtAutoRelightIntensity and the fixture's real color, "
-                                 "so placement is obvious while navigating. Not for normal play.");
+                                 "DEBUG — force all synthesized lights to hot pink at high intensity so "
+                                 "placement is obvious while navigating. Not for normal play.");
 
 idCVar r_rtAutoRelightReach("r_rtAutoRelightReach", "160", CVAR_RENDERER | CVAR_FLOAT,
-                            "auto_relight.md AR5: synthesized light radius along the fixture's surface normal.");
+                            "Synthesized light radius along the fixture's surface normal.");
 
 idCVar r_rtAutoRelightOffset("r_rtAutoRelightOffset", "8", CVAR_RENDERER | CVAR_FLOAT,
-                             "auto_relight.md AR5: synthesized light origin offset off the surface, along "
-                             "the fixture's normal — keeps the light out of the wall.");
+                             "Synthesized light origin offset along the fixture's normal; keeps the "
+                             "light out of the wall.");
 
 idCVar r_rtAutoRelightDedupeDist(
     "r_rtAutoRelightDedupeDist", "96", CVAR_RENDERER | CVAR_FLOAT,
-    "auto_relight.md AR4: existing-map-light suppression radius around a proposed synthesized light origin.");
+    "Existing-map-light suppression radius around a proposed synthesized light origin.");
 
 // ---------------------------------------------------------------------------
-// AR1 — grid bucketing
+// Grid bucketing
 //
-// Cell size is a v1 constant, not a cvar (auto_relight.md AR2): 48 units is
-// roughly one Doom 3 light-panel tile. Triangles are streamed directly into
-// their cell's area-weighted accumulators rather than stored per-triangle —
-// cheap and keeps memory use independent of world triangle count.
+// 48 units is roughly one Doom 3 light-panel tile.  Triangles stream into area-weighted
+// cell accumulators, so memory is independent of world triangle count.
 // ---------------------------------------------------------------------------
 
 static const float AR_GRID_CELL_SIZE = 48.0f;
@@ -142,11 +110,11 @@ struct arCell_t
     int triCount;
 
     // Representative material/image for the cell, chosen by whichever
-    // triangle contributed the most area — used for AR3 scoring (luminance
-    // sample) and AR5 synthesis (color), and for console-log identification.
+    // triangle contributed the most area — used for scoring (luminance
+    // sample) and synthesis (color), and for console-log identification.
     const idMaterial *repMaterial;
     idImage *repEmissiveImage;
-    bool repIsScreen; // GUI surface or cinematic/videomap stage (AR3 style weight)
+    bool repIsScreen; // GUI surface or cinematic/videomap stage (scoring style weight)
     float repMaterialArea;
 };
 
@@ -188,7 +156,7 @@ static int AR_FindOrAddCell(idList<arCell_t> &cells, idHashIndex &cellHash, int 
 }
 
 // ---------------------------------------------------------------------------
-// AR1 — surface harvest
+// Surface harvest
 //
 // Walks every static world-model surface (tr.primaryWorld's per-portal-area
 // "_area%i" models — same geometry the static BLAS build walks in
@@ -231,7 +199,7 @@ static void AR_HarvestEmissiveSurfaces(idRenderWorldLocal *world, idList<arCell_
             bool isCinematic = false;
             if (!VK_RT_MaterialIsEmissive(surf->shader, &emissiveImg, &guiEmissive, &isCinematic))
                 continue;
-            const bool isScreen = guiEmissive || isCinematic; // AR3: "screens are the money shot"
+            const bool isScreen = guiEmissive || isCinematic; // weighted up in scoring
 
             const srfTriangles_t *geo = surf->geometry;
             if (!geo->verts || !geo->indexes || geo->numVerts == 0 || geo->numIndexes == 0)
@@ -304,7 +272,7 @@ static void AR_HarvestEmissiveSurfaces(idRenderWorldLocal *world, idList<arCell_
 }
 
 // ---------------------------------------------------------------------------
-// AR2 — clustering
+// Clustering
 //
 // Flood-fills 6-connected occupied grid cells into physical-fixture clusters,
 // area-weighting the centroid/normal and unioning the world-space AABB. A
@@ -313,7 +281,7 @@ static void AR_HarvestEmissiveSurfaces(idRenderWorldLocal *world, idList<arCell_
 // < 0.7 means the "fixture" wraps around a corner or is otherwise not a single
 // flat-ish emitter (a glow strip on a curved pipe, for example).
 //
-// Tangent-plane half-extents (feeds AR5's light shape) are approximated from
+// Tangent-plane half-extents (feeds the synthesized light shape) are approximated from
 // the cluster's cell-level AABB corners rather than a second per-triangle
 // pass — slightly generous, fine for v1.
 // ---------------------------------------------------------------------------
@@ -322,12 +290,12 @@ static const float AR_NORMAL_AGREEMENT_MIN = 0.7f;
 
 enum arVerdict_t
 {
-    AR_VERDICT_CANDIDATE = 0,   // not yet finalized by AR3/AR4/AR5
-    AR_VERDICT_REJECTED_NORMAL, // AR2: normal spread too wide, never scored
-    AR_VERDICT_AREA_CAPPED,     // AR3: below the top r_rtAutoRelightMaxPerArea within its own portal area
-    AR_VERDICT_BUDGET_DROPPED,  // AR3: below the top r_rtAutoRelightMax map-wide (after the per-area cap)
-    AR_VERDICT_DEDUPED,         // AR4: an existing map light already covers this fixture
-    AR_VERDICT_LIT,             // AR5: synthesized as a real light
+    AR_VERDICT_CANDIDATE = 0,   // not yet finalized by budget/dedupe/synthesis
+    AR_VERDICT_REJECTED_NORMAL, // cluster: normal spread too wide, never scored
+    AR_VERDICT_AREA_CAPPED,     // budget: below the top r_rtAutoRelightMaxPerArea within its own portal area
+    AR_VERDICT_BUDGET_DROPPED,  // budget: below the top r_rtAutoRelightMax map-wide (after the per-area cap)
+    AR_VERDICT_DEDUPED,         // dedupe: an existing map light already covers this fixture
+    AR_VERDICT_LIT,             // synthesis: created as a real light
 };
 
 struct arCluster_t
@@ -346,14 +314,14 @@ struct arCluster_t
     idImage *repEmissiveImage;
     bool repIsScreen;
 
-    // Filled in by AR3/AR4/AR5 — see arVerdict_t.
-    float emissiveLuma;          // AR3: average luminance of repEmissiveImage, [0,1]
-    idVec3 emissiveColor;        // AR3: luminance-weighted ("bright-texel") average color, [0,1] per channel
-    float score;                 // AR3: totalArea * emissiveLuma * styleWeight
-    int areaNum;                 // AR3: world->PointInArea(centroid); -1 if unresolved (own pseudo-bucket)
-    idVec3 origin;               // AR4/AR5: centroid + normal * r_rtAutoRelightOffset
-    int dedupeMatchLightIndex;   // AR4: index into world->lightDefs, or -1
-    qhandle_t synthesizedHandle; // AR5: AddLightDef() handle, or -1
+    // Filled in by score/dedupe/synthesis — see arVerdict_t.
+    float emissiveLuma;          // score: average luminance of repEmissiveImage, [0,1]
+    idVec3 emissiveColor;        // score: luminance-weighted ("bright-texel") average color, [0,1] per channel
+    float score;                 // score: totalArea * emissiveLuma * styleWeight
+    int areaNum;                 // score: world->PointInArea(centroid); -1 if unresolved (own pseudo-bucket)
+    idVec3 origin;               // dedupe/synthesis: centroid + normal * r_rtAutoRelightOffset
+    int dedupeMatchLightIndex;   // dedupe: index into world->lightDefs, or -1
+    qhandle_t synthesizedHandle; // synthesis: AddLightDef() handle, or -1
     arVerdict_t verdict;
 };
 
@@ -516,19 +484,11 @@ static void AR_ClusterCells(idList<arCell_t> &cells, idHashIndex &cellHash, idLi
 }
 
 // ---------------------------------------------------------------------------
-// AR3 helper — per-image average luminance + "bright-texel" average color
+// Scoring helper — per-image average luminance + "bright-texel" average color
 //
-// idImage does not retain CPU-side texel data after GPU upload (Image.h), so
-// this reloads the raw file via R_LoadImage (same "canonical 32-bit format"
-// loader used by every other image path) and caches the result by idImage*
-// for the lifetime of one VK_AutoRelight_Generate() call — a handful of
-// distinct emissive images per map, not worth caching across map loads (and
-// caching across loads would risk a stale idImage* after the level-load
-// image purge, the same hazard VK_RT_BeginLevelLoad exists to avoid for
-// BLASes).
-//
-// Large images are stride-sampled rather than walked texel-by-texel to keep
-// this bounded — "small images, cheap" per auto_relight.md AR3.
+// idImage keeps no CPU texels after upload, so this reloads via R_LoadImage and caches by
+// idImage* for one VK_AutoRelight_Generate() call only; across loads the pointer can go
+// stale after the level-load purge.  Large images are stride-sampled.
 // ---------------------------------------------------------------------------
 
 struct arImageStat_t
@@ -541,7 +501,7 @@ struct arImageStat_t
 static void AR_GetImageLumaColor(idList<arImageStat_t> &cache, const idImage *img, float &outLuma, idVec3 &outColor)
 {
     outLuma = 1.0f;
-    outColor = idVec3(1.0f, 1.0f, 1.0f); // auto_relight.md AR3 fallback: white
+    outColor = idVec3(1.0f, 1.0f, 1.0f); // fallback: white
 
     if (!img)
         return;
@@ -606,7 +566,7 @@ static void AR_GetImageLumaColor(idList<arImageStat_t> &cache, const idImage *im
         Mem_Free(pic);
     }
     // else: file not found (imgName may be an image-program expression, not a
-    // plain path) or empty — keep the white/1.0 fallback per AR3.
+    // plain path) or empty — keep the white/1.0 fallback.
 
     cache.Append(stat);
     outLuma = stat.luma;
@@ -633,12 +593,10 @@ static void AR_SortByScoreDescending(idList<arCluster_t> &clusters, idList<int> 
 }
 
 // ---------------------------------------------------------------------------
-// AR3a — scoring (no budget yet)
+// Scoring (no budget yet)
 //
-// Split from budgeting (2026-08-23, code review finding): scoring/area-tagging
-// has to happen before AR4 dedupe (dedupe needs c.emissiveColor), but the actual
-// CAPPING must happen AFTER dedupe — see AR_ApplyBudget's header comment for why
-// doing it in the other order silently starves rooms of lights they should get.
+// Separate from budgeting: dedupe needs c.emissiveColor, but capping must run after
+// dedupe (see AR_ApplyBudget).
 // ---------------------------------------------------------------------------
 
 static void AR_Score(idRenderWorldLocal *world, idList<arCluster_t> &clusters)
@@ -649,7 +607,7 @@ static void AR_Score(idRenderWorldLocal *world, idList<arCluster_t> &clusters)
     {
         arCluster_t &c = clusters[i];
         if (c.verdict != AR_VERDICT_CANDIDATE)
-            continue; // AR2-rejected — never scored
+            continue; // rejected by clustering — never scored
 
         AR_GetImageLumaColor(imageStatCache, c.repEmissiveImage, c.emissiveLuma, c.emissiveColor);
 
@@ -660,26 +618,11 @@ static void AR_Score(idRenderWorldLocal *world, idList<arCluster_t> &clusters)
 }
 
 // ---------------------------------------------------------------------------
-// AR3b — budget (per-area cap, then map-wide cap)
+// Budget (per-area cap, then map-wide cap)
 //
-// Must run AFTER AR4 dedupe, not before (2026-08-23, code review finding — was
-// AR_ScoreAndBudget, ran before dedupe). Running the caps first let a room's
-// highest-scoring fixtures consume its per-area quota even when those exact
-// fixtures were about to be rejected by dedupe (already covered by a real
-// mapper-placed light) — a room whose brightest fixtures all happen to already
-// be hand-lit could end up with ZERO synthesized lights despite having other,
-// genuinely-uncovered fixtures that never got a chance to compete for a slot.
-// Building candidateIdx here (scanning for verdict == CANDIDATE) naturally
-// excludes anything AR4 already marked DEDUPED, so only fixtures that will
-// actually become real lights compete for the limited slots.
-//
-// Two-stage cap (2026-08-23, replacing a single map-wide top-N — see
-// r_rtAutoRelightMaxPerArea's comment above for why): first keep the top
-// r_rtAutoRelightMaxPerArea clusters WITHIN EACH PORTAL AREA (by score), then
-// take everything that survived that and apply r_rtAutoRelightMax as an
-// overall map-wide ceiling. This is what makes "a few per scene" hold as the
-// player moves between rooms, while the map-wide cap still exists as a safety
-// valve for maps with many areas.
+// Runs after dedupe so already-lit fixtures don't use up a room's quota; candidateIdx
+// skips DEDUPED clusters.  Keeps the top r_rtAutoRelightMaxPerArea per portal area, then
+// applies r_rtAutoRelightMax map-wide as a safety valve.
 // ---------------------------------------------------------------------------
 
 static void AR_ApplyBudget(idList<arCluster_t> &clusters)
@@ -691,7 +634,7 @@ static void AR_ApplyBudget(idList<arCluster_t> &clusters)
             candidateIdx.Append(i);
     }
 
-    // --- Stage 1: per-area cap ---
+    // --- Per-area cap ---
     // Distinct area numbers present among candidates (small set — number of
     // rooms touched by an emissive fixture, not number of clusters).
     idList<int> distinctAreas;
@@ -725,7 +668,7 @@ static void AR_ApplyBudget(idList<arCluster_t> &clusters)
         }
     }
 
-    // --- Stage 2: map-wide ceiling over whatever survived stage 1 ---
+    // --- Map-wide ceiling over the per-area survivors ---
     AR_SortByScoreDescending(clusters, survivedPerArea);
 
     const int maxLights = Max(0, r_rtAutoRelightMax.GetInteger());
@@ -734,20 +677,17 @@ static void AR_ApplyBudget(idList<arCluster_t> &clusters)
         arCluster_t &c = clusters[survivedPerArea[rank]];
         if (rank >= maxLights)
             c.verdict = AR_VERDICT_BUDGET_DROPPED;
-        // else: stays AR_VERDICT_CANDIDATE, handed to AR5 next.
+        // else: stays AR_VERDICT_CANDIDATE, handed to synthesis next.
     }
 }
 
 // ---------------------------------------------------------------------------
-// AR4 — dedupe against existing map lights
+// Dedupe against existing map lights
 // ---------------------------------------------------------------------------
 
-// "Broadly similar" color test: near-white light of either color counts as a
-// wildcard match (a designer's white fill and a colored synthesized panel
-// aren't a real double-light clash), otherwise compare hue via normalized-
-// color dot product. Favors skipping synthesis on a borderline call — over-
-// filtering only makes AR1-5 do less (GI/relight is additive-only, pillar 2),
-// never wrong in the "double-bright" direction the doc warns about.
+// "Broadly similar" colour: near-white on either side is a wildcard; otherwise compare hue
+// by normalized dot product.  Borderline calls skip synthesis — a missing light is safer
+// than a double-lit fixture.
 static bool AR_ColorsSimilar(const idVec3 &a, const idVec3 &b)
 {
     const float maxA = Max(a.x, Max(a.y, a.z));
@@ -788,13 +728,8 @@ static void AR_Dedupe(idRenderWorldLocal *world, idList<arCluster_t> &clusters)
                 continue;
 
             const renderLight_t &lp = ldef->parms;
-            // 2026-08-30: globalLightOrigin, not parms.origin. AR4 is asking "is this
-            // fixture already lit by a hand-placed light" — that is a question about
-            // where the light emits from, and a mapper can offset the emitter from the
-            // entity by thousands of units via lightCenter (mars_city1 light_4842:
-            // ~5800). Measuring to parms.origin misses exactly the lights that ARE on
-            // the fixture but whose entity sits elsewhere, and would then synthesize a
-            // duplicate on top of one.
+            // globalLightOrigin, not parms.origin: lightCenter can move the emitter thousands of
+            // units from the entity (mars_city1 light_4842), and dedupe asks where it emits.
             const float distSq = (ldef->globalLightOrigin - c.origin).LengthSqr();
             if (distSq > dedupeDistSq)
                 continue;
@@ -812,17 +747,11 @@ static void AR_Dedupe(idRenderWorldLocal *world, idList<arCluster_t> &clusters)
 }
 
 // ---------------------------------------------------------------------------
-// AR5 — light synthesis
+// Light synthesis
 //
-// RT shadow/GI/volumetric consumers (vk_shadows.cpp, vk_gi.cpp, the froxel fill)
-// deliberately ignore point-light axis rotation and read lightRadius as
-// literal world X/Y/Z half-extents (see vk_shadows.cpp's anisotropic
-// soft-shadow comment). Orienting the ellipsoid via renderLight.axis alone
-// would therefore not actually shape the penumbra for an angled panel, so
-// this bounds the true (left*halfWidth, up*halfHeight, normal*reach) oriented
-// box with its world-axis-aligned AABB instead — exact when the panel is
-// already axis-aligned (the common case in Doom 3's blocky architecture),
-// slightly generous otherwise. renderLight.axis is left identity to match.
+// RT consumers ignore point-light axis rotation and read lightRadius as world X/Y/Z
+// half-extents, so the oriented panel box is bounded by its world AABB (exact for
+// axis-aligned panels) and renderLight.axis stays identity.
 // ---------------------------------------------------------------------------
 
 static void AR_Synthesize(idRenderWorldLocal *world, idList<arCluster_t> &clusters)
@@ -830,11 +759,8 @@ static void AR_Synthesize(idRenderWorldLocal *world, idList<arCluster_t> &cluste
     const float reach = Max(1.0f, r_rtAutoRelightReach.GetFloat());
     const float intensity = r_rtAutoRelightIntensity.GetFloat();
 
-    // base/materials/rt_auto_relight.mtr — byte-identical to lights/defaultPointLight,
-    // exists purely so every debug tool that prints lightShader->GetName()
-    // (r_rtGILightDump, r_showLights, ...) shows a distinct, greppable name for
-    // synthesized lights instead of the generic default every other shader-less
-    // point light also falls back to. Looked up once, not per-cluster.
+    // rt_auto_relight.mtr is identical to defaultPointLight; the distinct name makes
+    // synthesized lights greppable in r_rtGILightDump, r_showLights etc.
     const idMaterial *arLightShader = declManager->FindMaterial("lights/rtAutoRelight");
 
     for (int i = 0; i < clusters.Num(); i++)
@@ -858,7 +784,7 @@ static void AR_Synthesize(idRenderWorldLocal *world, idList<arCluster_t> &cluste
         rl.origin = c.origin;
 
         rl.pointLight = true;
-        rl.noShadows = false; // AR5: synthesized lights are always real shadow casters.
+        rl.noShadows = false; // Synthesized lights are always real shadow casters.
         rl.noSpecular = false;
         rl.parallel = false;
 
@@ -874,11 +800,7 @@ static void AR_Synthesize(idRenderWorldLocal *world, idList<arCluster_t> &cluste
 
         if (r_rtAutoRelightDebugColor.GetBool())
         {
-            // DEBUG: see r_rtAutoRelightDebugColor's comment above. Overrides the
-            // real fixture color/intensity computed above — AR4's dedupe already
-            // ran against the real color, so this can't skew that decision.
-            // 4.0 is the same "well above the normal 0.5 default — unmissable" level
-            // this used to carry in parm3, now expressed in RGB like everything else.
+            // r_rtAutoRelightDebugColor override; dedupe already used the real colour.
             const float debugIntensity = 4.0f;
             rl.shaderParms[SHADERPARM_RED] = 1.0f * debugIntensity;
             rl.shaderParms[SHADERPARM_GREEN] = 0.0f;
@@ -941,12 +863,8 @@ void VK_AutoRelight_Generate(idRenderWorldLocal *world)
 
     AR_Score(world, clusters);
 
-    // Dedupe is read-only (no AddLightDef side effect) — always run it so the
-    // debug table previews DEDUPED verdicts even with r_rtAutoRelight 0.
-    // Synthesis mutates world state, so it stays gated on the master toggle.
-    // Runs BEFORE the budget caps (2026-08-23, code review finding) — see
-    // AR_ApplyBudget's header comment for why the other order silently starves
-    // rooms whose highest-scoring fixtures already have a real map light.
+    // Dedupe is read-only, so it always runs and the debug table shows DEDUPED even with
+    // r_rtAutoRelight 0; synthesis mutates the world and stays gated.  Must precede the budget.
     AR_Dedupe(world, clusters);
 
     AR_ApplyBudget(clusters);
@@ -971,7 +889,7 @@ void VK_AutoRelight_Generate(idRenderWorldLocal *world)
         case AR_VERDICT_DEDUPED:
             dedupedCount++;
             break;
-        case AR_VERDICT_CANDIDATE: // only possible when r_rtAutoRelight 0 (AR5 didn't run)
+        case AR_VERDICT_CANDIDATE: // only possible when r_rtAutoRelight 0 (synthesis didn't run)
             candidateCount++;
             break;
         default:
@@ -1000,10 +918,8 @@ void VK_AutoRelight_Generate(idRenderWorldLocal *world)
 
     if (r_rtAutoRelightDebug.GetInteger() >= 1)
     {
-        // "rm" is the portal area number (world->PointInArea on the centroid) that
-        // the per-area cap (r_rtAutoRelightMaxPerArea) groups by — -1 means
-        // unresolved (its own pseudo-bucket, see AR_ScoreAndBudget). Not to be
-        // confused with "surfA", the fixture's physical emissive surface area.
+        // "rm" = portal area the per-area cap groups by (-1 = unresolved);
+        // "surfA" = the fixture's emissive surface area.
         common->Printf("  #  verdict      score  surfA  tris cells  rm agree      centroid           color       "
                        "material\n");
         for (int i = 0; i < clusters.Num(); i++)

@@ -193,7 +193,7 @@ static void VK_GetSamplerQualityLimits(float *outMaxAnisotropy, float *outMaxLod
 }
 
 // ---------------------------------------------------------------------------
-// FSR texture LOD bias (U3a)
+// FSR texture LOD bias
 //
 // Mip selection uses the derivatives of the rasterised pixel, so at a render
 // scale below 1 every texture picks a mip sized for the smaller grid and the
@@ -237,11 +237,8 @@ static void VK_BuildSamplerInfo2D(const idImage *img, uint32_t mipLevels, VkSamp
     memset(out, 0, sizeof(*out));
     out->sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 
-    // TF_DEFAULT follows the global image_filter, exactly as GL's SetImageFilterAndRepeat
-    // does (Image_load.cpp).  GL packs minification and mipmap selection into one enum;
-    // Vulkan splits them into minFilter + mipmapMode, so this translates rather than maps.
-    // Without it image_filter was inert on this backend — ChangeTextureFilter would queue a
-    // full sampler rebuild that changed nothing.
+    // TF_DEFAULT follows the global image_filter, as GL's SetImageFilterAndRepeat does.
+    // GL packs min and mip filtering into one enum; Vulkan splits them into minFilter + mipmapMode.
     bool baseLevelOnly = false;
     if (img->filter == TF_DEFAULT && globalImages != NULL)
     {
@@ -273,10 +270,8 @@ static void VK_BuildSamplerInfo2D(const idImage *img, uint32_t mipLevels, VkSamp
     float lodBias = idImageManager::image_lodbias.GetFloat();
     if (img->depth == TD_BUMP)
         lodBias += r_vkBumpMipBias.GetFloat();
-    // TF_DEFAULT is the engine's "this is a mipmapped world texture" marker; GL gives
-    // TF_LINEAR/TF_NEAREST a non-mipmap min filter.  Restricting the FSR term to
-    // TF_DEFAULT keeps the negative bias off GUI, HUD and font images, which draw at
-    // display resolution and must not inherit it.
+    // TF_DEFAULT marks mipmapped world textures. GUI, HUD and font images draw at display
+    // resolution and must not get the negative FSR bias.
     if (img->filter == TF_DEFAULT)
         lodBias += VK_FsrLodBias();
     out->mipLodBias = VK_ClampLodBias(lodBias);
@@ -328,7 +323,7 @@ static void VK_BuildSamplerInfoCube(VkSamplerCreateInfo *out)
 static vkImageData_t s_fallback;
 static bool s_fallbackValid = false;
 // Second view of the same 1x1 image, declared as a 2D array.  Needed because the
-// interaction shader's shadow mask binding is a sampler2DArray (P1b): a plain 2D
+// interaction shader's shadow mask binding is a sampler2DArray: a plain 2D
 // view bound there is a view-type mismatch, not just a cosmetic difference.
 static VkImageView s_fallbackArrayView = VK_NULL_HANDLE;
 
@@ -1094,7 +1089,7 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
 }
 
 // ---------------------------------------------------------------------------
-// Sampler rebuild (U3a)
+// Sampler rebuild
 //
 // mipLodBias is baked into each VkSampler at upload, so anything that changes it
 // — the FSR render scale, image_lodbias, image_anisotropy, image_filter — has to
@@ -1246,9 +1241,8 @@ void VK_Image_Purge(idImage *img)
 // a fallback/default white texture descriptor instead).
 // ---------------------------------------------------------------------------
 
-// F3: disk read, decode, upload and a blocking flush, all mid-command-recording.
-// Timed and attributed here because it is invisible in a window average — one of
-// these owns the hitch, and the window it lands in looks normal.
+// Disk read, decode, upload and a blocking flush, all mid-command-recording. Timed
+// individually because a window average hides the hitch it causes.
 static void VK_Image_LazyLoadTimed(idImage *img)
 {
     const uint64_t freq = SDL_GetPerformanceFrequency();

@@ -1,14 +1,14 @@
 /*
 ===========================================================================
 
-dhewm3-rt Vulkan — vk_bloom.cpp — screen-space emissive bloom (B0/B1).
+dhewm3-rt Vulkan — vk_bloom.cpp — screen-space emissive bloom.
 
-Owns the bloom images, the two B1 source-capture dispatches, and the
-docs/plans/20260906_bloom_plan.md for why the source is a diff rather than a
-luminance threshold.
+Owns the bloom images, the two source-capture dispatches (prepass snapshot and
+extract diff) and the blur chain + composite.  vk_bloom.h explains why the source
+is a diff rather than a luminance threshold.
 
 Images are allocated and fully used at half the DISPLAY extent, which is NOT the
-usual U0 convention of a valid render sub-rect inside a display-sized image.  The
+usual convention of a valid render sub-rect inside a display-sized image.  The
 extract resamples hdrScene's render sub-rect up to half display, so r_fsrRenderScale
 is absorbed in one place and the blur chain is display-space throughout.  Anything
 else makes the glow radius, in screen pixels, a function of the render scale.
@@ -53,9 +53,8 @@ idCVar r_rtBloomEmissiveThreshold("r_rtBloomEmissiveThreshold", "0.5", CVAR_REND
 idCVar r_rtBloomKnee("r_rtBloomKnee", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                      "Width of the soft knee as a fraction of each threshold.  0 = hard cutoff.");
 idCVar r_rtBloomLitWeight("r_rtBloomLitWeight", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                          "Weight of the plain luminance-threshold term.  0 = emissive-only, which is the "
-                          "default because r_lightScale 2 overbright would otherwise bloom lit walls before "
-                          "fixtures.  Raise only if r_rtBloomDebug 1 shows the two in separate bands.");
+                          "Weight of the plain luminance-threshold term.  0 = emissive-only (default): with "
+                          "r_lightScale 2, lit walls would bloom before fixtures.");
 idCVar r_rtBloomStrength("r_rtBloomStrength", "0.15", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                          "Additive weight of the blurred bloom over the scene.  The one brightness knob: the "
                          "upsample mixes rather than adds, so r_rtBloomMips does not change brightness.");
@@ -64,8 +63,7 @@ idCVar r_rtBloomMips("r_rtBloomMips", "4", CVAR_RENDERER | CVAR_INTEGER | CVAR_A
                      "r_fsrRenderScale.  Keep tight: a wide radius lifts dark regions.");
 idCVar r_rtBloomDebug("r_rtBloomDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                       "HDR range bands of the finished frame: 1 = max(r,g,b) banded <0.5 black, 0.5-1 blue, "
-                      "1-2 green, 2-4 yellow, >4 red.  Works with r_rtTonemap 0 and with bloom off — it reads "
-                      "the frame, not the bloom chain.  Retired, now a no-op: 2 (raw bloomMip[0] extract).");
+                      "1-2 green, 2-4 yellow, >4 red.  Works with bloom off.");
 
 // ---------------------------------------------------------------------------
 // Resources.  File-static: vk_bloom.cpp is the only translation unit that
@@ -81,17 +79,12 @@ struct bloomPass_t
     VkPipelineLayout layout;
     VkDescriptorSetLayout descLayout;
     VkDescriptorPool descPool;
-    // The blur chain dispatches a pass once per level with a different pair of views
-    // each time, so one set per frame slot is not enough — a later level would
-    // overwrite the descriptors an earlier, still-unsubmitted dispatch points at.
-    // Indexed [frameIdx * setsPerFrame + level].
+    // One set per blur level per slot: a later level would otherwise overwrite descriptors
+    // an unsubmitted dispatch still points at.  Indexed [frameIdx * setsPerFrame + level].
     VkDescriptorSet descSets[VK_MAX_FRAMES_IN_FLIGHT * VK_BLOOM_MAX_MIPS];
-    // What each set was last written with.  A frame can reach the capture sites twice —
-    // RoE's portal sky issues a second full RenderScene (d3xp/PlayerView.cpp) and both
-    // views pass the capture gate — and rewriting a set already bound to a recorded
-    // dispatch is undefined without UPDATE_AFTER_BIND.  The second write is always
-    // identical, so skipping it is both correct and enough.
-    // Cleared by VK_RT_ResizeBloom: a recreated view can land on the same handle value.
+    // Last views written per set.  RoE's portal sky renders the scene twice per frame, and
+    // rewriting a bound set is undefined without UPDATE_AFTER_BIND; the repeat is identical,
+    // so skip it.  Cleared on resize, since a recreated view can reuse a handle value.
     VkImageView lastSrc[VK_MAX_FRAMES_IN_FLIGHT * VK_BLOOM_MAX_MIPS][BLOOM_PASS_MAX_SRC];
     VkImageView lastDst[VK_MAX_FRAMES_IN_FLIGHT * VK_BLOOM_MAX_MIPS];
     uint32_t numSrc;
@@ -232,7 +225,7 @@ static void VK_RT_CreateBloomImage(vkRTImage_t &img, uint32_t width, uint32_t he
     imgInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     // STORAGE for the extract/prepass writes, SAMPLED for the bilinear reads the
-    // debug magnify (and B2's blur chain) need, TRANSFER_DST for the initial clear below.
+    // debug magnify and blur chain need, TRANSFER_DST for the initial clear below.
     imgInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VK_CHECK(vkCreateImage(vk.device, &imgInfo, NULL, &img.image));
@@ -696,7 +689,7 @@ void VK_RT_BloomExtract(VkCommandBuffer cmd)
 }
 
 // ---------------------------------------------------------------------------
-// B2: blur chain + composite
+// Blur chain + composite
 // ---------------------------------------------------------------------------
 
 bool VK_RT_BloomCompositeActive(void)
@@ -831,7 +824,7 @@ void VK_RT_DispatchBloom(VkCommandBuffer cmd)
 
 void VK_RT_InitBloom(void)
 {
-    common->Printf("VK: initializing RT bloom (B1)\n");
+    common->Printf("VK: initializing RT bloom\n");
     VK_RT_CreateBloomSampler();
     VK_RT_ResizeBloom(vk.swapchainExtent.width, vk.swapchainExtent.height);
 

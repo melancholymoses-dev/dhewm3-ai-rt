@@ -82,7 +82,7 @@ static const char *rtDeviceExtensions[] = {
 };
 static const int numRTDeviceExtensions = 10;
 
-// Optional, profiling only (A0).  A missing one disables its metric, never the device.
+// Optional, profiling only.  A missing one disables its metric, never the device.
 static const char *optionalDeviceExtensions[] = {
     VK_EXT_MEMORY_BUDGET_EXTENSION_NAME,
 };
@@ -205,11 +205,9 @@ static void VKimp_CreateInstance(SDL_Window *window)
         enableValidation = false;
     }
 
-    // debug_utils is also how the profiler names passes and objects for GPU tools,
-    // so enable it whenever the loader has it — not only under validation.
-    // The NULL-layer query cannot see extensions an explicit layer would add, so
-    // under validation we append it regardless; the flag is only set once
-    // vkCreateInstance has accepted the list below.
+    // debug_utils also names passes/objects for GPU tools, so enable it whenever present.
+    // The NULL-layer query misses layer-provided extensions, so validation appends it
+    // regardless; the flag is set only once vkCreateInstance accepts the list.
     uint32_t totalExtCount = sdlExtCount;
     const bool wantDebugUtils = enableValidation || VK_CheckInstanceExtensionSupport(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     if (wantDebugUtils)
@@ -333,10 +331,8 @@ static void VKimp_CreateDevice(void)
     VkPhysicalDeviceRayQueryFeaturesKHR supportedRayQuery = {};
     supportedRayQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
 
-    // subgroupSizeControl is core in 1.3.  FSR2's Vulkan backend chains
-    // VkPipelineShaderStageRequiredSubgroupSizeCreateInfo to force wave64 whenever
-    // VK_EXT_subgroup_size_control is merely *available*, so we have to enable the
-    // feature or its pipeline creation is invalid on every RDNA card.
+    // subgroupSizeControl (core in 1.3): FSR2 forces wave64 whenever the extension is
+    // available, so the feature must be enabled or its pipelines are invalid on RDNA.
     VkPhysicalDeviceProperties physProps = {};
     vkGetPhysicalDeviceProperties(vk.physicalDevice, &physProps);
     const bool deviceHasVk13 = physProps.apiVersion >= VK_API_VERSION_1_3;
@@ -386,8 +382,7 @@ static void VKimp_CreateDevice(void)
         supportedFeatures2.features.depthClamp; // enable if available, not currently required
     features2.features.shaderInt64 = vk.rayTracingSupported && supportedFeatures2.features.shaderInt64;
     features2.features.independentBlend = supportedFeatures2.features.independentBlend;
-    // Latched for later use: gates whether the G-buffer normal/F0 pass (2 color attachments
-    // with differing blend/write-mask state) can be enabled. See gbuffer_normal_pass.md Step 0.
+    // Gates the G-buffer prepass (color attachments with differing blend/write masks).
     vk.gbufferSupported = supportedFeatures2.features.independentBlend == VK_TRUE;
 
     VkPhysicalDeviceVulkan12Features vk12Features = {};
@@ -403,12 +398,9 @@ static void VKimp_CreateDevice(void)
         vk.rayTracingSupported && supportedVk12.descriptorBindingSampledImageUpdateAfterBind;
     vk12Features.descriptorBindingPartiallyBound =
         vk.rayTracingSupported && supportedVk12.descriptorBindingPartiallyBound;
-    // Three features AMD's FSR 2.2.1 Vulkan backend assumes rather than requests
-    // (docs/plans/completed/20260918_fsr_upscaling.md §11).  It probes the *physical device* for
-    // fp16 and subgroup-size control and then uses them unconditionally, and its
-    // barriers for the depth SRV carry only VK_IMAGE_ASPECT_DEPTH_BIT — illegal on our
-    // combined D32S8 depth buffer without separateDepthStencilLayouts.  All three are
-    // harmless to enable when present; r_fsr 2 is gated on them below.
+    // FSR 2.2.1 uses fp16 and depth-only-aspect barriers (illegal on our D32S8 buffer
+    // without separateDepthStencilLayouts) without requesting them. Enable when present;
+    // r_fsr 2 is gated on them below.
     vk12Features.shaderFloat16 = supportedVk12.shaderFloat16;
     vk12Features.separateDepthStencilLayouts = supportedVk12.separateDepthStencilLayouts;
 
@@ -778,7 +770,7 @@ void VK_TransitionImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout 
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        // Not FRAGMENT alone: bindless textures are sampled from the RT stages, and U4's
+        // Not FRAGMENT alone: bindless textures are sampled from the RT stages, and the
         // preAlphaColor snapshot is read by FSR 2's compute passes.  A fragment-only
         // destination leaves both of those reading memory the barrier never made visible.
         dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;

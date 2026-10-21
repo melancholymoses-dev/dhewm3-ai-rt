@@ -1,6 +1,5 @@
 /*
-vk_gui_texture.h — live in-world GUI textures for RT reflections
-(docs/plans/20261015_gui_reflections.md Stage 1).
+vk_gui_texture.h — live in-world GUI textures for RT reflections.
 
 The frontend copies each in-world GUI it draws into a small offscreen view; the backend
 renders those views into a pool of slot idImages at the start of the frame, before any
@@ -30,7 +29,7 @@ class idImage;
 // this GUI's slot. No-op when disabled, in subviews, or already queued this frame.
 void VK_GuiTex_CaptureFromGuiModel(const idUserInterface *gui);
 
-// Slot currently holding this GUI, or -1. For Stage 2's material binding.
+// Slot currently holding this GUI, or -1. Used by the material table binding.
 int VK_GuiTex_FindSlot(const idUserInterface *gui);
 idImage *VK_GuiTex_SlotImage(int slot);
 

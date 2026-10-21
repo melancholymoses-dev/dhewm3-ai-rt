@@ -1,22 +1,13 @@
 /*
 ===========================================================================
 
-dhewm3-rt Vulkan ray tracing - environment reflection ray pipeline and dispatch.
+dhewm3-rt Vulkan ray tracing - reflection ray pipeline, denoise and composite.
 
-Phase 5.3 "cheap approximation":
-  Traces one mirror-reflect ray per non-sky pixel.  The closest-hit and
-  miss shaders return a direction-based colour tint (no texture/material
-  lookup) so metallic/shiny surfaces get plausible environment reflections
-  at minimal GPU cost.
-
-The result is stored in an RGBA16F buffer that is sampled by the lighting
-interaction fragment shader and blended into the specular contribution,
-weighted by the specular map value.
-
-Known limitation: the interaction shader is called once per light, so the
-reflection contribution is accumulated N times for N lights illuminating a
-pixel.  Moving reflections to a dedicated post-process pass is the
-correct fix (planned for a later step).
+reflect_ray.rgen traces one GGX-sampled reflection ray per pixel into a per-chain
+RGBA16F image (chain 0 opaque, chain 1 glass).  Opaque can trace at half res and be
+upsampled; both chains then run a temporal EMA, and opaque a roughness-gated à-trous
+filter.  refl_composite.frag adds the result onto the frame once per view;
+glass_refl_overlay.frag draws glass per pane.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
@@ -62,9 +53,8 @@ idCVar r_rtSpecF0Gamma("r_rtSpecF0Gamma", "2.5", CVAR_RENDERER | CVAR_FLOAT | CV
                        "Tune with r_rtReflectionDebugMode 3.");
 
 idCVar r_rtReflRoughnessScale("r_rtReflRoughnessScale", "0.6", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                              "Multiplies Stage 2's packed per-pixel roughness before the GGX lobe samples it.\n"
-                              "1.0 = roughness as written to the G-buffer. Retune here once real geometry (not\n"
-                              "just the r_rtReflectionDebugMode 12 preview) is visible through the lobe.",
+                              "Multiplies the packed per-pixel roughness before the GGX lobe samples it.\n"
+                              "1.0 = roughness as written to the G-buffer (preview: r_rtReflectionDebugMode 12).",
                               0.0f, 4.0f);
 
 idCVar r_rtReflRoughnessMax("r_rtReflRoughnessMax", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
@@ -81,7 +71,7 @@ idCVar r_rtReflRoughnessFloor("r_rtReflRoughnessFloor", "0.25", CVAR_RENDERER | 
 idCVar r_rtReflectionMinWeight("r_rtReflectionMinWeight", "0.04", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                                "Skip the reflection ray and its shadow rays when the pixel's COARSE Fresnel weight\n"
                                "(fixed-mip specular F0) is below this. Panel-scale, not texel-scale. Glass always\n"
-                               "traces. 0.004 = pre-R1 behaviour.");
+                               "traces.");
 
 idCVar r_rtReflMaxLuminance("r_rtReflMaxLuminance", "6.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                             "Hard luminance ceiling on the incident light an opaque reflection ray returns\n"
@@ -96,17 +86,13 @@ static idCVar r_rtReflRoughLumExp(
     "dim reflected walls sit under the ceiling and pass unchanged. 0 = no roughness scaling.",
     0.0f, 8.0f);
 
-// Reflection refactor Stage 1 (20261017_reflection_pipeline_refactor.md). Quality setting
-// (taste contract #7): default 0 until converged A/B screenshots match.
 idCVar r_rtReflShadowPicks("r_rtReflShadowPicks", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                            "Shadow rays per opaque reflection hit. 0 = deterministic loop (up to 8 rays,\n"
                            "lights past the budget unshadowed). 1-2 = importance-sample that many lights\n"
                            "(unbiased, noisier; the denoiser absorbs it). Glass always uses 0.",
                            0, 2);
 
-// Volumetrics in reflections (docs/plans/20261013_reflection_volumetrics.md). The
-// reflection ray marches the same froxel scatter grid the primary view resolves, so
-// light shafts — the flashlight beam above all — show up in glass. Needs r_rtVol 1.
+// Reflection rays march the primary view's froxel scatter grid, so light shafts show in glass.
 static idCVar r_rtReflVol("r_rtReflVol", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
                           "march the froxel scatter grid along reflection rays, so volumetric light shafts "
                           "appear in reflections (needs r_rtVol 1)");
@@ -125,15 +111,13 @@ static idCVar r_rtReflVolStepLen("r_rtReflVolStepLen", "48", CVAR_RENDERER | CVA
                                  0.0f, 512.0f);
 
 static idCVar r_rtReflVolGain("r_rtReflVolGain", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                              "scale on reflected in-scatter. 1.0 is the literal integral — since the "
-                              "mean-direction grid landed, there is no phase-angle bias left to compensate for.");
+                              "scale on reflected in-scatter. 1.0 is the literal integral.");
 
 idCVar r_rtReflectionMode("r_rtReflectionMode", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                           "1 = glass only. Reflections are dispatched over the union screen rect of the\n"
                           "    view's SURFTYPE_GLASS surfaces and skipped entirely when the view holds no glass;\n"
                           "    opaque geometry never reflects.\n"
-                          "3 = glass + opaque-with-roughness (default).\n"
-                          "    Also allow rough specular reflection\n"
+                          "3 = glass + opaque, GGX by roughness (default).\n"
                           "Use r_rtReflections 0 to turn the feature off entirely.",
                           1, 3);
 
@@ -144,7 +128,7 @@ idCVar r_rtReflOpaqueHalfRes("r_rtReflOpaqueHalfRes", "1", CVAR_RENDERER | CVAR_
                              "material detail is unaffected. Glass is never half res.");
 
 idCVar r_rtReflDenoise("r_rtReflDenoise", "2", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
-                       "0 = off (reflections sampled raw, pre-Stage-1 behaviour).\n"
+                       "0 = off (reflections sampled raw).\n"
                        "1 = temporal EMA accumulation.\n"
                        "2 = temporal + roughness-gated à-trous spatial filter (VK_RT_DispatchReflAtrous)",
                        0, 2);
@@ -159,7 +143,7 @@ idCVar r_rtReflDenoiseAlphaGlass("r_rtReflDenoiseAlphaGlass", "0.35", CVAR_RENDE
 idCVar r_rtReflAtrousIterations("r_rtReflAtrousIterations", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                                 "r_rtReflDenoise 2 only. À-trous passes (0-8); effective radius is 2^N - 1 pixels.", 0,
                                 8);
-// Refl-refactor Stage 3 replaces r_rtReflAtrousSigmaZ (raw NDC depth, dead past ~20 units).
+// Plane distance, not raw NDC depth, which stops discriminating past ~20 units.
 idCVar r_rtReflAtrousSigmaPlane("r_rtReflAtrousSigmaPlane", "0.02", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                                 "r_rtReflDenoise 2 only. Edge stop on a tap's distance from the centre pixel's\n"
                                 "plane, as a fraction of view distance. Lower = stops sooner at rails and steps.\n"
@@ -197,19 +181,17 @@ idCVar r_rtGlassCreaseRatio("r_rtGlassCreaseRatio", "0.25", CVAR_RENDERER | CVAR
 
 idCVar r_rtReflectionDebugMode(
     "r_rtReflectionDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
-    "0 = off. Retired, now no-ops: 1, 4, 5, 6, 7, 8, 9, 10, 14 (numbers kept stable).\n"
+    "0 = off.\n"
     "2 = output G-buffer world normal as RGB (reflect_ray.rgen) — a grate floor should look\n"
     "    bumpy/detailed, not flat single-colour; silhouette edges must match geometry.\n"
     "3 = output G-buffer F0 (alpha) greyscale (reflect_ray.rgen) — most of the scene near-black,\n"
     "    metal/wet trim grey, nothing solid white.\n"
-    "11 = reflection denoiser history age / rejection mask (needs r_rtReflDenoise >= 1, else this\n"
-    "    just shows the normal unfiltered reflection — reflect_ray.rgen has no mode-11 case of\n"
-    "    its own): green = accepted, brightness = history age; red = rejected this frame\n"
-    "    (disocclusion or camera cut).\n"
-    "12 = Stage 2 per-pixel roughness (gbufAlbedo alpha, Toksvig estimate) as greyscale —\n"
+    "11 = denoiser history age / rejection (needs r_rtReflDenoise >= 1): green = accepted,\n"
+    "    brightness = history age; red = rejected this frame (disocclusion or camera cut).\n"
+    "12 = per-pixel roughness (gbufAlbedo alpha, Toksvig estimate) as greyscale —\n"
     "    rough concrete should read bright, polished trim and glass dark, and the gradient\n"
     "    should track visible bump detail rather than the diffuse texture.\n"
-    "13 = Stage 4 GI/reflection handoff (r_rtReflRoughnessMax): white = glass (always\n"
+    "13 = GI/reflection handoff (r_rtReflRoughnessMax): white = glass (always\n"
     "    reflects), blue = opaque taking a reflection ray (and GI — both), green = opaque\n"
     "    over the ceiling or below the F0 floor (GI alone). Forces r_rtReflectionMode 3\n"
     "    regardless of the cvar, so sweeping r_rtReflRoughnessMax moves the blue/green\n"
@@ -223,10 +205,8 @@ idCVar r_rtReflectionDebugMode(
     "with blending disabled (replace, not add). The per-surface glass overlay is suppressed\n"
     "while they are active.");
 
-// One place decides which modes exist.  A retired number must not read as "a debug
-// view is active": that would force r_rtReflectionMode 3, suppress the glass overlay
-// and switch the composite to replace-blend, all to display an ordinary image through
-// a perturbed path.
+// One place decides which modes exist; a retired number must not switch on the debug
+// path (forced mode 3, no glass overlay, replace-blend composite).
 int VK_RT_ValidReflDebugMode(void)
 {
     switch (r_rtReflectionDebugMode.GetInteger())
@@ -252,7 +232,7 @@ int VK_RT_ValidReflDebugMode(void)
 //   ivec2  screenSize   offset 72  size  8  (ivec2 std140 align=8 → 72 is fine)
 //   float  reflBlend      offset 80  size  4  (r_rtReflectionBlend, applied at imageStore)
 //   float  roughnessScale offset 84  size  4  (r_rtReflRoughnessScale)
-//   int    debugMode      offset 88  size  4  (r_rtReflectionDebugMode, Step 9)
+//   int    debugMode      offset 88  size  4  (r_rtReflectionDebugMode)
 //   int    sceneHasGlass  offset 92  size  4  (skip glass probe when 0)
 //   float  minWeight      offset 96  size  4  (r_rtReflectionMinWeight)
 //   int    rectOriginX    offset 100 size  4  (launch-grid origin)
@@ -271,11 +251,11 @@ int VK_RT_ValidReflDebugMode(void)
 //   int    froxelNz       offset 236 size  4
 //   int    volSteps       offset 240 size  4  (0 = no volume bound this frame)
 //   float  volGain        offset 244 size  4
-//   float  volIsoMix      offset 248 size  4  (r_rtVolIsotropicMix, Stage 5)
+//   float  volIsoMix      offset 248 size  4  (r_rtVolIsotropicMix)
 //   int    glassNormalMode offset 252 size 4  (r_rtGlassNormalMode)
 //   float  glassCreaseRatio offset 256 size 4  (r_rtGlassCreaseRatio)
 //   float  guiReflGain    offset 260 size  4  (r_rtGuiReflGain)
-//   float  roughnessMax   offset 264 size  4  (r_rtReflRoughnessMax,)
+//   float  roughnessMax   offset 264 size  4  (r_rtReflRoughnessMax)
 //   float  maxLuminance   offset 268 size  4  (r_rtReflMaxLuminance)
 //   int    shadowPicks    offset 272 size  4  (r_rtReflShadowPicks)
 //   int    population     offset 276 size  4
@@ -299,9 +279,9 @@ struct ReflParamsUBO
     float reflBlend;       // r_rtReflectionBlend — baked into imageStore in rgen
     float roughnessScale;  // r_rtReflRoughnessScale
     int32_t debugMode;     // r_rtReflectionDebugMode — 2/3/4 handled in rgen
-    int32_t sceneHasGlass; // P6 — 0 when no MAT_FLAG_GLASS geometry in the TLAS
+    int32_t sceneHasGlass; // 0 when no REAL_GLASS geometry in the TLAS
     float minWeight;       // r_rtReflectionMinWeight — pre-trace Fresnel cull
-    int32_t rectOriginX;   // R6 — launch-grid origin; rgen adds this to gl_LaunchIDEXT
+    int32_t rectOriginX;   // launch-grid origin; rgen adds this to gl_LaunchIDEXT
     int32_t rectOriginY;
     int32_t reflMode;     // r_rtReflectionMode — 1 glass-only, 3 glass+opaque
     int32_t emitterCount; // projectile glow discs in the emitter SSBO (binding 6)
@@ -327,7 +307,7 @@ struct ReflParamsUBO
     float maxLuminance;      // r_rtReflMaxLuminance
     int32_t shadowPicks;     // r_rtReflShadowPicks — 0 deterministic, 1-2 stochastic (opaque only)
 
-    // Stage 4b: which population this dispatch owns. See REFL_POP_* below.
+    // Which population this dispatch owns. See REFL_POP_* below.
     int32_t population;
     // Union of the SURFTYPE_GLASS scissors, in the same pixels as the launch grid.
     // REFL_POP_OPAQUE fires its glass-suppression probe only inside this rect —
@@ -336,13 +316,13 @@ struct ReflParamsUBO
     int32_t glassRectY;
     int32_t glassRectW;
     int32_t glassRectH;
-    // Stage 4c: reflImage is 1/reflScale the G-buffer's size. 1 full res, 2 half res.
+    // reflImage is 1/reflScale the G-buffer's size. 1 full res, 2 half res.
     int32_t reflScale;
     float volStepLen; // r_rtReflVolStepLen — caps the volumetric march step length
 };
 
 // Which surfaces a reflect_ray.rgen dispatch is responsible for (ubo.population).
-// BOTH is the pre-Stage-4b single-dispatch path: used by every debug mode,
+// BOTH is a single dispatch for both populations, used by every debug mode,
 // so those keep one code path and one image.
 #define REFL_POP_BOTH 0
 #define REFL_POP_GLASS 1
@@ -410,17 +390,15 @@ extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemor
                             VkBuffer *outBuffer, VkDeviceMemory *outMemory);
 extern VkShaderModule VK_LoadSPIRV(const char *path);
 extern bool VK_AllocUBOForShadow(VkBuffer *outBuf, uint32_t *outOffset, void **outMapped);
-// Stage 2 (rt_projected_light_cookies.md): vk_gi.cpp's GILightBuffer::lights[]/
-// cookies[] are fixed-size in the GLSL mirror now (rt_light_eval.glsl), so the
-// null-light fallback below must be sized to match, not just big enough for
-// the header fields.
+// GILightBuffer's arrays are fixed-size in the GLSL mirror (rt_light_eval.glsl), so the
+// null-light fallback must be the full size, not just the header.
 extern uint32_t VK_RT_GetGILightBufferSize(void);
 
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
 extern idCVar r_rtReflGlow;        // vk_rt_emitters.cpp
 extern idCVar r_rtReflGlowGain;    // vk_rt_emitters.cpp
-extern idCVar r_rtVolIsotropicMix; // vk_vol.cpp — Stage 5, shared phase parameter
+extern idCVar r_rtVolIsotropicMix; // vk_vol.cpp — shared phase parameter
 
 // ---------------------------------------------------------------------------
 // Null light SSBO — zeroed buffer with numLights = 0, bound when the GI light
@@ -466,17 +444,10 @@ static void VK_RT_DestroyNullLightSsbo()
 }
 
 // ---------------------------------------------------------------------------
-// Null G-buffer normal/F0 image (Stage 3.5, see docs/plans/gbuffer_normal_pass.md).
-// 1x1 image cleared to (0.5, 0.5, 1.0, 0.0) — B == 1.0 is the "never written"
-// sentinel, see rt_gbuf_normal_fmt.glsl — bound to gbufNormalSampler
-// whenever the real per-frame gbufNormal image doesn't exist
-// (vk.gbufferSupported false). Alpha 0 is the same "no data" sentinel the real
-// image uses, so the consuming rgen falls back to rt_ReconstructNormal exactly
-// as it did before this feature existed.
-//
-// P9 (Wave 3): AO (binding 4) and GI (binding 5) now bind the same G-buffer and
-// share this fallback via VK_RT_GetNullGbufNormalView() below — one image, one
-// sentinel convention, three consumers.
+// Null G-buffer normal/F0 image: 1x1 cleared to (0.5, 0.5, 1.0, 0.0), bound when there is
+// no real gbufNormal.  B == 1.0 is the "never written" sentinel (rt_gbuf_normal_fmt.glsl)
+// and alpha 0 the "no data" one, so consumers reconstruct normals.  Shared with AO and GI
+// via VK_RT_GetNullGbufNormalView().
 // ---------------------------------------------------------------------------
 static VkImage s_nullGbufImage = VK_NULL_HANDLE;
 static VkDeviceMemory s_nullGbufMemory = VK_NULL_HANDLE;
@@ -572,11 +543,8 @@ static void VK_RT_CreateNullGbufNormal(void)
     }
 }
 
-// P9: shared with the AO and GI descriptor sets (vk_ao.cpp / vk_gi.cpp), which bind
-// the same G-buffer image and need the same fallback. The create call is idempotent;
-// VK_RT_InitAO and VK_RT_InitGI both call this at init time so the one-time
-// submit+wait inside never lands mid-frame. RT shutdown tears down all three
-// subsystems together, so the shared lifetime is safe.
+// Shared with AO and GI.  Idempotent; their Init calls it so the one-time submit+wait
+// never lands mid-frame.  RT shutdown tears all three down together.
 VkImageView VK_RT_GetNullGbufNormalView(void)
 {
     VK_RT_CreateNullGbufNormal();
@@ -603,12 +571,9 @@ static void VK_RT_DestroyNullGbufNormal(void)
 }
 
 // ---------------------------------------------------------------------------
-// The chain every public entry point operates on. Stage 4b adds the glass chain
-// beside it and routes each dispatch to the chain for its population; until then
-// there is exactly one, wired as before the refactor.
+// The chain every full-screen consumer reads (composite and all debug modes).
 // ---------------------------------------------------------------------------
-// Chain 0 owns opaque surfaces and is what every full-screen consumer reads
-// (composite, interaction binding 9, all debug modes). Chain 1 owns glass.
+// Chain 0 owns opaque surfaces; chain 1 owns glass.
 static vkReflChain_t *VK_RT_ReflChain(void)
 {
     return &vkRT.reflChain[0];
@@ -701,11 +666,8 @@ static void VK_RT_CreateReflImages(vkReflChain_t *chain, uint32_t width, uint32_
             beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             vkBeginCommandBuffer(tmpCmd, &beginInfo);
 
-            // A2 (amd_vulkan_cleanup.md): clear to black at creation, matching every
-            // other RT image (vk_gi.cpp:429, vk_temporal.cpp:1005, vk_vol.cpp:407). This
-            // rgen is full-screen, so exposure is narrower than AO's — limited to frames
-            // where the reflection dispatch is skipped entirely — but the fix is the same
-            // shape and belongs with it.
+            // Clear to black at creation like every other RT image, for frames where the
+            // dispatch is skipped.
             VkImageSubresourceRange subRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 
             VkImageMemoryBarrier barrier = {};
@@ -778,11 +740,9 @@ static void VK_RT_DestroyReflImages(vkReflChain_t *chain)
 }
 
 // ---------------------------------------------------------------------------
-// Reflection temporal denoiser images (Stage 1, 20261013_reflection_roughness.md)
+// Reflection temporal denoiser images
 //
-// Single shared instance each, not per-slot — same reasoning as aoHistory: the
-// EMA recurrence is sequential across frames, and all RT work goes through one
-// queue in submission order, so a shared image never races.
+// Shared, not per slot, like aoHistory: the EMA is sequential across frames on one queue.
 // ---------------------------------------------------------------------------
 
 static bool VK_RT_AllocReflAuxImage(vkRTImage_t &img, uint32_t width, uint32_t height, VkImageUsageFlags usage)
@@ -841,10 +801,8 @@ static bool VK_RT_AllocReflAuxImage(vkRTImage_t &img, uint32_t width, uint32_t h
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &img.view));
 
-    // Transition UNDEFINED -> GENERAL and clear to black, same one-time pattern as
-    // VK_RT_CreateReflImages. Stage mask is broad (ALL_COMMANDS) rather than one
-    // specific consumer's stage: the history image is read by the compute resolve pass,
-    // the composite/overlay fragment shaders, and the legacy interaction shader.
+    // UNDEFINED -> GENERAL and clear to black.  ALL_COMMANDS because compute and fragment
+    // passes both read the history.
     VkCommandBuffer tmpCmd = VK_NULL_HANDLE;
     {
         VkCommandBufferAllocateInfo cbAlloc = {};
@@ -923,10 +881,8 @@ static void VK_RT_FreeReflAuxImage(vkRTImage_t &img)
 
 static void VK_RT_CreateReflDenoiseImages(vkReflChain_t *chain, uint32_t width, uint32_t height)
 {
-    // history is sampled by the composite/overlay/interaction fragment shaders;
-    // moments is read back only by this file's own compute pass. Both are
-    // ping-ponged (see vk_raytracing.h) to avoid a read/write race between the
-    // reprojected read at Q and this frame's write at P within one dispatch.
+    // history feeds the composite/overlay; moments only this file's compute pass.  Both are
+    // ping-ponged so the reprojected read never races this frame's write.
     for (int i = 0; i < 2; i++)
     {
         if (!VK_RT_AllocReflAuxImage(chain->history[i], width, height,
@@ -952,11 +908,8 @@ static void VK_RT_DestroyReflDenoiseImages(vkReflChain_t *chain)
     chain->historyValid = false;
 }
 
-// Spatial filter scratch (r_rtReflDenoise 2) — per-slot ping-pong across the N
-// passes of a single frame's dispatch, unlike history's cross-frame ping-pong.
-// Stage 4c: the rgen's half-res target. Quarter the area of trace[], and only for a
-// chain that can run at half res — glass stays sharp. STORAGE for the rgen's
-// imageStore, SAMPLED for refl_upsample.comp's texelFetch.
+// The rgen's half-res target: quarter the area of trace[], only for halfResCapable chains.
+// STORAGE for the rgen, SAMPLED for refl_upsample.comp.
 static void VK_RT_CreateReflHalfImages(vkReflChain_t *chain, uint32_t width, uint32_t height)
 {
     if (!chain->halfResCapable)
@@ -1022,21 +975,12 @@ static void VK_RT_InitReflPipeline(void)
     // binding 3: reflection params UBO (dynamic)
     // binding 4: GI light SSBO — used by rchit to evaluate per-light irradiance
     //            at the reflection hit point without a full G-buffer.
-    // binding 5: G-buffer normal/F0 sampler (Stage 3.5, see
-    //            docs/plans/gbuffer_normal_pass.md). Always bound: the real
-    //            per-frame image when vk.gbufferSupported, otherwise a 1x1
-    //            null image (a=0, same "no data" sentinel) — see
-    //            VK_RT_CreateNullGbufNormal / VK_RT_DispatchReflections.
+    // binding 5: G-buffer normal/F0 sampler; the null image when unsupported.
     // binding 6: projectile emitter SSBO (vk_rt_emitters.cpp), one per frame slot.
-
-    // binding 7: froxel scatter grid, sampler3D — in-scatter along the reflected ray
-    //            (20261013_reflection_volumetrics.md).
-    // binding 8: froxel mean-direction grid, sampler3D — Stage 5. Bound as a pair
-    //            with 7; the scatter grid is unphased without it.
-    // binding 9: G-buffer albedo sampler (Stage 2, 20261013_reflection_roughness.md) —
-    //            only its alpha (packed class + roughness) is read here, for debug
-    //            mode 12 today and the GGX lobe from Stage 3 on. Same fallback
-    //            convention as binding 5 — VK_RT_GetNullGbufNormalView() when unsupported.
+    // binding 7: froxel scatter grid, sampler3D — in-scatter along the reflected ray.
+    // binding 8: froxel mean-direction grid, sampler3D, paired with 7.
+    // binding 9: G-buffer albedo sampler — alpha only (class + roughness) for the GGX lobe
+    //            and debug mode 12; the null image when unsupported.
     VkDescriptorSetLayoutBinding bindings[10] = {};
 
     bindings[0].binding = 0;
@@ -1379,14 +1323,12 @@ static void VK_RT_InitReflPipeline(void)
                        (unsigned)(vkRT.reflHitRegion.size / vkRT.reflHitRegion.stride));
 
     // --- Descriptor pool and sets ---
-    // COMBINED_IMAGE_SAMPLER count is doubled: depth (binding 2) + gbufNormal
-    // (binding 5, Stage 3.5) are both bound per set now.
     // One set per frame slot PER CHAIN — the chains differ in their storage image.
     const uint32_t traceSets = VK_MAX_FRAMES_IN_FLIGHT * VK_REFL_CHAIN_COUNT;
     VkDescriptorPoolSize poolSizes[5] = {
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, traceSets},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, traceSets},
-        // depth + gbufNormal + froxelScatter + froxelDir + gbufAlbedo (Stage 2)
+        // depth + gbufNormal + froxelScatter + froxelDir + gbufAlbedo
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, traceSets * 5},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, traceSets},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, traceSets * 2}, // GI light SSBO + emitters
@@ -1439,7 +1381,7 @@ static void VK_RT_InitReflPipeline(void)
 static void VK_RT_InitReflCompositePipeline(void);
 
 // ---------------------------------------------------------------------------
-// VK_RT_InitReflTemporalPipeline (Stage 1, 20261013_reflection_roughness.md)
+// VK_RT_InitReflTemporalPipeline
 // Compute pipeline for refl_temporal_resolve.comp. Mirrors
 // vk_temporal.cpp's VK_RT_InitTemporalPipeline (AO's EMA pass), with three
 // storage images instead of two and a UBO instead of a push-constant block
@@ -1458,12 +1400,8 @@ static void VK_RT_InitReflTemporalPipeline(void)
     // binding 7: motionSampler (motionVectors[slot])
     // binding 8: ReflTemporalUBO (dynamic)
     //
-    // src/dst are separate bindings, not one read-write image, because this pass
-    // reprojects: it reads at Q and writes at P, and P == Q for some other
-    // invocation in the same dispatch with no ordering between them. A single
-    // read-write image would race; ping-ponging across frames (vk_raytracing.h)
-    // avoids it entirely — src is strictly last frame's, dst is strictly this
-    // frame's, and nothing in this dispatch ever writes what it also reads.
+    // Separate src/dst: the pass reprojects (reads Q, writes P), so one read-write image
+    // would race between invocations.
     VkDescriptorSetLayoutBinding bindings[9] = {};
 
     for (int i = 0; i < 5; i++)
@@ -1550,7 +1488,7 @@ static void VK_RT_InitReflTemporalPipeline(void)
 }
 
 // ---------------------------------------------------------------------------
-// VK_RT_InitReflAtrousPipeline (r_rtReflDenoise 2, Stage 1 addendum)
+// VK_RT_InitReflAtrousPipeline (r_rtReflDenoise 2)
 // ---------------------------------------------------------------------------
 
 static const uint32_t REFL_ATROUS_PC_SIZE = 112;
@@ -1582,7 +1520,7 @@ static void VK_RT_InitReflAtrousPipeline(void)
     //   binding 1: STORAGE_IMAGE          — output reflection buffer (rgba16f, ping-pong)
     //   binding 2: COMBINED_IMAGE_SAMPLER — depth sampler
     //   binding 3: COMBINED_IMAGE_SAMPLER — gbufAlbedo (roughness gate)
-    //   binding 4: COMBINED_IMAGE_SAMPLER — gbufNormal (normal edge stop, Stage 3)
+    //   binding 4: COMBINED_IMAGE_SAMPLER — gbufNormal (normal edge stop)
     VkDescriptorSetLayoutBinding bindings[5] = {};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -1721,7 +1659,7 @@ static void VK_RT_InitReflChainState(void)
 }
 
 // ---------------------------------------------------------------------------
-// VK_RT_InitReflUpsamplePipeline (Stage 4c)
+// VK_RT_InitReflUpsamplePipeline
 // Compute pipeline for refl_upsample.comp. A load failure leaves the pipeline NULL,
 // which VK_RT_ReflHalfResActive treats as "half res unavailable" — the renderer then
 // traces full res rather than displaying an unreconstructed quarter-size image.
@@ -1820,7 +1758,7 @@ void VK_RT_InitReflections(void)
     VK_RT_InitReflTemporalPipeline();
     VK_RT_InitReflAtrousPipeline();
     VK_RT_ResizeReflections(vk.swapchainExtent.width, vk.swapchainExtent.height);
-    // Step 8: only when vk.gbufferSupported — reflect_ray.rgen's Fresnel/debug-mode
+    // Only when vk.gbufferSupported — reflect_ray.rgen's Fresnel/debug-mode
     // work (which this composite pass displays) needs gbufNormal to exist.
     if (vk.gbufferSupported)
         VK_RT_InitReflCompositePipeline();
@@ -1867,7 +1805,7 @@ void VK_RT_ShutdownReflections(void)
         vkDestroySampler(vk.device, vkRT.reflSampler, NULL);
         vkRT.reflSampler = VK_NULL_HANDLE;
     }
-    // Composite pipeline (Step 8)
+    // Composite pipeline
     if (vkRT.reflCompositeDescPool != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorPool(vk.device, vkRT.reflCompositeDescPool, NULL);
@@ -1893,7 +1831,7 @@ void VK_RT_ShutdownReflections(void)
         vkDestroyPipelineLayout(vk.device, vkRT.reflCompositeLayout, NULL);
         vkRT.reflCompositeLayout = VK_NULL_HANDLE;
     }
-    // Temporal denoiser (Stage 1)
+    // Temporal denoiser
     if (vkRT.reflTemporalDescPool != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorPool(vk.device, vkRT.reflTemporalDescPool, NULL);
@@ -1917,7 +1855,7 @@ void VK_RT_ShutdownReflections(void)
     for (int c = 0; c < VK_REFL_CHAIN_COUNT; c++)
         VK_RT_DestroyReflDenoiseImages(&vkRT.reflChain[c]);
 
-    // Spatial filter (r_rtReflDenoise 2, Stage 1 addendum)
+    // Spatial filter (r_rtReflDenoise 2)
     if (vkRT.reflAtrousDescPool != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorPool(vk.device, vkRT.reflAtrousDescPool, NULL);
@@ -1941,7 +1879,7 @@ void VK_RT_ShutdownReflections(void)
     for (int c = 0; c < VK_REFL_CHAIN_COUNT; c++)
         VK_RT_DestroyReflAtrousImages(&vkRT.reflChain[c]);
 
-    // Half-res reconstruction (Stage 4c)
+    // Half-res reconstruction
     if (vkRT.reflUpsampleDescPool != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorPool(vk.device, vkRT.reflUpsampleDescPool, NULL);
@@ -2016,17 +1954,10 @@ void VK_RT_ResizeReflections(uint32_t width, uint32_t height)
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// VK_RT_GlassScreenRect (R6)
-// Union of every SURFTYPE_GLASS surface's frontend scissorRect, in Vulkan Y-down
-// pixels. False = no glass in view, caller skips the dispatch. Y-flip matches
-// VK_ComputeDrawSurfScissor.
-//
-// The rect indexes the traced image, which stays display-sized but is written
-// identity-mapped into the render sub-rect, so the frontend's display-space rect
-// has to be scaled into render space and clamped against renderExtent — not
-// against the buffer. Getting this wrong traces a region the glass overlay never
-// samples, which reads as reflections quietly going missing rather than as
-// visible corruption.
+// VK_RT_GlassScreenRect
+// Union of every SURFTYPE_GLASS surface's frontend scissorRect, in Vulkan Y-down pixels.
+// False = no glass in view.  The display-space rect is scaled into render space and
+// clamped to renderExtent, not the buffer; otherwise glass reflections silently go missing.
 // ---------------------------------------------------------------------------
 
 static bool VK_RT_GlassScreenRect(const viewDef_t *viewDef, uint32_t bufW, uint32_t bufH, int32_t *outX, int32_t *outY,
@@ -2090,10 +2021,8 @@ static bool VK_RT_GlassScreenRect(const viewDef_t *viewDef, uint32_t bufW, uint3
 // two filters blend exactly the pixels reflect_ray.rgen wrote and nothing stale
 // outside that rect — the rect is debug-mode and glass-rect dependent.
 
-// Stage 4c. Every clause is a reason to fall back to full-res tracing rather than
-// display an unreconstructed quarter-size image: population gating keeps half res out
-// of REFL_POP_BOTH, so mode 2 and every debug mode stay exact; a failed shader load
-// leaves reflUpsamplePipeline NULL; a failed allocation leaves traceHalf NULL.
+// Each clause falls back to full res rather than show an unreconstructed image: REFL_POP_BOTH
+// and debug modes stay exact, and a failed load or allocation leaves a NULL.
 static bool VK_RT_ReflHalfResActive(const vkReflChain_t *chain, int frameIdx, int population)
 {
     return chain->halfResCapable && population == REFL_POP_OPAQUE && r_rtReflOpaqueHalfRes.GetBool() &&
@@ -2229,13 +2158,8 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
                        (void *)vkRT.reflPipeline,
                        (vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE) ? "on" : "off");
 
-    // R6: resolve the launch rect before anything else — a glass-free view must not pay
-    // the depth transitions, UBO upload or descriptor churn either. Safe to return here
-    // because the depth barrier pair below is symmetric (ATTACHMENT on entry and exit).
-    //
-    // Stage 4b: the glass population launches over the glass rect; opaque and the
-    // legacy BOTH path launch full-screen. The rect itself is resolved once per frame
-    // by the caller so both dispatches agree on it.
+    // Resolve the launch rect first so a glass-free view pays nothing.  Glass launches over
+    // the glass rect (resolved once by the caller); opaque and BOTH launch full-screen.
     const int reflDebugMode = VK_RT_ValidReflDebugMode();
     const bool reflDebugActive = (reflDebugMode != 0);
     const bool glassOnly = (r_rtReflectionMode.GetInteger() == 1) && !reflDebugActive;
@@ -2257,10 +2181,8 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
         rectH = glassRect.extent.height;
     }
 
-    // Stage 4c: the rgen writes the half image and refl_upsample.comp reconstructs rb
-    // from it. rectX/rectY are always (0,0) here — half res is REFL_POP_OPAQUE only,
-    // which never launches over the glass rect — but divide anyway so the mapping
-    // gcoord = coord * reflScale stays exact if that ever changes.
+    // Half res: the rgen writes the half image and refl_upsample.comp rebuilds rb.  rectX/Y are
+    // (0,0) for opaque, but divide anyway so gcoord = coord * reflScale stays exact.
     const bool halfRes = VK_RT_ReflHalfResActive(chain, frameIdx, population);
     const int reflScale = halfRes ? 2 : 1;
     const VkImageView storageView = halfRes ? chain->traceHalf[frameIdx].view : rb.view;
@@ -2322,11 +2244,8 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
     ubo.glassRectY = glassRect.offset.y;
     ubo.glassRectW = (int32_t)glassRect.extent.width;
     ubo.glassRectH = (int32_t)glassRect.extent.height;
-    // Debug modes other than 13 want the full, uncensored per-pixel data (never gated
-    // by mode 1's glass-only rect or mode 3's roughness ceiling) — mode 13 is the one
-    // exception, since it exists specifically to visualize that ceiling, so it forces
-    // mode 3 regardless of what r_rtReflectionMode is actually set to.
-    // Modes 14/15 keep the real mode so they classify the pixels normal play traces.
+    // Debug modes want ungated per-pixel data; 13 visualizes the roughness ceiling so it
+    // forces mode 3.  Mode 15 keeps the real mode to classify what normal play traces.
     int reflMode = r_rtReflectionMode.GetInteger();
     if (reflMode != 1 && reflMode != 3)
     {
@@ -2375,8 +2294,7 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
             ubo.volSteps = r_rtReflVol.GetBool() ? idMath::ClampInt(1, 32, r_rtReflVolSteps.GetInteger()) : 0;
             ubo.volGain = Max(0.0f, r_rtReflVolGain.GetFloat());
             ubo.volStepLen = Max(0.0f, r_rtReflVolStepLen.GetFloat());
-            // Stage 5: the same clamp vk_vol_froxel.cpp applies, so the reflected
-            // segment and the primary view evaluate one phase function, not two.
+            // Same clamp as vk_vol_froxel.cpp, so both evaluate one phase function.
             ubo.volIsoMix = idMath::ClampFloat(0.0f, 1.0f, r_rtVolIsotropicMix.GetFloat());
         }
     }
@@ -2386,32 +2304,23 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
     ubo.guiReflGain = idMath::ClampFloat(0.0f, 16.0f, r_rtGuiReflGain.GetFloat());
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
 
-    // --- Update descriptor set (once per frame slot when frameCount changes).
-    // Also force refresh when bound resources changed inside the same frame to
-    // avoid stale cached descriptors after RT resource churn. The caches live on the
-    // chain, since two chains bind different storage images.
-    //
+    // --- Update descriptor set once per slot per frameCount, or when bound resources changed.
+    // The caches live on the chain, since chains bind different storage images.
     // Pick the GI light SSBO for this frame; fall back to the null SSBO if not ready.
     VkBuffer lightSsbo = (vkRT.giLightSsbo[frameIdx] != VK_NULL_HANDLE) ? vkRT.giLightSsbo[frameIdx] : s_nullLightSsbo;
 
-    // G-buffer normal/F0 (Stage 3.5): real per-frame image when supported, else the
-    // 1x1 null image (a=0, same "no data" sentinel) — see VK_RT_CreateNullGbufNormal.
-    // Both are kept in SHADER_READ_ONLY_OPTIMAL here: the real one by the barrier in
-    // vk_backend.cpp (Step 6), the null one permanently since nothing else writes it.
+    // G-buffer normal/F0, or the null image.  Both are SHADER_READ_ONLY_OPTIMAL here.
     const bool haveGbuf = vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE;
     VkImageView gbufView = haveGbuf ? vkRT.gbufNormal[frameIdx].view : s_nullGbufView;
 
-    // gbufAlbedo (Stage 2): same supported/null fallback as gbufNormal above — the
-    // shared null image is never written, so the class decodes to the "ordinary, zero
-    // roughness" default rather than anything path-dependent.
+    // gbufAlbedo with the same null fallback; its class decodes to "ordinary, zero roughness".
     const bool haveGbufAlbedo = vk.gbufferSupported && vkRT.gbufAlbedo[frameIdx].view != VK_NULL_HANDLE;
     VkImageView gbufAlbedoView = haveGbufAlbedo ? vkRT.gbufAlbedo[frameIdx].view : s_nullGbufView;
 
     // Swaps between the live grid and the null one whenever volumetrics go on or
     // off, and changes outright when the res cvars force a realloc.
     const VkImageView froxelView = VK_RT_GetFroxelScatterView();
-    // Stage 5: fetched through the same predicate, so the pair can never end up
-    // split across a toggle or a realloc.
+    // Same predicate as the scatter view, so the pair never splits across a toggle or realloc.
     const VkImageView froxelDirView = VK_RT_GetFroxelDirView();
 
     const bool reflResourceChanged =
@@ -2481,9 +2390,8 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
         froxelInfo.imageView = froxelView;
         froxelInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-        // Stage 5's mean-direction grid. Same trilinear sampler: interpolating the
-        // vector shortens it where neighbouring cells disagree, which reads as more
-        // isotropic — the correct degradation, see rt_PhaseFromMeanDir.
+        // Mean-direction grid, trilinear: disagreeing cells shorten the vector toward
+        // isotropic, the correct degradation (rt_PhaseFromMeanDir).
         VkDescriptorImageInfo froxelDirInfo = {};
         froxelDirInfo.sampler = VK_RT_GetFroxelSampler();
         froxelDirInfo.imageView = froxelDirView;
@@ -2596,8 +2504,7 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
     vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion,
                       launchW, launchH, 1);
 
-    // --- Barrier: reflection write -> fragment shader read, and (Stage 1,
-    // 20261013_reflection_roughness.md) -> VK_RT_DispatchReflTemporal's compute read ---
+    // --- Barrier: reflection write -> fragment read and VK_RT_DispatchReflTemporal's compute read ---
     {
         VkMemoryBarrier memBarrier = {};
         memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -2608,9 +2515,8 @@ static void VK_RT_DispatchReflChain(VkCommandBuffer cmd, const viewDef_t *viewDe
                              &memBarrier, 0, NULL, 0, NULL);
     }
 
-    // Stage 4c: reconstruct the full-res image before anything downstream looks at it.
-    // Inside this function and inside the depth READ_ONLY window above, which the
-    // upsample's own plane reconstruction needs.
+    // Reconstruct full res before anything downstream reads it, inside the depth READ_ONLY
+    // window the upsample's plane reconstruction needs.
     if (halfRes)
         VK_RT_DispatchReflUpsample(cmd, viewDef, chain);
 
@@ -2672,10 +2578,8 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
 // ---------------------------------------------------------------------------
 // VK_RT_DispatchReflTemporal (public)
-// Temporal EMA denoise of the traced image (Stage 1). See refl_temporal_resolve.comp
-// for the per-pixel algorithm. No-op (and the chain's historyValid stays whatever
-// it was) whenever nothing new was traced this frame — matches
-// VK_RT_DispatchReflections's own early-outs exactly via chain->dispatchRectFrame.
+// Temporal EMA denoise of the traced image (algorithm in refl_temporal_resolve.comp).
+// No-op, historyValid untouched, when nothing was traced this frame (dispatchRectFrame).
 // ---------------------------------------------------------------------------
 
 static void VK_RT_DispatchReflTemporalChain(VkCommandBuffer cmd, const viewDef_t *viewDef, vkReflChain_t *chain)
@@ -2711,13 +2615,8 @@ static void VK_RT_DispatchReflTemporalChain(VkCommandBuffer cmd, const viewDef_t
 
     chain->lastTemporalFrame[frameIdx] = tr.frameCount;
 
-    // history/moments are shared across both frame-in-flight slots (ping-ponged
-    // across frames, not slots), so this dispatch's read of last frame's slot and write
-    // of this frame's slot must be ordered after whatever last touched them — the other
-    // slot's compute write, or that write's own downstream fragment consumers. Same
-    // reasoning and same barrier shape as VK_RT_DispatchTemporalResolveAO's equivalent
-    // (vk_temporal.cpp): submission order on the single RT queue already sequences the
-    // two; this barrier supplies the memory-visibility guarantee ordering alone doesn't.
+    // history/moments are shared across slots.  Submission order sequences the accesses;
+    // this barrier adds the memory visibility (as in vk_temporal.cpp's AO resolve).
     {
         VkMemoryBarrier reflHistBarrier = {};
         reflHistBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -2749,10 +2648,8 @@ static void VK_RT_DispatchReflTemporalChain(VkCommandBuffer cmd, const viewDef_t
     // --- Camera-cut detection (shared helper — vk_temporal.cpp) ---
     vkRTCameraCutResult_t cut =
         VK_RT_DetectCameraCut(viewDef, chain->prevCamPos, chain->prevCamFwd, chain->historyValid, "ReflTemporal");
-    // !prevFrameValid (subview/mirror/2D-overlay/first-frame boundary, tr_local.h) means
-    // viewDef->prevViewProjMatrix may be stale or zeroed — the depth disocclusion test
-    // would divide by a zero prevClip.w. Force a reset rather than letting that surface
-    // as a NaN-driven rejection.
+    // !prevFrameValid means prevViewProjMatrix may be zeroed (prevClip.w = 0), so reset
+    // rather than reject on NaN.
     const bool reset = !chain->historyValid || cut.isCut || !viewDef->prevFrameValid;
     if (reset && cut.isCut && r_vkLogRT.GetInteger() >= 1)
         common->Printf(
@@ -2776,7 +2673,7 @@ static void VK_RT_DispatchReflTemporalChain(VkCommandBuffer cmd, const viewDef_t
     // is), which would freeze history forever rather than merely smoothing hard.
     ubo.baseAlpha = idMath::ClampFloat(0.01f, 1.0f, r_rtReflDenoiseAlpha.GetFloat());
     ubo.glassAlpha = idMath::ClampFloat(0.01f, 1.0f, r_rtReflDenoiseAlphaGlass.GetFloat());
-    // Not exposed as cvars (Stage 1 scope, see the plan) — tune here if a scene needs it.
+    // Not exposed as cvars — tune here if a scene needs it.
     ubo.varianceGain = 4.0f;
     ubo.depthRejectThresh = 0.02f;
     ubo.normalRejectCos = 0.8f;
@@ -2929,7 +2826,7 @@ void VK_RT_DispatchReflTemporal(VkCommandBuffer cmd, const viewDef_t *viewDef)
 }
 
 // ---------------------------------------------------------------------------
-// VK_RT_DispatchReflAtrous (public) — r_rtReflDenoise 2, Stage 1 addendum.
+// VK_RT_DispatchReflAtrous (public) — r_rtReflDenoise 2.
 // Roughness-gated à-trous spatial filter, run on top of the temporal resolve's
 // output.  See refl_atrous.comp for the per-pixel roughness gate itself.
 // Must run after VK_RT_DispatchReflTemporal and before the resumed render pass.
@@ -2942,11 +2839,8 @@ static void VK_RT_DispatchReflAtrousChain(VkCommandBuffer cmd, const viewDef_t *
 {
     const int frameIdx = vk.currentFrame;
 
-    // Guard against duplicate dispatch in the same frame (weapon subview etc.) — mirrors
-    // the temporal pass's own guard. Must come before the atrousReadView clear below: a
-    // second call this frame must leave the first call's result (already the correct one
-    // to read, and already composited once) alone rather than null it out, and must not
-    // re-run the N full-screen passes against bufA/B a second time.
+    // Duplicate-dispatch guard (weapon subview etc.).  Before the atrousReadView clear, so a
+    // second call leaves the first call's result intact.
     if (chain->lastAtrousFrame[frameIdx] == tr.frameCount)
         return;
 
@@ -3165,18 +3059,12 @@ void VK_RT_DispatchReflAtrous(VkCommandBuffer cmd, const viewDef_t *viewDef)
 static VkImageView VK_RT_ReflChainReadView(const vkReflChain_t *chain, int frameIdx)
 {
     const int debugMode = VK_RT_ValidReflDebugMode();
-    // Modes 2, 3, 12 and 13 are instantaneous per-frame visualizations baked into
-    // the traced image by reflect_ray.rgen itself — routing them through the EMA'd
-    // history would smear them across frames and defeat the point. Mode 11 is the one
-    // exception: it IS the denoiser's own history/rejection state.
-    // Mode 15 is the à-trous pass's own view, so it reads the filter output.
+    // Modes 2, 3, 12, 13 are per-frame rgen visualizations and skip the EMA.  11 is the
+    // denoiser's own state; 15 is the à-trous view and reads the filter output.
     if (debugMode != 0 && debugMode != 11 && debugMode != 15)
         return chain->trace[frameIdx].view;
-    // Mode 11 IS the denoiser's own history/rejection state (written directly into
-    // history by refl_temporal_resolve.comp, alpha forced to 1.0 — see its own
-    // comment) — show it exactly as the temporal pass wrote it. The spatial filter
-    // would otherwise treat that alpha as "a real traced pixel" and blur the red/
-    // green rejection boundary the mode exists to let you read precisely.
+    // Mode 11 shows history as the temporal pass wrote it; the spatial filter would blur the
+    // rejection boundary.
     if (debugMode != 11 && r_rtReflDenoise.GetInteger() >= 2 && chain->atrousReadView[frameIdx] != VK_NULL_HANDLE)
         return chain->atrousReadView[frameIdx];
     if (r_rtReflDenoise.GetInteger() > 0 && chain->historyValid &&
@@ -3206,20 +3094,11 @@ bool VK_RT_ReflReadReady(int frameIdx)
 }
 
 // ---------------------------------------------------------------------------
-// VK_RT_InitReflCompositePipeline (Step 8, see docs/plans/gbuffer_normal_pass.md)
-// Fullscreen pass that blends the reflection read view onto the framebuffer once per view,
-// replacing the disabled per-light reflection block in interaction.frag.
-// Deliberately as simple as VK_RT_InitGICompositePipeline's pipeline (single
-// sampler binding): the Schlick Fresnel term and debug-mode visualization both
-// live in reflect_ray.rgen instead of here — see refl_composite.frag's header
-// comment for why (depth can't be sampled while bound read-write by the render
-// pass this composite draws inside).
-//
-// Two pipeline objects share this layout/shader: reflCompositePipeline (additive,
-// normal operation) and reflCompositeDebugPipeline (blend disabled) selected by
-// VK_RT_CompositeReflections when r_rtReflectionDebugMode is active, so the debug
-// visualization baked into the traced image by the rgen replaces the lit scene instead
-// of adding onto it.
+// VK_RT_InitReflCompositePipeline
+// Fullscreen pass that blends the reflection read view onto the framebuffer once per view.
+// Single sampler: Fresnel and debug output live in reflect_ray.rgen, since depth can't be
+// sampled inside this render pass.  reflCompositePipeline adds; reflCompositeDebugPipeline
+// (blend off) replaces the scene while a debug mode is active.
 // ---------------------------------------------------------------------------
 
 static void VK_RT_InitReflCompositePipeline(void)
@@ -3413,16 +3292,13 @@ void VK_RT_CompositeReflections(VkCommandBuffer cmd)
     const int debugMode = VK_RT_ValidReflDebugMode();
     const bool debugActive = (debugMode != 0);
 
-    // R6: glass-only has nothing for this pass — opaque is never traced and glass is
-    // composited per-surface. It would also read stale texels outside the traced rect.
-    // Checked before the descriptor write so the skipped path costs nothing.
+    // Glass-only mode has nothing here: opaque isn't traced and glass composites per surface.
     if (r_rtReflectionMode.GetInteger() == 1 && !debugActive)
         return;
 
     // Update the descriptor set for this frame slot. The reflection image may
     // have been recreated (resize), so always write it before drawing.
-    // VK_RT_GetReflReadView: the temporal history when the denoiser is on and valid (except
-    // debug modes 2-4, 6, 12 and 13, which are rgen's own unfiltered per-frame visualizations).
+    // VK_RT_GetReflReadView picks the denoised or raw image (see its debug-mode rules).
     VkDescriptorImageInfo imgInfo = {};
     imgInfo.sampler = vkRT.reflSampler;
     imgInfo.imageView = VK_RT_GetReflReadView(frameIdx);

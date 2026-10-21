@@ -2,20 +2,17 @@
 ============================================================================
 Functions to Upscale images.
 
-Two resolve paths share vk.renderExtent and VK_RT_DispatchUpscale:
+Three resolve paths share vk.renderExtent and VK_RT_DispatchUpscale:
 
-  r_fsr 0  U0 — upscale_blit.comp, a bilinear magnify of the render sub-rect.
-  r_fsr 1  U1 — AMD FidelityFX Super Resolution 1: fsr_prepare → fsr_easu →
-               fsr_rcas.  EASU and RCAS need a perceptual-space input, so the
-               chain applies AMD's reversible tonemapper + gamma up front and
-               inverts both at the end.  hdrScene therefore still holds linear
-               HDR when the chain finishes, and the UI composite, the Uchimura
-               tonemap and screenshots downstream are untouched.  That is the
-               deliberate difference from the plan's original sketch, which had
-               EASU emit already-tonemapped values and bypass r_rtTonemap.
-  r_fsr 2  U3 — AMD FidelityFX Super Resolution 2.2.1, the vendored AMD library
-               (libs/ffx-fsr2-api) driven from VK_RT_DispatchFsr2.  Temporal, so
-               it consumes U2's motion vectors and Halton jitter.
+  r_fsr 0  upscale_blit.comp, a bilinear magnify of the render sub-rect.
+  r_fsr 1  AMD FidelityFX Super Resolution 1: fsr_prepare → fsr_easu → fsr_rcas.
+           EASU and RCAS need a perceptual-space input, so the chain applies AMD's
+           reversible tonemapper + gamma up front and inverts both at the end.
+           hdrScene still holds linear HDR afterwards, so the UI composite, the
+           tonemap and screenshots downstream are untouched.
+  r_fsr 2  AMD FidelityFX Super Resolution 2.2.1, the vendored library
+           (libs/ffx-fsr2-api) driven from VK_RT_DispatchFsr2.  Temporal, so it
+           consumes the motion vectors and Halton jitter.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
@@ -75,13 +72,13 @@ struct MotionDebugPC
     float brightness;
 };
 
-// Must match fsr_tc_mask.comp (U4).
+// Must match fsr_tc_mask.comp.
 struct FsrTcMaskPC
 {
     int32_t renderExtent[2];
 };
 
-// Must match fsr_mask_debug.comp (U4, r_fsrDebug 3).
+// Must match fsr_mask_debug.comp (r_fsrDebug 3).
 struct FsrMaskDebugPC
 {
     int32_t renderExtent[2];
@@ -104,14 +101,12 @@ idCVar r_fsrQuality("r_fsrQuality", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARC
 idCVar r_fsrDebug("r_fsrDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
                   "FSR debug overlay: 0=off, 3=reactive + transparency/composition mask view (needs FSR 2 "
                   "with both r_fsrAutoReactive and r_fsrTcMask on), 7=motion-vector overlay (needs the "
-                  "G-buffer prepass). Retired, now no-ops (numbers kept stable): 1, 2, 4, 5, 6 — mode 2's "
-                  "per-view logging moved to r_vkLogRT 2.");
+                  "G-buffer prepass).");
 idCVar r_fsrSharpness("r_fsrSharpness", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                       "RCAS sharpening for r_fsr 1.  0 = softest, 1 = sharpest.");
 idCVar r_fsrJitter("r_fsrJitter", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
-                   "Halton(2,3) sub-pixel jitter while upscaling, replacing r_jitter.  Ignored unless FSR 2 is "
-                   "actually resolving this frame — nothing else reprojects it away, so it reads as a whole-screen "
-                   "shake.  FSR 2 needs it and goes blurry without it; 0 stays available as the A/B.");
+                   "Halton(2,3) sub-pixel jitter while upscaling, replacing r_jitter.  Only applied while FSR 2 "
+                   "is resolving; FSR 2 goes blurry without it.  0 for A/B.");
 idCVar r_fsrMotionScale("r_fsrMotionScale", "16", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                         "Render pixels of motion that saturate the r_fsrDebug 7 overlay.");
 idCVar r_fsrAutoReactive("r_fsrAutoReactive", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
@@ -131,19 +126,16 @@ idCVar r_fsrTcMask("r_fsrTcMask", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
                    "transform only.  Reduces their ghosting at the cost of some reconstructed detail on them.");
 idCVar r_fsrMipBias("r_fsrMipBias", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
                     "Bias texture mip selection by log2(renderW/displayW) + r_fsrMipBiasOffset while the render "
-                    "scale is below 1.  Without it every texture picks a mip sized for the smaller raster grid "
-                    "and no upscaler can put the detail back.  Rebuilds all samplers when changed.");
+                    "scale is below 1, so textures keep display-resolution detail.  Rebuilds all samplers "
+                    "when changed.");
 idCVar r_fsrMipBiasOffset("r_fsrMipBiasOffset", "-1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                          "Extra mip bias added on top of log2(renderW/displayW).  -1.0 is the FSR 2 "
-                          "recommendation: a temporal upscaler wants over-sharp input to reconstruct from.  "
-                          "FSR 1 and the bilinear resolve have no history to average the aliasing out, so "
-                          "sweep toward 0 if they crawl.");
+                          "Extra mip bias on top of log2(renderW/displayW).  -1.0 suits FSR 2 (over-sharp "
+                          "input to reconstruct from); move toward 0 if FSR 1 or bilinear shimmer.");
 
 // ---------------------------------------------------------------------------
-// FSR 1 (U1) resources.  Kept file-static: vk_upscale.cpp is the one
-// translation unit that owns upscaling, and nothing else needs to see them.
+// FSR 1 resources.  File-static: nothing outside vk_upscale.cpp needs them.
 // ---------------------------------------------------------------------------
-// Source bindings a single fsrPass_t can carry.  Two is all U4's mask overlay needs.
+// Source bindings a single fsrPass_t can carry.  Two is all the mask overlay needs.
 static const uint32_t FSR_PASS_MAX_SRC = 2;
 
 struct fsrPass_t
@@ -161,9 +153,9 @@ static vkRTImage_t s_fsrPerceptual[VK_MAX_FRAMES_IN_FLIGHT]; // display-res RGBA
 static fsrPass_t s_fsrPrepare;
 static fsrPass_t s_fsrEasu;
 static fsrPass_t s_fsrRcas;
-static fsrPass_t s_motionDebug; // U2, r_fsrDebug 7
-static fsrPass_t s_fsrTcMask;   // U4, gbufAlbedo.a -> tcMask
-static fsrPass_t s_fsrMaskDebug; // U4, r_fsrDebug 3
+static fsrPass_t s_motionDebug; // r_fsrDebug 7
+static fsrPass_t s_fsrTcMask;   // gbufAlbedo.a -> tcMask
+static fsrPass_t s_fsrMaskDebug; // r_fsrDebug 3
 #if defined(DHEWM3_FSR2)
 #endif
 static bool s_fsr1Ready = false;
@@ -182,7 +174,7 @@ static bool s_fsr2Running = false;
 
 // The 3D view's projection parameters, latched by VK_RT_CaptureFsrViewParams.  The
 // resolve runs after the frame's last RC_DRAW_VIEW, by which point backEnd.viewDef may
-// be the 2D overlay (zeroed viewaxis, meaningless fov) — see the U0 notes in §4.
+// be the 2D overlay (zeroed viewaxis, meaningless fov).
 struct fsrViewParams_t
 {
     bool valid;
@@ -203,10 +195,8 @@ static bool s_fsrCamValid = false;
 
 void VK_RT_CaptureFsrViewParams(const viewDef_t *viewDef)
 {
-    // From the projection, not r_znear: game code writes that cvar directly and drops it
-    // to 1.0 for cinematics, so a backend read can disagree with the matrix this frame's
-    // depth was rasterised through.  (renderView.cramZNear is dead — never assigned
-    // anywhere in the tree — so R_BuildProjection's 0.25 branch never fires.)
+    // From the projection, not r_znear: game code drops the cvar to 1.0 for cinematics, so it
+    // can disagree with the matrix this frame's depth used.
     const float zn = VK_RT_EffectiveZNear(viewDef);
 
     const vkRTCameraCutResult_t cut =
@@ -492,7 +482,7 @@ static void VK_RT_DestroyUpscalePipeline(void)
 
 /*
 ===========================================================================
-FSR 1 (U1)
+FSR 1
 
 Three compute dispatches, all 2-binding: binding 0 reads, binding 1 writes.
 
@@ -506,8 +496,7 @@ full-resolution copy the bilinear path needs.
 */
 
 // numSrc source bindings at 0..numSrc-1, then the storage-image destination at numSrc.
-// Every pass here is "read some images, write one" — U4's mask overlay is the first that
-// needs two sources, which is the only reason numSrc exists.
+// Every pass reads some images and writes one; only the mask overlay needs two sources.
 static bool VK_RT_CreateFsrPass(fsrPass_t &pass, const char *spvPath, VkDescriptorType srcType, uint32_t pushSize,
                                 uint32_t numSrc = 1)
 {
@@ -668,14 +657,13 @@ static void VK_RT_CreateFsr1Pipelines(void)
     else
         common->Warning("VK RT FSR1: pipeline setup failed — r_fsr 1 will fall back to the bilinear resolve");
 
-    // U2 motion-vector overlay — same two-binding shape, so it rides the same helper.
+    // Motion-vector overlay — same two-binding shape, so it rides the same helper.
     s_motionDebugReady = VK_RT_CreateFsrPass(s_motionDebug, "glprogs/glsl/motion_debug.comp.spv",
                                              VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sizeof(MotionDebugPC));
     if (!s_motionDebugReady)
         common->Warning("VK RT Upscale: motion_debug.comp failed to load — r_fsrDebug 7 unavailable");
 
-    // U4 masks.  The T&C extract is one-source; the overlay reads both masks, which is
-    // what numSrc exists for.
+    // FSR 2 masks.  The T&C extract is one-source; the overlay reads both masks.
     s_fsrTcMaskReady = VK_RT_CreateFsrPass(s_fsrTcMask, "glprogs/glsl/fsr_tc_mask.comp.spv",
                                            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sizeof(FsrTcMaskPC));
     if (!s_fsrTcMaskReady)
@@ -819,7 +807,7 @@ static void VK_RT_DispatchFsr1(VkCommandBuffer cmd, int frameIdx)
 
 /*
 ===========================================================================
-Motion-vector overlay (U2), r_fsrDebug 7.
+Motion-vector overlay, r_fsrDebug 7.
 
 Reuses the two-binding fsrPass_t shape: binding 0 texelFetches motionVectors
 through the upscale sampler (R16G16_SFLOAT is not a mandatory storage-image
@@ -831,15 +819,11 @@ COLOR_ATTACHMENT_OPTIMAL.
 */
 
 // ---------------------------------------------------------------------------
-// U4 reactive-mask inputs (docs/plans/completed/20260918_fsr_upscaling.md §9)
+// FSR 2 reactive-mask inputs
 //
-// Both of FSR 2's masks are built from data that only exists mid-frame, between the
-// interactions and the blend stages:
-//   - preAlphaColor is hdrScene before anything translucent has drawn into it
-//   - tcMask comes out of gbufAlbedo's alpha, which the shader passes do not touch but
-//     which is easiest to read while the render pass is already closed
-// So they share one end/resume, driven from VK_RB_DrawView.  Must be called OUTSIDE a
-// render pass: a vkCmdCopyImage cannot be recorded inside one.
+// Both come from mid-frame data, between the interactions and the blend stages:
+// preAlphaColor is hdrScene before translucents, tcMask comes from gbufAlbedo's alpha.
+// They share one end/resume from VK_RB_DrawView; must be OUTSIDE a render pass (image copy).
 // ---------------------------------------------------------------------------
 void VK_RT_CaptureReactiveInputs(VkCommandBuffer cmd)
 {
@@ -911,7 +895,7 @@ void VK_RT_CaptureReactiveInputs(VkCommandBuffer cmd)
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK FSR U4: captured %ux%u reactive=%d tc=%d slot=%u\n", vk.renderExtent.width,
+        common->Printf("VK FSR masks: captured %ux%u reactive=%d tc=%d slot=%u\n", vk.renderExtent.width,
                        vk.renderExtent.height, wantReactive ? 1 : 0, wantTc ? 1 : 0, vk.currentFrame);
 }
 
@@ -929,11 +913,8 @@ bool VK_RT_MaskDebugActive(void)
     if (s_reactiveMaskFrame[vk.currentFrame] != tr.frameCount)
         return false;
 
-    // BOTH masks, not either: a mask nothing wrote would read as "this mask is empty"
-    // rather than "nothing generated it" (the trap VK_RT_MotionDebugActive guards below),
-    // and more practically, requiring both is what makes the layouts deterministic —
-    // ffxFsr2ContextDispatch leaves exactly the masks it bound as SRVs in
-    // SHADER_READ_ONLY_OPTIMAL, which is what the overlay's descriptors declare.
+    // Both masks: an unwritten mask would read as empty, and FSR 2 leaves exactly the masks it
+    // bound in SHADER_READ_ONLY_OPTIMAL, which is what the overlay's descriptors declare.
     if (!VK_RT_UpscaleNeedsReactiveMask() || !VK_RT_UpscaleNeedsTcMask())
     {
         static bool warned = false;
@@ -958,11 +939,8 @@ void VK_RT_DispatchMaskDebug(VkCommandBuffer cmd)
     const uint32_t dispW = vk.swapchainExtent.width;
     const uint32_t dispH = vk.swapchainExtent.height;
 
-    // Both masks are in SHADER_READ_ONLY_OPTIMAL, not the GENERAL their producers left them
-    // in: ffxFsr2ContextDispatch bound each as an SRV and its addBarrier moved them to
-    // COMPUTE_READ (getVKImageLayoutFromResourceState, ffx_fsr2_vk.cpp:360) without putting
-    // them back.  VK_RT_MaskDebugActive's both-masks requirement is what makes that
-    // predictable, so no transition is needed here.
+    // Both masks are SHADER_READ_ONLY_OPTIMAL: FSR 2 moved them there as SRVs and didn't
+    // restore GENERAL, so no transition is needed.
     const VkImageView srcViews[2] = {vkRT.reactiveMask[frameIdx].view, vkRT.tcMask[frameIdx].view};
     VK_RT_WriteFsrPassDescriptorsN(s_fsrMaskDebug, frameIdx, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, srcViews, 2,
                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, vkRT.hdrScene[frameIdx].view);
@@ -1011,10 +989,8 @@ bool VK_RT_MotionDebugActive(void)
         vkRT.motionVectors[vk.currentFrame].image == VK_NULL_HANDLE)
         return false;
 
-    // The attachment is only ever written by the G-buffer prepass.  Without this the
-    // overlay would happily paint the whole screen with the cleared zero field — a black
-    // frame that reads as "motion vectors are broken" rather than "nothing produced them".
-    // r_fsrDebug 7 is itself not r_fsr 2, so it cannot pull the prepass up on its own.
+    // Only the G-buffer prepass writes motion vectors; without it the overlay would show the
+    // cleared zero field.  r_fsrDebug 7 does not enable the prepass on its own.
     if (!VK_GBufferPrepassActive())
     {
         static bool warned = false;
@@ -1103,17 +1079,17 @@ void VK_RT_DispatchMotionDebug(VkCommandBuffer cmd)
 
 /*
 ===========================================================================
-FSR 2 (U3)
+FSR 2
 
 AMD FidelityFX Super Resolution 2.2.1, driven from the vendored library in
 libs/ffx-fsr2-api.  This is the one translation unit that includes its headers.
 
 Inputs, all display-sized images written only inside the top-left renderExtent
-sub-rect (§2 of the plan):
+sub-rect:
 
   color   hdrScene[slot]        pre-tonemap linear HDR
   depth   vk.depthImage         D32S8, read through vk.depthSampledView
-  MV      motionVectors[slot]   GL NDC delta, Y up (U2)
+  MV      motionVectors[slot]   GL NDC delta, Y up
   output  hdrUpscaled[slot]     display-res, copied back over hdrScene
 
 The sub-rect layout works unmodified because FSR2's only UV-space read of the
@@ -1138,7 +1114,7 @@ far-plane-at-infinity row, so device depth tops out at 0.9995 instead of 1.0 and
 FSR2's linearisation saturates around 2000x near.  The warp is monotonic and
 FSR2 only compares depths relatively, so this costs disocclusion sensitivity at
 long range, not correctness.  It cannot be expressed exactly in either of FSR2's
-depth families — see the plan's §13/U3 notes.
+depth families.
 ===========================================================================
 */
 
@@ -1174,8 +1150,7 @@ static uint32_t VK_RT_Fsr2WantedFlags(void)
     // HIGH_DYNAMIC_RANGE: hdrScene is pre-tonemap linear.
     // DEPTH_INFINITE: R_BuildProjection is the far-plane-at-infinity formulation.
     // DEPTH_INVERTED is deliberately absent — our depth is 0 at the near plane.
-    // AUTO_EXPOSURE: the engine's tonemap is a fixed curve with no exposure of its
-    // own, so there is no application exposure value to hand over.
+    // AUTO_EXPOSURE: the engine tonemap has no exposure value to hand over.
     uint32_t flags =
         FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE | FFX_FSR2_ENABLE_DEPTH_INFINITE | FFX_FSR2_ENABLE_AUTO_EXPOSURE;
     if (r_vkLogRT.GetInteger() >= 2)
@@ -1249,7 +1224,7 @@ static bool VK_RT_Fsr2CreateContext(void)
     s_fsr2ForceReset = true;
 
     // FSR2 does not expose its internal VRAM total; the scratch figure is the only
-    // number it hands back.  Expect ~60-250 MB of device memory on top (plan §3).
+    // number it hands back.  Expect ~60-250 MB of device memory on top.
     common->Printf("VK RT FSR2: context created, render %ux%u -> display %ux%u, flags 0x%x, host scratch %u KB, "
                    "jitter phases %d\n",
                    vk.renderExtent.width, vk.renderExtent.height, vk.swapchainExtent.width, vk.swapchainExtent.height,
@@ -1286,17 +1261,15 @@ bool VK_RT_UpscaleNeedsMotionVectors(void)
     return VK_RT_Fsr2Capable() && VK_RT_UpscaleActive();
 }
 
-// DEMAND (U4): must the backend snapshot hdrScene before the blend stages?  Same shape as
-// the motion-vector demand above, plus r_fsrAutoReactive — the snapshot is a render-res
-// image copy and is pure cost if no reactive mask will be generated from it.
+// DEMAND: must the backend snapshot hdrScene before the blend stages?  As the motion-vector
+// demand, plus r_fsrAutoReactive: the snapshot is pure cost without a reactive mask.
 bool VK_RT_UpscaleNeedsReactiveMask(void)
 {
     return r_fsrAutoReactive.GetBool() && VK_RT_Fsr2Capable() && VK_RT_UpscaleActive();
 }
 
-// DEMAND (U4): the T&C mask rides gbufAlbedo's alpha, so it additionally needs the
-// prepass that writes it.  Split from the reactive demand because the two are
-// independently switchable and the exit gate wants them A/B'd separately.
+// DEMAND: the T&C mask rides gbufAlbedo's alpha, so it also needs the prepass.  Separate
+// from the reactive demand so the two can be A/B'd independently.
 bool VK_RT_UpscaleNeedsTcMask(void)
 {
     return r_fsrTcMask.GetBool() && s_fsrTcMaskReady && VK_GBufferPrepassActive() && VK_RT_Fsr2Capable() &&
@@ -1339,10 +1312,8 @@ static bool VK_RT_Fsr2Ready(void)
         return false;
     }
 
-    // No G-buffer prepass this frame means no motion vectors (see VK_RT_Fsr2Possible).
-    // r_fsr 2 now pulls the prepass up on its own, so reaching here means the hardware
-    // cannot run it at all (no independentBlend) rather than "RT is off".
-    // Tear the context down rather than idle: saves 60-250 MB of device memory.
+    // No prepass means no motion vectors; r_fsr 2 enables the prepass itself, so this is
+    // hardware without independentBlend.  Tear down rather than idle (60-250 MB).
     if (!VK_GBufferPrepassActive())
     {
         static bool warned = false;
@@ -1399,10 +1370,8 @@ static void VK_RT_DispatchFsr2(VkCommandBuffer cmd, int frameIdx)
     const uint32_t dispH = vk.swapchainExtent.height;
 
     // --- 1. Hand FSR2 the layouts its FfxResourceStates name ---------------------
-    // COMPUTE_READ maps to SHADER_READ_ONLY_OPTIMAL and UNORDERED_ACCESS to GENERAL
-    // (getVKImageLayoutFromResourceState, ffx_fsr2_vk.cpp:352).  FSR2 emits its own
-    // barrier from the state we declare, so the declaration has to be the truth —
-    // hence moving all three inputs there first and restoring them afterwards.
+    // COMPUTE_READ = SHADER_READ_ONLY_OPTIMAL, UNORDERED_ACCESS = GENERAL.  FSR2 barriers from
+    // the state we declare, so move the inputs there first and restore them afterwards.
     VkImageMemoryBarrier toRead[2] = {};
     VkImage colorImages[2] = {vkRT.hdrScene[frameIdx].image, vkRT.motionVectors[frameIdx].image};
     for (int i = 0; i < 2; i++)
@@ -1452,11 +1421,9 @@ static void VK_RT_DispatchFsr2(VkCommandBuffer cmd, int frameIdx)
     dd.output = ffxGetTextureResourceVK(&s_fsr2Ctx, vkRT.hdrUpscaled[frameIdx].image, vkRT.hdrUpscaled[frameIdx].view,
                                         dispW, dispH, VK_FORMAT_R16G16B16A16_SFLOAT, L"hdrUpscaled",
                                         FFX_RESOURCE_STATE_UNORDERED_ACCESS);
-    // --- U4 masks ----------------------------------------------------------------
-    // Deliberately NOT dd.enableAutoReactive: that runs FSR 2's internal TCR autogen and
-    // then overwrites BOTH mask inputs with its own resources (ffx_fsr2.cpp:1020-1024),
-    // which would silently discard the T&C mask the prepass built.  The standalone
-    // generate call fills our own image and leaves both dd fields ours to set.
+    // --- Masks -------------------------------------------------------------------
+    // Not dd.enableAutoReactive: its autogen overwrites both mask inputs and would discard
+    // the prepass T&C mask.  The standalone generate call fills our own image instead.
     const bool haveReactive = VK_RT_UpscaleNeedsReactiveMask() &&
                               vkRT.preAlphaColor[frameIdx].image != VK_NULL_HANDLE &&
                               vkRT.reactiveMask[frameIdx].image != VK_NULL_HANDLE;
@@ -1676,11 +1643,10 @@ static void VK_RT_Fsr2ClearCreateFailure(void)
 
 /*
 ===========================================================================
-Jitter (U2)
+Jitter
 
-U3 calls FSR 2's real ffxFsr2GetJitterPhaseCount / ffxFsr2GetJitterOffset.  U2's
-hand port of the same functions (neo/libs/ffx-fsr2-api/ffx_fsr2.cpp:188-201,
-1187-1212) stays as the DHEWM3_FSR2=OFF fallback, so the sequence is unchanged
+FSR 2 builds call ffxFsr2GetJitterPhaseCount / ffxFsr2GetJitterOffset.  A hand port
+of the same functions is the DHEWM3_FSR2=OFF fallback, so the sequence is unchanged
 either way.
 ===========================================================================
 */
@@ -1731,15 +1697,9 @@ bool VK_RT_GetFsrJitter(float *jx, float *jy, int *renderW, int *renderH)
     if (!VK_RT_UpscaleActive() || vk.renderExtent.width == 0)
         return false;
 
-    // Only FSR 2 consumes the jitter.  Without a temporal reprojection to undo it the
-    // offset is just a whole-image translation of +-0.5 RENDER pixels — +-1.5 display
-    // pixels at Ultra Performance — so every other resolve path visibly shakes.
-    //
-    // Ask whether FSR 2 will actually run, not whether r_fsr requested it: an
-    // unsupported device, a failed context and hardware with no independentBlend (so no
-    // G-buffer prepass and no motion vectors) all fall back to the bilinear resolve with
-    // r_fsr still 2.  Fsr2Possible is deliberately side-effect free, which this frontend
-    // caller needs.
+    // Only FSR 2 reprojects the jitter away; on other paths it shakes the whole image.  Ask
+    // whether FSR 2 will run, not whether r_fsr requested it (fallbacks keep r_fsr 2).
+    // Fsr2Possible is side-effect free, which this frontend caller needs.
     if (!VK_RT_Fsr2Possible())
         return false;
 
@@ -1801,13 +1761,10 @@ static bool VK_RT_ResolvePathReady(void)
 /*
 The render scale to aim for.  r_fsrQuality overrides r_fsrRenderScale when set.
 
-These are the divisors FSR, DLSS and XeSS have all converged on (§8.1), written out
-rather than calling ffxFsr2GetRenderResolutionFromQualityMode so that the presets also
-work with DHEWM3_FSR2 off and so VK_SnapExtent8 below stays the single rounding rule.
-
-Deviation from the plan: the default is 0 (use r_fsrRenderScale), not 1.  Defaulting to
-Quality would silently turn upscaling on for every existing config, and "r_fsr 0 /
-native is the default until U3 passes its gate" is a hygiene rule of this arc.
+These are the divisors FSR, DLSS and XeSS have converged on, written out rather than
+calling ffxFsr2GetRenderResolutionFromQualityMode so the presets work with DHEWM3_FSR2 off
+and VK_SnapExtent8 stays the single rounding rule.  Default 0 (use r_fsrRenderScale), so
+existing configs don't silently start upscaling.
 */
 static float VK_RT_FsrTargetScale(void)
 {
@@ -1835,11 +1792,8 @@ void VK_RT_UpdateRenderExtent(void)
     if (scale < 0.3f)
         scale = 0.3f;
 
-    // With no resolve path there is nothing to magnify the sub-rect back up, and the
-    // callers mark the resolve done regardless — so the UI would draw at display extent
-    // over a scene stranded in the top-left corner.  Render native instead: a lost
-    // performance option beats a broken frame, and it keeps every display-space divisor
-    // in §4 consistent for free.
+    // With no resolve path the scene would be stranded in the top-left corner under a
+    // display-size UI.  Render native instead.
     if (scale < 1.0f && s_upscaleInitDone && !VK_RT_ResolvePathReady())
     {
         // Warn per r_fsr value, not once: the readiness test is mode-dependent, so
@@ -1876,19 +1830,16 @@ void VK_RT_UpdateRenderExtent(void)
                        old.width, old.height, wn, hn, vk.swapchainExtent.width, vk.swapchainExtent.height, scale,
                        (float)wn / (float)vk.swapchainExtent.width, (float)hn / (float)vk.swapchainExtent.height);
 
-        // The AO history is indexed in render-resolution texels, so after a scale
-        // change it refers to the previous raster grid.  Blending against that ghosts
-        // until it converges.  Same flag the camera-cut detector uses; this is the
-        // same class of event.
+        // AO history is in render-resolution texels, so a scale change invalidates it like a
+        // camera cut.
         vkRT.aoHistoryValid = false;
     }
 
     vk.renderExtent.width = wn;
     vk.renderExtent.height = hn;
 
-    // U3a: the FSR mip bias is a function of the extent just committed, so request the
-    // rebuild after the write.  Queued, not done here — VK_RB_DrawView calls this with a
-    // command buffer open on the 2D overlay view.
+    // The FSR mip bias depends on the extent just committed.  Queued, since VK_RB_DrawView
+    // calls this with a command buffer open.
     if (wn != old.width || hn != old.height)
         VK_Image_RequestSamplerRebuild();
 
@@ -2099,13 +2050,9 @@ void VK_RT_ResizeUpscale(uint32_t width, uint32_t height)
         VK_RT_CreateUpscaleImage(
             s_fsrPerceptual[i], width, height, VK_FORMAT_R16G16B16A16_SFLOAT,
             VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, "fsrPerceptual");
-        // U4: preAlphaColor is the *destination* of the hdrScene snapshot, so TRANSFER_DST.
-        // reactiveMask matches the format FSR 2 uses for its own internal reactive resource
-        // (FFX_SURFACE_FORMAT_R8_UNORM, ffx_fsr2.cpp) — the generate-reactive pass writes it
-        // as a storage image, so the formats have to agree.
-        // FSR 2-only (~158 MiB at 4K across two slots), so skipped when FSR 2 can never run.
-        // Gated on static capability, not r_fsr, so toggling the cvar needs no realloc.
-        // Every consumer null-checks these images.
+        // preAlphaColor is the snapshot destination (TRANSFER_DST); reactiveMask is R8_UNORM to
+        // match FSR 2's own reactive resource.  ~158 MiB at 4K, so only when FSR 2 is possible
+        // (static capability, not r_fsr, so toggling needs no realloc).  Consumers null-check.
         if (fsr2Possible)
         {
             VK_RT_CreateUpscaleImage(vkRT.preAlphaColor[i], width, height, VK_FORMAT_R16G16B16A16_SFLOAT,

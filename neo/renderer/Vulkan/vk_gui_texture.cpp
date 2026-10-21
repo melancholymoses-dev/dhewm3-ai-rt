@@ -1,8 +1,7 @@
 /*
 ===========================================================================
 
-dhewm3-rt Vulkan — vk_gui_texture.cpp — live in-world GUI textures for RT reflections
-(docs/plans/20261015_gui_reflections.md Stage 1).
+dhewm3-rt Vulkan — vk_gui_texture.cpp — live in-world GUI textures for RT reflections.
 
 In-world GUI screens only exist as per-view quads, so a reflection ray has nothing to
 sample. Each frame, R_RenderGuiSurf hands its freshly redrawn tr.guiModel to
@@ -640,7 +639,7 @@ void VK_GuiTex_EndPassAndCopy(VkCommandBuffer cmd, int slot)
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
                            VK_ACCESS_TRANSFER_WRITE_BIT, sampleStages, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
-    // RGBA16F -> RGBA8 at equal size; values above 1 clamp (Stage 3 owns brightness).
+    // RGBA16F -> RGBA8 at equal size; values above 1 clamp (r_rtGuiReflGain scales brightness).
     VkImageBlit blit = {};
     blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     blit.srcOffsets[1] = {VK_GUITEX_WIDTH, VK_GUITEX_HEIGHT, 1};

@@ -1,7 +1,7 @@
 /*
 ===========================================================================
 
-dhewm3-rt Vulkan ray tracing — material table (Phase 5.4).
+dhewm3-rt Vulkan ray tracing — material table.
 
 Builds and maintains three persistently-mapped SSBOs and one bindless
 combined-image-sampler array that are bound at set=2 in all RT shaders
@@ -154,7 +154,7 @@ static uint32_t GetOrAssignTexIndex(idImage *img)
     return idx;
 }
 
-// rt_projected_light_cookies.md Stage 1 — see declaration in vk_raytracing.h.
+// See declaration in vk_raytracing.h.
 uint32_t VK_RT_GetOrAssignTexIndex(idImage *img)
 {
     return GetOrAssignTexIndex(img);
@@ -201,12 +201,9 @@ static void RebuildBindlessDescriptors(void)
     {
         VkDescriptorImageInfo info = fallbackInfo;
         idImage *img = s_bindlessImages[i];
-        // Only freshly assigned slots may take VK_Image_GetDescriptorInfo's
-        // lazy-load path. A slot already written whose image is currently purged
-        // takes the white fallback instead: after a level load thousands of slots
-        // are purged at once, and loading them all here would both stall the frame
-        // and resurrect textures the new map never asked for. The next frame's
-        // ValidateBindlessSlots picks each one up once the raster path reuploads it.
+        // Only fresh slots may lazy-load.  A written slot whose image is purged takes the white
+        // fallback: after a level load, loading thousands here stalls and resurrects unused
+        // textures.  ValidateBindlessSlots picks it up once the raster path reuploads it.
         if (img && (img->backendData || i >= s_bindlessWritten))
         {
             if (!img->backendData)
@@ -254,16 +251,9 @@ static void RebuildBindlessDescriptors(void)
 // ---------------------------------------------------------------------------
 // VK_RT_FlushBindlessTextures (public)
 //
-// rt_projected_light_cookies.md: VK_RT_UploadGILights (vk_gi.cpp's light
-// collection) runs AFTER VK_RT_RebuildTLAS's call to VK_RT_UploadMatTableFrame
-// each frame, and can register a not-yet-seen light-cookie image via
-// VK_RT_GetOrAssignTexIndex — the only other place s_bindlessDirty gets
-// flushed is the NEXT frame's VK_RT_UploadMatTableFrame, so without this call
-// a brand-new cookie fixture's image reads an unwritten/fallback descriptor
-// slot for one frame (visible as a black/wrong cookie the first time a
-// fixture using that image is admitted). Binding 3 already has
-// UPDATE_AFTER_BIND + PARTIALLY_BOUND set specifically so a second
-// vkUpdateDescriptorSets later in the same frame is valid.
+// VK_RT_UploadGILights runs after this frame's VK_RT_UploadMatTableFrame and can register
+// a new light-cookie image; flush it now rather than next frame.  Binding 3's
+// UPDATE_AFTER_BIND + PARTIALLY_BOUND make a second update in the same frame valid.
 // ---------------------------------------------------------------------------
 
 void VK_RT_FlushBindlessTextures(void)
@@ -286,7 +276,7 @@ void VK_RT_InitMaterialTable(void)
     const VkDeviceSize matSSBOSize = (VkDeviceSize)VK_MAT_MAX_GEOMS * sizeof(VkMaterialEntry);
     const VkDeviceSize addrSSBOSize = (VkDeviceSize)VK_MAT_MAX_GEOMS * sizeof(uint64_t);
 
-    // System RAM is fine for these: the R7 A/B (2026-10-14) found no gain from BAR placement.
+    // System RAM is fine for these: BAR placement measured no gain.
     const VkBufferUsageFlags ssboUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     const VkMemoryPropertyFlags hostFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
@@ -349,18 +339,12 @@ void VK_RT_InitMaterialTable(void)
     bindings[3].binding = 3;
     bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[3].descriptorCount = VK_MAT_MAX_TEXTURES;
-    // Stage 3 (rt_projected_light_cookies.md): the froxel fill — a COMPUTE shader,
-    // not part of the ray-tracing pipeline — also samples this binding, for
-    // per-cell light-cookie sampling. bindings[0].stageFlags only covers RT
-    // pipeline stages, so add COMPUTE_BIT explicitly here rather than widening
-    // the SSBO bindings (0-2), which nothing outside the RT pipeline reads.
+    // The froxel fill (compute) samples light cookies from the bindless array; the SSBO
+    // bindings 0-2 stay RT-only.
     bindings[3].stageFlags = bindings[0].stageFlags | VK_SHADER_STAGE_COMPUTE_BIT;
 
-    // All four bindings get UPDATE_AFTER_BIND so that vkUpdateDescriptorSets
-    // can be called while command buffers that reference this set are in flight
-    // (or in recording state).
-    // Binding 3 (bindless sampler array) additionally needs PARTIALLY_BOUND
-    // because not all VK_MAT_MAX_TEXTURES slots are always populated.
+    // UPDATE_AFTER_BIND so the set can be updated while referenced by in-flight or recording
+    // command buffers; binding 3 is also PARTIALLY_BOUND since not every slot is populated.
     VkDescriptorBindingFlags bindingFlags[4] = {
         VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
         VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
@@ -559,17 +543,12 @@ void VK_RT_MatTableLevelLoadReset(void)
 }
 
 // ---------------------------------------------------------------------------
-// VK_RT_MaterialIsEmissive  (docs/plans/auto_relight.md AR1)
+// VK_RT_MaterialIsEmissive
 //
-// Single "is this material emissive, and which image" judgment, shared between
-// VK_RT_MakeMaterialEntry (below) and the auto-relight surface harvest
-// (vk_auto_relight.cpp) so the two walks can't drift apart. Mirrors the
-// original inline stage walk exactly: an SL_AMBIENT stage counts as emissive
-// only if it's a strict additive overlay (blend one,one) with explicit UVs, or
-// a cinematic/videomap stage — cubemap-reflect SL_AMBIENT stages (visor/armour
-// rim-light) are excluded. Falls back to the diffuse image when the shader
-// HasGui() and no dedicated emissive stage was found (GUI surfaces glow via
-// their diffuse draw, not a separate stage).
+// Shared by VK_RT_MakeMaterialEntry and the auto-relight harvest so they agree.  An
+// SL_AMBIENT stage is emissive only if it is an additive overlay (blend one,one) with
+// explicit UVs, or a cinematic/videomap; cubemap-reflect stages (visor rim-light) are
+// excluded.  HasGui() shaders with no emissive stage fall back to the diffuse image.
 // ---------------------------------------------------------------------------
 
 bool VK_RT_MaterialIsEmissive(const idMaterial *shader, idImage **outEmissiveImage, bool *outGuiEmissive,
@@ -664,11 +643,8 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
     entry.maxPrimId = 0xFFFFFFFFu; // sentinel: no bounds check (overridden in TLAS loop)
 
     // --- Geometry addresses ---
-    // Writing is now done per-geometry in the TLAS loop (vk_accelstruct.cpp)
-    // where the exact BLAS geometry index g is known.  MakeMaterialEntry is called
-    // once per geometry and only needs to fill material flags/textures.
-    // outGeomVtxAddrs/outGeomIdxAddrs pointers are kept in the signature for the
-    // single-surface VK_RT_BuildBLAS path which still calls this with geomCount==1.
+    // Normally written per geometry in the TLAS loop (vk_accelstruct.cpp).  Only the
+    // single-surface VK_RT_BuildBLAS path (geomCount == 1) still fills them here.
     if (blas && blas->geomCount == 1 && blas->geomVertAddrs && blas->geomIdxAddrs && outGeomVtxAddrs && outGeomIdxAddrs)
     {
         outGeomVtxAddrs[baseGeomIdx] = (uint64_t)blas->geomVertAddrs[0];
@@ -686,8 +662,8 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
     if (shader->Coverage() == MC_TRANSLUCENT)
     {
         entry.flags |= VK_MAT_FLAG_GLASS;
-        // R4: same SURFTYPE_GLASS discriminator the BLAS filter and the compositing
-        // overlay already use — only these may act as a reflection plane.
+        // Same SURFTYPE_GLASS test as the BLAS filter and compositing overlay; only these
+        // may act as a reflection plane.
         if (shader->GetSurfaceType() == SURFTYPE_GLASS)
             entry.flags |= VK_MAT_FLAG_REAL_GLASS;
     }
@@ -718,15 +694,11 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
             entry.diffuseTexIndex = GetOrAssignTexIndex(img);
         else if (stage->lighting == SL_BUMP)
             entry.normalTexIndex = GetOrAssignTexIndex(img);
-        // SL_SPECULAR: no scalar exponent available in Doom3 material API.
-        // Roughness stays at 1.0 (fully diffuse) — revisit in Phase 6.
+        // SL_SPECULAR: the Doom 3 material API has no scalar exponent to take roughness from.
     }
 
-    // Emissive stage / GUI-surface fallback — shared with the auto-relight
-    // surface harvest via VK_RT_MaterialIsEmissive so the two judgments can't
-    // drift apart. Ray tracing only marks the material emissive when a static
-    // image was resolved; otherwise skip classification instead of sampling
-    // slot 0's white fallback as unintended bright emission.
+    // Emissive only when a static image resolved; otherwise slot 0's white fallback would
+    // be sampled as bright emission.
     {
         idImage *emissiveImg = NULL;
         bool guiEmissive = false;
@@ -797,10 +769,8 @@ void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t st
         memcpy(idxDst + staticGeomCount * addrSize, dynGeomIdx, dynamicGeomCount * addrSize);
     }
 
-    // Rebuild bindless descriptor array if new images were encountered, or if an
-    // already-assigned image was purged/reuploaded behind our back (level load,
-    // image cache LRU, vid_restart) — its old VkImageView is destroyed and
-    // sampling the stale descriptor is a device lost.
+    // Rebuild for new images, or ones purged/reuploaded behind our back (level load, LRU,
+    // vid_restart): sampling a destroyed VkImageView is a device lost.
     ValidateBindlessSlots();
     if (s_bindlessDirty[vk.currentFrame])
         RebuildBindlessDescriptors();

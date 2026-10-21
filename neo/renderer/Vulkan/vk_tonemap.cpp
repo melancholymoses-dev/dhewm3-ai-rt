@@ -3,7 +3,7 @@
 
 dhewm3-rt Vulkan — vk_tonemap.cpp — HDR scene buffer and Uchimura tonemap resolve.
 
-Phase 8.1: allocates a per-frame RGBA16F HDR accumulation image (hdrScene) that
+Allocates a per-frame RGBA16F HDR accumulation image (hdrScene) that
 replaces the swapchain as the colour attachment for scene and composite passes.
 A final compute dispatch (tonemap.comp) reads hdrScene, applies the Uchimura
 filmic S-curve to the Rec. 709 scalar luminance, and writes the tonemapped
@@ -46,7 +46,7 @@ Code release.
 // ---------------------------------------------------------------------------
 
 idCVar r_rtTonemap("r_rtTonemap", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
-                   "Enable HDR resolve with Uchimura tonemapping (Phase 8.1).");
+                   "Enable HDR resolve with Uchimura tonemapping.");
 idCVar r_rtTonemapExposure("r_rtTonemapExposure", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                            "Exposure scale applied before tonemapping.");
 idCVar r_rtTonemapToe("r_rtTonemapToe", "2.7", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
@@ -85,11 +85,8 @@ static void VK_RT_CreateHDRImages(uint32_t width, uint32_t height)
         imgInfo.arrayLayers = 1;
         imgInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-        // COLOR_ATTACHMENT: render passes write here instead of the swapchain.
-        // STORAGE: tonemap.comp reads it as a storage image.
-        // SAMPLED: fallback blit path if storage swapchain writes aren't supported.
-        // TRANSFER_DST: initial clear on creation.
-        // TRANSFER_SRC: bypass blit when tonemapping is disabled (hdrScene → swapchain directly).
+        // Render target, tonemap.comp storage input, sampled fallback, initial clear, and
+        // blit source for the tonemap-off bypass.
         imgInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
         imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -227,10 +224,8 @@ static void VK_RT_CreateHDRFramebuffers(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        // Attachment order must match vk.hdrRenderPass: {0: hdrScene, 1: depth,
-        // 2: gbufNormal, 3: gbufAlbedo, 4: motionVectors}. Those three .view handles
-        // are NULL when !vk.gbufferSupported, but the framebuffer only reads the first
-        // attachmentCount entries, so the stale NULL slots are unused.
+        // Order must match vk.hdrRenderPass. The G-buffer/motion views are NULL when
+        // !vk.gbufferSupported; the framebuffer only reads attachmentCount entries.
         VkImageView attachments[5] = {vkRT.hdrScene[i].view, vk.depthView, vkRT.gbufNormal[i].view,
                                       vkRT.gbufAlbedo[i].view, vkRT.motionVectors[i].view};
 
@@ -510,7 +505,7 @@ static void VK_RT_DestroyTonemapPipeline(void)
 
 void VK_RT_InitTonemap(void)
 {
-    common->Printf("VK: initializing RT tonemapping (Phase 8.1)\n");
+    common->Printf("VK: initializing RT tonemapping\n");
     VK_RT_ResizeTonemap(vk.swapchainExtent.width, vk.swapchainExtent.height);
     VK_RT_CreateTonemapPipeline();
 }
@@ -521,7 +516,7 @@ void VK_RT_ShutdownTonemap(void)
     VK_RT_DestroyHDRFramebuffers();
     VK_RT_DestroyHDRImages();
     VK_RT_DestroyTonemapResolveImages();
-    // G-buffer normal/F0 images (Stage 3.5) — destroyed after the HDR framebuffers
+    // G-buffer normal/F0 images — destroyed after the HDR framebuffers
     // above that reference gbufNormal[i].view as attachment 2. No-op if unsupported.
     VK_RT_ShutdownGBuffer();
 }
@@ -562,11 +557,8 @@ void VK_RT_DispatchTonemap(VkCommandBuffer cmd)
 
     if (!tonemapEnabled)
     {
-        // Bypass: blit hdrScene (RGBA16F) directly to the swapchain.
-        // Values > 1.0 are clamped by the UNORM destination format — that is the
-        // expected "no tonemapping" behaviour (hard clip instead of filmic roll-off).
-        // RGBA16F → BGRA8: Vulkan reads source as (R,G,B,A) and writes it into the
-        // destination's memory layout, so colours are semantically preserved.
+        // Bypass: blit hdrScene straight to the swapchain. The UNORM target hard-clips
+        // values > 1; the blit handles the RGBA → BGRA swizzle.
         VkImageMemoryBarrier hdrToSrc = {};
         hdrToSrc.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         hdrToSrc.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -681,9 +673,8 @@ void VK_RT_DispatchTonemap(VkCommandBuffer cmd)
     pc.toeStrength = r_rtTonemapToe.GetFloat();
     pc.linearStart = r_rtTonemapLinStart.GetFloat();
     pc.linearLength = r_rtTonemapLinLen.GetFloat();
-    // B0 brightness bands.  The tonemap is the only pass that sees the finished frame
-    // and writes LDR, so the bands go here rather than in vk_bloom.cpp; mode 2 and up
-    // belong to the bloom passes themselves.
+    // Brightness-band view (r_rtBloomDebug 1). Lives here because the tonemap is the
+    // only pass that sees the finished frame.
     pc.debugMode = bandView ? 1 : 0;
 
     // 4. Bind pipeline and dispatch (8×8 workgroups).

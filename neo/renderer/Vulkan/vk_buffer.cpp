@@ -323,7 +323,7 @@ void VK_VertexCache_Alloc(vertCache_t *block, const void *data, int size, bool i
     VK_UploadBufferAt(bd->range.buf, bd->range.offset, data, (VkDeviceSize)size);
     s_bufferLiveCount++;
     s_bufferLiveBytes += bd->size;
-    // F2: heavy frames allocate 7-27 of these, and each one forces the upload flush.
+    // Heavy frames allocate 7-27 of these, and each one forces the upload flush.
     VK_Prof_Add(VKPROF_UPLOAD_STATICBLOCKS, 1.0);
     block->backendData = bd;
 }
@@ -348,11 +348,8 @@ void VK_VertexCache_Free(vertCache_t *block)
     if (!bd)
         return;
 
-    // Defer destruction until the frame fence has fired for the slot that last
-    // rendered with this buffer. vk.currentFrame is already incremented after
-    // submit, so the slot that just rendered is (currentFrame - 1). Queuing
-    // into that slot means the drain waits for its fence before destroying,
-    // which covers the command buffer that referenced this buffer.
+    // Queue on the slot that just rendered (currentFrame - 1; currentFrame is already
+    // incremented after submit) so destruction waits for that slot's fence.
     uint32_t frameIdx = (vk.currentFrame + VK_MAX_FRAMES_IN_FLIGHT - 1) % VK_MAX_FRAMES_IN_FLIGHT;
     if (s_bufferGarbageCount[frameIdx] < VK_BUFFER_GARBAGE_MAX)
     {

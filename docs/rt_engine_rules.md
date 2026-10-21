@@ -47,6 +47,9 @@ Each cost a debugging session. They apply to any new RT code.
 | A ray origin from `rt_ReconstructWorldPos` floors its bias at `d²·ulp/znear` | A fixed bias is a distance-limited bias, and `r_znear` is game-owned — it drops to 1.0 in cinematics |
 | A shadow ray's cull mask is a parameter, never a constant | `noSelfShadow` is instance mask `0x01`; `0xFF` makes the player self-shadow in reflections only |
 | A light's *current* value comes from `EvaluateRegisters()` + the stage's `color.registers[]` | Doom 3 puts flicker in material expressions. `shaderParms` is the constant amplitude, so reading it pins animated lights at peak |
+| A light's parm3 is never read as intensity | On a light, slot 3 is `SHADERPARM_TIMESCALE` (retail maps set it up to 80000). Doom 3 lights carry brightness only in RGB; one such light monopolised the GI/vol slots |
+| RT shadow rays and light emit positions use `globalLightOrigin`, not `parms.origin` | Every GL shadow volume extrudes from it. `lightCenter` can move the emitter thousands of units, and casting from the entity origin changes silhouette *shape*, which no bias can fix |
+| Every RT pipeline's SBT hit region reaches record 2 | rtPlayer instances carry hit offset 2 in every pipeline that traces the TLAS; a shorter region fetches a garbage shader handle |
 | A mapped buffer the CPU **reads** needs `HOST_CACHED`, memcpy'd out before use | `HOST_VISIBLE\|HOST_COHERENT` alone is write-combined: ~200 ns per scalar read. That per-element cost is the diagnostic signature |
 | A mapped buffer or descriptor set the CPU **writes** while recording needs one copy per frame slot, indexed by `vk.currentFrame` | The previous frame is still on the GPU. `r_vkSerializeFrames 1` is the check; the failure is GPU-dependent and can hide on one vendor |
 | Use the vertex normal, not `gl_HitKindEXT` | Doom 3 winds front faces opposite to GL/Vulkan, so every visible surface reports back-facing |

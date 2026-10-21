@@ -3,21 +3,18 @@
 
 dhewm3-rt Vulkan — vk_vol_froxel.cpp — froxel-grid volumetrics.
 
-Frustum-space cache for volumetric in-scattering, and since Phase 4 of
-20261010_cleanup_polish.md the engine's only volumetric integrator.  The grid is
-filled once per cell rather than once per pixel per step.
+Frustum-space cache for volumetric in-scattering; the engine's only volumetric
+integrator.  The grid is filled once per cell rather than once per pixel per step.
 
-Three passes, added over chunks F0-F2 of 20260906_froxel_probe_gi.md Part A:
+Three passes:
 
-  1. fill      (this file, F0) — per-cell in-scattering + extinction
-  2. integrate (F2)            — per-column front-to-back Beer-Lambert
-  3. resolve   (F1 debug, F2)  — trilinear fetch into vkRT.volBuffer
+  1. fill      — per-cell in-scattering + extinction
+  2. integrate — per-column front-to-back Beer-Lambert
+  3. resolve   — trilinear fetch (or debug overlay) into vkRT.volBuffer
 
 The resolve is the sole writer of vkRT.volBuffer; VK_RT_CompositeVolumetrics
 stands itself down when VK_RT_VolFroxelActive is false, since nothing else fills
-that image.  Measured 2026-09-13 against the deleted march: 1.63 -> 0.29 ms
-median, and the grid's 64 slices over [znear, dFar] integrate more accurately
-than the march's 8 steps over [0, r_rtVolMaxDist].
+that image.
 
 r_rtVolFroxelDebug hosts the two overlays: 2 = per-cell light count, 3 = the
 grid-to-world mapping check.
@@ -54,15 +51,12 @@ static idCVar r_rtVolFroxelResZ("r_rtVolFroxelResZ", "96", CVAR_RENDERER | CVAR_
                                 "Froxel grid depth in slices, exponentially distributed out to "
                                 "r_rtVolMaxDist. Change forces a device-idle realloc.");
 
-// Overlays (F1). Both replace the composite rather than adding to it —
-// VK_RT_CompositeVolumetrics switches to the replace pipeline while either is
-// active.  Numbers are kept stable across retirements so plan docs keep
-// resolving; VK_RT_ValidFroxelDebugMode coerces a retired number to off.
+// Overlays replace the composite rather than adding to it.  Retired numbers stay
+// reserved; VK_RT_ValidFroxelDebugMode coerces them to off.
 static idCVar r_rtVolFroxelDebug("r_rtVolFroxelDebug", "0", CVAR_RENDERER | CVAR_INTEGER,
                                  "Froxel grid overlay: 0=off, 2=per-cell light-count heatmap at the pixel's own "
                                  "depth slice, 3=grid-mapping error vs the depth-reconstructed world position "
-                                 "(green=agreement). "
-                                 "Retired, now no-ops: 1 (single Z slice), 4 (blocked projected-cone count).");
+                                 "(green=agreement).");
 
 // One place decides which overlay numbers exist, so the UBO and the composite's
 // replace-pipeline switch can never disagree about whether an overlay is active.
@@ -86,9 +80,8 @@ static idCVar r_rtVolProjFalloffDist("r_rtVolProjFalloffDist", "512", CVAR_RENDE
                                      "Distance along the beam where r_rtVolProjFalloff modes 1 and 2 reach "
                                      "x = 1 (0 intensity for mode 1, half for mode 2).");
 
-// F2: the grid's far anchor is DERIVED from the medium, not taken from r_rtVolMaxDist.
-// Must stay derived rather than a constant: raising density shortens the useful
-// range, lowering it extends the range back out toward r_rtVolMaxDist.
+// The grid's far anchor is derived from the medium, so raising density shortens the
+// range and lowering it extends it back toward r_rtVolMaxDist.
 static idCVar r_rtVolFroxelFarTransmittance(
     "r_rtVolFroxelFarTransmittance", "0.002", CVAR_RENDERER | CVAR_FLOAT,
     "Transmittance floor that sets the froxel grid's far plane: the grid ends where "
@@ -140,7 +133,7 @@ struct VolFroxelParamsUBO
     int32_t misc[4];        // 192  x=frameIndex y=maxLights z=debugMode w=unused
     int32_t screen[4];      // 208  x=screenW y=screenH z=outW w=outH (resolve target)
     int32_t rect[4];        // 224  resolve dispatch rect, resolve-target space
-    float prevViewProj[16]; // 240  F4 reprojection; identity until then
+    float prevViewProj[16]; // 240  reserved for reprojection; identity
 };
 static_assert(sizeof(VolFroxelParamsUBO) == 304, "VolFroxelParamsUBO size mismatch");
 
@@ -190,11 +183,9 @@ static void VK_RT_FreeFroxelImage(vkFroxelGrid_t &g);
 static vkFroxelGrid_t s_nullFroxelGrid;
 static vkFroxelGrid_t s_nullFroxelDirGrid;
 
-// Stage 5 (20261013_reflection_volumetrics.md) — the mean-direction grid's format.
-// snorm8 is ample for a phase direction (~0.8 deg per component) and halves the
-// memory against a second rgba16f: 12.4 MiB per slot at the 240x135x96 default
-// rather than 24.9.  Both R8G8B8A8_SNORM storage and its linear filtering are
-// mandatory format support, so no capability check is needed.
+// Mean-direction grid: snorm8 is ample for a phase direction (~0.8 deg) and halves memory
+// vs rgba16f (12.4 vs 24.9 MiB per slot at 240x135x96).  Storage and linear filtering of
+// R8G8B8A8_SNORM are mandatory, so no capability check.
 #define VK_FROXEL_SCATTER_FORMAT VK_FORMAT_R16G16B16A16_SFLOAT
 #define VK_FROXEL_DIR_FORMAT VK_FORMAT_R8G8B8A8_SNORM
 
@@ -461,7 +452,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     memset(&ubo, 0, sizeof(ubo));
 
     // invViewProj, built the same way the resolve reconstructs world position, so
-    // cell centres and reconstructed pixel positions agree (F1's overlay tests it).
+    // cell centres and reconstructed pixel positions agree (overlay 3 tests it).
     {
         float vp[16];
         VK_RT_BuildFroxelViewProj(viewDef, vp);
@@ -492,19 +483,14 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     const float maxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
     const float sigmaT = VK_RT_VolExtinction();
 
-    // Near anchor = the real near plane, read from the projection rather than from
-    // r_znear: znear is game-owned and drops to 1.0 in cinematics, and the matrix
-    // is authoritative for the frame we are actually rendering.
+    // Near anchor from the projection, not r_znear (game-owned, drops to 1.0 in cinematics).
     //   ndcZ = -proj[10] + proj[14]/d  =>  d(ndcZ = -1) = proj[14] / (proj[10] - 1)
     float dNear = viewDef->projectionMatrix[14] / (viewDef->projectionMatrix[10] - 1.0f);
     if (!(dNear > 0.01f) || dNear != dNear)
         dNear = 1.0f; // degenerate projection — fall back rather than emit a NaN grid
 
-    // Far anchor derived from the medium (see r_rtVolFroxelFarTransmittance).
-    // At a physical sigma_t this lands far beyond maxDist and the Min() wins, so the
-    // grid now covers the full r_rtVolMaxDist — which is the fix for "shafts only
-    // appear near the camera". Kept as a clamp for anyone who raises sigma_t back
-    // into smoke territory; inert at the default.
+    // Far anchor from the medium (r_rtVolFroxelFarTransmittance).  At a physical sigma_t
+    // the Min() wins and the grid covers r_rtVolMaxDist; the clamp only bites at smoke density.
     float dFar = maxDist;
     const float tFloor = idMath::ClampFloat(0.0f, 0.99f, r_rtVolFroxelFarTransmittance.GetFloat());
     if (tFloor > 1e-5f && sigmaT > 1e-5f)
@@ -537,8 +523,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     ubo.strengths[0] = VK_RT_VolScatterScale(VK_VOL_CLASS_POINT);
     ubo.strengths[1] = VK_RT_VolScatterScale(VK_VOL_CLASS_DIRECTED);
     ubo.strengths[2] = VK_RT_VolScatterScale(VK_VOL_CLASS_FLASHLIGHT);
-    // Was F4's temporal alpha; F4 was dropped, so the slot carries the two-lobe
-    // phase blend instead (see PhaseFunction in vol_froxel_fill.comp).
+    // Two-lobe phase blend (see PhaseFunction in vol_froxel_fill.comp).
     ubo.strengths[3] = idMath::ClampFloat(0.0f, 1.0f, r_rtVolIsotropicMix.GetFloat());
 
     ubo.anisos[0] = idMath::ClampFloat(0.0f, 0.99f, r_rtVolAnisotropy.GetFloat());
@@ -600,7 +585,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
         }
     }
 
-    // prevViewProj: identity until F4 reprojection needs it.
+    // prevViewProj: reserved for reprojection; identity for now.
     ubo.prevViewProj[0] = ubo.prevViewProj[5] = ubo.prevViewProj[10] = ubo.prevViewProj[15] = 1.0f;
 
     return true;
@@ -615,7 +600,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
 //   set 0, binding 2: UNIFORM_BUFFER_DYNAMIC     (VolFroxelParamsUBO)
 //   set 0, binding 3: STORAGE_BUFFER             (vkRT.volLightSsbo -- vol's own
 //                                                 selection, NOT giLightSsbo)
-//   set 0, binding 4: STORAGE_IMAGE              (froxelDir, 3D, write — Stage 5)
+//   set 0, binding 4: STORAGE_IMAGE              (froxelDir, 3D, write)
 //   set 1: vkRT.matDescLayout — shared material table, for light cookies. Only
 //          its bindless matTextures[4096] is used here.
 //
@@ -688,7 +673,7 @@ static void VK_RT_InitFroxelFillPipeline(void)
 
     VkDescriptorPoolSize poolSizes[4] = {};
     poolSizes[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
-    // froxelScatter + froxelDir (Stage 5)
+    // froxelScatter + froxelDir
     poolSizes[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 2)};
     poolSizes[2] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
     poolSizes[3] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
@@ -721,7 +706,7 @@ static void VK_RT_InitFroxelFillPipeline(void)
 //   set 0, binding 0: STORAGE_IMAGE          (froxelScatter, 3D, read)
 //   set 0, binding 1: STORAGE_IMAGE          (froxelIntegrated, 3D, write)
 //   set 0, binding 2: UNIFORM_BUFFER_DYNAMIC (VolFroxelParamsUBO)
-//   set 0, binding 3: STORAGE_IMAGE          (froxelDir, 3D, read — Stage 5)
+//   set 0, binding 3: STORAGE_IMAGE          (froxelDir, 3D, read)
 //
 // Binding 3 rather than 2 for the direction grid because binding 2 is the params
 // UBO in every froxel pass (vol_froxel_common.glsl's contract).
@@ -786,7 +771,7 @@ static void VK_RT_InitFroxelIntegratePipeline(void)
     vkDestroyShaderModule(vk.device, compMod, NULL);
 
     VkDescriptorPoolSize poolSizes[2] = {};
-    // scatter (read) + integrated (write) + dir (read, Stage 5)
+    // scatter (read) + integrated (write) + dir (read)
     poolSizes[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 3)};
     poolSizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
 
@@ -1140,7 +1125,7 @@ bool VK_RT_GetFroxelSampleParams(const viewDef_t *viewDef, vkFroxelSampleParams_
 // One invocation per cell.  Reads the TLAS and the vol light selection; does NOT
 // read depth, so it needs no depth layout round-trip.
 // On exit froxelScatter[currentFrame] is in GENERAL and readable by the
-// integrate pass (F2) — nothing consumes it in F0.
+// integrate pass.
 // ---------------------------------------------------------------------------
 
 void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
@@ -1287,10 +1272,8 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
     const uint32_t groupsZ = (grid.depth + 3) / 4;
     vkCmdDispatch(cmd, groupsX, groupsY, groupsZ);
 
-    // Compute write -> compute read for the integrate pass (F2), and -> ray tracing
-    // for the reflection rgen, which marches this grid directly
-    // (20261013_reflection_volumetrics.md).  No layout change: the grids live in
-    // GENERAL from allocation onward.
+    // Compute write -> integrate pass, and -> ray tracing for the reflection rgen, which
+    // marches this grid directly.  No layout change: the grids stay in GENERAL.
     {
         VkMemoryBarrier memBarrier = {};
         memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -1330,8 +1313,7 @@ void VK_RT_DispatchVolFroxelIntegrate(VkCommandBuffer cmd, const viewDef_t *view
 
     vkFroxelGrid_t &src = vkRT.froxelScatter[frameIdx];
     vkFroxelGrid_t &dst = vkRT.froxelIntegrated[frameIdx];
-    // Stage 5: src is unphased, so without this the integrate would accumulate a
-    // field with no phase applied at all rather than merely the wrong phase.
+    // src is unphased; the integrate needs the direction grid to apply any phase at all.
     vkFroxelGrid_t &dirGrid = vkRT.froxelDir[frameIdx];
     if (src.image == VK_NULL_HANDLE || dst.image == VK_NULL_HANDLE || dirGrid.image == VK_NULL_HANDLE)
         return;
@@ -1441,9 +1423,9 @@ void VK_RT_DispatchVolFroxelIntegrate(VkCommandBuffer cmd, const viewDef_t *view
 // ---------------------------------------------------------------------------
 // VK_RT_DispatchVolFroxelResolve (public)
 //
-// F1: runs only while an overlay is selected, and writes the overlay into
-// vkRT.volBuffer[currentFrame] so vol_composite.frag can display it with no
-// knowledge of the grid, and claims volReadView.
+// Trilinear fetch of the integrated grid (or the selected overlay) into
+// vkRT.volBuffer[currentFrame], so vol_composite.frag needs no knowledge of the
+// grid.  Claims volReadView.
 //
 // Must be called outside a render pass; depth must be in ATTACHMENT_OPTIMAL.
 // ---------------------------------------------------------------------------

@@ -24,10 +24,8 @@ On the first use of a slot, or whenever the camera has moved/rotated more than
 r_rtTemporalCutPosThreshold / r_rtTemporalCutAngleThreshold since the last frame
 this slot was used (VK_RT_DetectCameraCut), alpha is forced to 1.0 so history is
 replaced entirely with the current frame.  This prevents stale history from
-ghosting through level transitions and teleport cuts.  See
-rt_temporal_cut_detection.md for why this is a position/angle test rather than
-an inverse-view-projection matrix diff (the earlier approach fired on ordinary
-mouselook, not just real cuts).
+ghosting through level transitions and teleport cuts.  It is a position/angle
+test because an inverse-view-projection diff fires on ordinary mouselook.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
@@ -61,12 +59,12 @@ idCVar r_rtAOTemporalAlpha("r_rtAOTemporalAlpha", "0.5", CVAR_RENDERER | CVAR_FL
 idCVar r_rtTemporalCutPosThreshold("r_rtTemporalCutPosThreshold", "6", CVAR_RENDERER | CVAR_FLOAT,
                                    "Max world units the camera can move in one frame before AO/GI/vol "
                                    "temporal history is discarded (camera cut / teleport detection). "
-                                   "Shared by all three temporal passes — see rt_temporal_cut_detection.md.");
+                                   "Shared by AO, GI and volumetrics.");
 
 idCVar r_rtTemporalCutAngleThreshold("r_rtTemporalCutAngleThreshold", "4", CVAR_RENDERER | CVAR_FLOAT,
                                      "Max degrees the camera can rotate in one frame before AO/GI/vol "
                                      "temporal history is discarded (camera cut / teleport detection). "
-                                     "Shared by all three temporal passes — see rt_temporal_cut_detection.md.");
+                                     "Shared by AO, GI and volumetrics.");
 
 idCVar r_rtAtrousIterations("r_rtAtrousIterations", "4", CVAR_RENDERER | CVAR_INTEGER,
                             "Atrous spatial AO filter passes after EMA (0=off, 2 or 4 recommended). "
@@ -87,10 +85,8 @@ extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemor
 extern VkShaderModule VK_LoadSPIRV(const char *path);
 
 // ---------------------------------------------------------------------------
-// VK_RT_DetectCameraCut — shared by AO/GI (this file) and volumetrics
-// (vk_vol.cpp). See the declaration in vk_raytracing.h and
-// rt_temporal_cut_detection.md for why this tests position/angle deltas
-// instead of a raw inverse-view-projection matrix diff.
+// VK_RT_DetectCameraCut — shared by AO/GI (this file) and volumetrics (vk_vol.cpp).
+// Tests position/angle deltas; a matrix diff fires on ordinary mouselook.
 // ---------------------------------------------------------------------------
 vkRTCameraCutResult_t VK_RT_DetectCameraCut(const viewDef_t *viewDef, idVec3 &prevPos, idVec3 &prevFwd,
                                             bool historyValid, const char *tag)
@@ -110,11 +106,8 @@ vkRTCameraCutResult_t VK_RT_DetectCameraCut(const viewDef_t *viewDef, idVec3 &pr
         const float angleThresh = Max(0.0f, r_rtTemporalCutAngleThreshold.GetFloat());
         result.isCut = (result.posDelta > posThresh) || (result.angleDelta > angleThresh);
 
-        // Raw-vector dump for whichever pass detects a cut — this is what caught the
-        // 2026-08-31 degenerate-2D-view bug (see the viewEntitys != NULL guard added
-        // to vk_backend.cpp the same day): posDelta/angleDelta identical every frame,
-        // on both slots, only explainable by prevPos/prevFwd alternating with a
-        // genuine (0,0,0) view rather than by a threshold that's merely too tight.
+        // Identical deltas every frame on both slots mean prevPos/prevFwd alternate with a
+        // degenerate (0,0,0) view, not that the threshold is too tight.
         if (result.isCut && r_vkLogRT.GetInteger() >= 2)
         {
             common->Printf("VK RT CutDbg %s: pos=(%.2f %.2f %.2f) prevPos=(%.2f %.2f %.2f) "
@@ -487,12 +480,8 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
         return;
     }
 
-    // History is shared across both frame-in-flight slots, so this frame's read/write
-    // must be ordered after whatever last touched it (last frame's compute write, or
-    // this frame's own downstream fragment/Atrous read of last frame's result).
-    // Submission order (single queue, one command buffer per frame) already sequences
-    // the two; this barrier supplies the memory-visibility guarantee ordering alone
-    // doesn't give.
+    // History is shared across frame slots. Single-queue submission orders the accesses;
+    // this barrier adds the memory visibility that ordering alone doesn't give.
     {
         VkMemoryBarrier mb = {};
         mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -590,9 +579,7 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
                        (unsigned int)dispatchRect.extent.height);
 
     // --- Barrier: compute write to aoHistory → fragment and/or next compute read ---
-    // Include COMPUTE_SHADER in dst so the Atrous pass (if enabled) can read
-    // aoHistory without an additional barrier.  If Atrous is disabled the
-    // FRAGMENT_SHADER stage alone would suffice, but the extra stage is harmless.
+    // COMPUTE in dst lets the Atrous pass read aoHistory without another barrier.
     {
         VkMemoryBarrier barrier = {};
         barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -605,7 +592,7 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
 }
 
 // ===========================================================================
-// Atrous spatial filter (Step 5.2b)
+// Atrous spatial filter
 // ===========================================================================
 
 // Creates/destroys per-slot scratch images (same allocation path as history images).
@@ -915,10 +902,7 @@ void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd)
                              0, 1, &mb, 0, NULL, 0, NULL);
     }
 
-    // Update aoReadView to the image that holds the final output.
-    // Even pass count (0, 2, 4 ...): set[0] ran last (→scratch) then set[1] ran last (→history);
-    // for iters passes: descIdx of last pass = (iters-1) % 2.
-    // set[0] writes scratch, set[1] writes history.
+    // set[0] writes scratch, set[1] writes history; the last pass used set[(iters-1) % 2].
     const bool finalInHistory = ((iters - 1) % 2 == 1); // last pass used set[1] → history
     vkRT.aoReadView[frameIdx] = finalInHistory ? history.view : scratch.view;
 

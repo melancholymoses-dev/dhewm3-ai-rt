@@ -2,7 +2,7 @@
 ===========================================================================
 
 dhewm3-rt Vulkan backend - profiling aggregation, debug labels and resource
-accounting.  Stage A0 of docs/plans/20261010_vk_core_audit.md.
+accounting.
 
 Owns the metric registry: every per-frame number the backend measures is
 written into the current frame slot's sample, then pushed into a rolling
@@ -105,7 +105,7 @@ enum vkProfMetric_t
     VKPROF_LIGHTS_BATCHED,
     VKPROF_LIGHTS_SERIAL,
     VKPROF_SHADOW_MPIX,   // shadow-ray launch area, all dispatches, megapixels
-    VKPROF_SHADOW_BREAKS, // render-pass breaks for in-loop shadow dispatch (S3 batches or serial lights)
+    VKPROF_SHADOW_BREAKS, // render-pass breaks for in-loop shadow dispatch (in-loop batches or serial lights)
 
     VKPROF_FIXED_COUNT
 };
@@ -174,7 +174,7 @@ void VK_Prof_PushFrame(int slot, int frameNum);
 bool VK_Prof_WindowJustClosed(void);
 
 // ---------------------------------------------------------------------------
-// Tagged blocking waits (F2, F3)
+// Tagged blocking waits
 // ---------------------------------------------------------------------------
 
 VkResult VK_Prof_WaitForFences(vkProfWait_t tag, uint32_t fenceCount, const VkFence *fences, VkBool32 waitAll,
@@ -186,17 +186,16 @@ VkResult VK_Prof_DeviceWaitIdle(vkProfWait_t tag);
 // Startup report and mid-frame creation
 // ---------------------------------------------------------------------------
 
-// Device allocation/sampler limits and which optional extensions we got.  F4/R4
-// ask how close we run to those limits; the live counts come from RMV / Nsight,
-// which read them for free once r_vkDebugLabels has named the objects.
+// Device allocation/sampler limits and which optional extensions we got.  Live
+// counts come from RMV / Nsight once r_vkDebugLabels has named the objects.
 void VK_Prof_LogDeviceLimits(void);
 
-// Mid-frame creation that is invisible in a window average but owns the hitch (F3, X4).
+// Mid-frame creation that is invisible in a window average but owns the hitch.
 void VK_Prof_NoteLazyImageLoad(const char *name, double ms);
 void VK_Prof_NotePipelineCreate(const char *name, double ms);
 
 // ---------------------------------------------------------------------------
-// Debug labels (A0a) — makes Nsight / RGP / RenderDoc / RMV captures readable
+// Debug labels — makes Nsight / RGP / RenderDoc / RMV captures readable
 // ---------------------------------------------------------------------------
 
 // Loads the VK_EXT_debug_utils entry points.  Call once after device creation.

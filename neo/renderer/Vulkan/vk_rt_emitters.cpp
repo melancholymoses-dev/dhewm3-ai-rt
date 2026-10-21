@@ -8,7 +8,6 @@ per-frame-slot SSBO read by reflect_ray.rgen. Each emitter is one glowing disc:
 position, radius, colour and texture of the entity's brightest additive material
 stage, evaluated the same way the raster path evaluates it (EvaluateRegisters).
 Projectiles never enter the TLAS, so no other RT pass can see them.
-See docs/plans/20261002_reflection_emitters.md.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -825,7 +824,7 @@ void VK_RT_BuildReflEmitters(const viewDef_t *viewDef)
     if (!r_rtReflGlow.GetBool())
         return;
 
-    // Once a second at r_vkLogRT 1: the E0 inventory.
+    // Once a second at r_vkLogRT 1: log the emitter inventory.
     static unsigned int s_lastLogMs = 0;
     const unsigned int nowMs = Sys_Milliseconds();
     const bool log = r_vkLogRT.GetInteger() >= 1 && (nowMs - s_lastLogMs) >= 1000;

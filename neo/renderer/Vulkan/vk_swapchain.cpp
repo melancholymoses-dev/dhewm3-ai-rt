@@ -37,11 +37,8 @@ static VkSurfaceFormatKHR VK_ChooseSurfaceFormat(VkPhysicalDevice physDev)
     VkSurfaceFormatKHR *formats = (VkSurfaceFormatKHR *)alloca(sizeof(VkSurfaceFormatKHR) * count);
     vkGetPhysicalDeviceSurfaceFormatsKHR(physDev, vk.surface, &count, formats);
 
-    // Prefer UNORM to match the GL path: Doom3 textures are loaded as UNORM (sRGB-encoded
-    // bytes treated as linear by the GPU).  The GL renderer uses a UNORM framebuffer + hardware
-    // gamma tables, so the sRGB-encoded texture values pass through to the display unchanged.
-    // An sRGB swapchain would apply an *additional* linear→sRGB conversion on write, double-
-    // encoding the already-sRGB values and making everything appear too bright.
+    // UNORM to match GL: Doom 3 textures are sRGB-encoded bytes treated as linear, and an
+    // sRGB swapchain would encode them a second time (everything too bright).
     for (uint32_t i = 0; i < count; i++)
     {
         if (formats[i].format == VK_FORMAT_B8G8R8A8_UNORM && formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
@@ -93,14 +90,9 @@ static VkPresentModeKHR VK_ChoosePresentMode(VkPhysicalDevice physDev)
     VkPresentModeKHR chosen;
     if (swapInterval != 0)
     {
-        // Vsync on: FIFO is the only mode every Vulkan driver is required to
-        // support and the only one that guarantees tear-free presentation.
-        // Mailbox is tear-free per spec too, but it's the mode most often
-        // broken by driver/compositor bugs on Linux (notably NVIDIA's driver
-        // under X11 without compositing) -- FIFO is the safe default.
-        // Adaptive (-1) uses FIFO_RELAXED when available: same as FIFO, but a
-        // frame that's already late presents immediately instead of waiting
-        // out a full extra vblank.
+        // Vsync on: FIFO is always supported and tear-free.  Mailbox is avoided because Linux
+        // drivers/compositors often break it (NVIDIA/X11 uncomposited).  Adaptive (-1) uses
+        // FIFO_RELAXED: a late frame presents immediately instead of waiting a vblank.
         if (swapInterval < 0 && VK_PresentModeSupported(modes, count, VK_PRESENT_MODE_FIFO_RELAXED_KHR))
             chosen = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
         else
@@ -118,10 +110,8 @@ static VkPresentModeKHR VK_ChoosePresentMode(VkPhysicalDevice physDev)
             chosen = VK_PRESENT_MODE_FIFO_KHR;
     }
 
-    // Diagnostic for "r_swapInterval 1 but still tearing" reports: confirms whether
-    // the tear is happening above this layer (wrong mode picked) or below it (driver/
-    // compositor presenting a tear-free swapchain image incorrectly — e.g. NVIDIA/X11
-    // without "Force Composition Pipeline" enabled in nvidia-settings).
+    // For "vsync on but tearing": shows whether the wrong mode was picked or the driver tears
+    // below us (NVIDIA/X11 without "Force Composition Pipeline").
     common->Printf("VK Swapchain: r_swapInterval=%d -> present mode %s\n", swapInterval, VK_PresentModeName(chosen));
 
     return chosen;
@@ -263,9 +253,7 @@ void VK_CreateRenderPass(void)
     VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.renderPass));
 
     // --- Resume render pass (LOAD variant) ---
-    // Used when the render pass is reopened after an RT dispatch so that prior
-    // colour and depth/stencil contents are preserved (not cleared again).
-    // The framebuffers are compatible with both passes (same attachment formats).
+    // Reopens the pass after an RT dispatch without clearing; framebuffers fit both passes.
     colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     colorAttachment.initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; // layout after CLEAR pass ends
     // finalLayout stays PRESENT_SRC_KHR
@@ -299,11 +287,8 @@ void VK_CreateRenderPass(void)
     hdrDepth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     hdrDepth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-    // G-buffer normal/F0 attachment (Stage 3.5, see docs/plans/gbuffer_normal_pass.md).
-    // Only added when vk.gbufferSupported (independentBlend) — otherwise the HDR
-    // subpass stays single-colour-attachment, identical to before this feature.
-    // rgb = world-space bump normal * 0.5 + 0.5, a = normalized F0; clear value
-    // {0.5, 0.5, 0.5, 0.0} (null normal, F0 0) is set in vk_backend.cpp.
+    // G-buffer normal/F0 attachment, only when vk.gbufferSupported.  rgb = bump normal
+    // * 0.5 + 0.5, a = normalized F0; clear {0.5, 0.5, 0.5, 0} is set in vk_backend.cpp.
     VkAttachmentDescription hdrNorm = {};
     hdrNorm.format = VK_FORMAT_R8G8B8A8_UNORM;
     hdrNorm.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -317,13 +302,11 @@ void VK_CreateRenderPass(void)
     hdrNorm.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     hdrNorm.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-    // Receiver-albedo attachment (docs/plans/gi_albedo_target.md): diffuse map
-    // sample written by the same prepass, multiplied onto the denoised GI by the
-    // albedo-modulate compute pass. Cleared to WHITE (vk_backend.cpp) so pixels
-    // the prepass never writes modulate GI by 1.0 — i.e. legacy behavior.
+    // Receiver-albedo attachment: diffuse sample multiplied onto the denoised GI.  Cleared
+    // to WHITE (vk_backend.cpp) so unwritten pixels leave GI unmodulated.
     VkAttachmentDescription hdrAlb = hdrNorm; // same format/ops/layout contract as gbufNormal
 
-    // Motion vectors (U2, docs/plans/completed/20260918_fsr_upscaling.md §13): same ops and
+    // Motion vectors: same ops and
     // layout contract again, but R16G16_SFLOAT and cleared to (0,0) — a pixel the
     // prepass never writes reports no motion.
     VkAttachmentDescription hdrMotion = hdrNorm;
@@ -360,7 +343,7 @@ void VK_CreateRenderPass(void)
 
     hdrNorm.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     // initialLayout stays COLOR_ATTACHMENT_OPTIMAL — the barrier in vk_backend.cpp
-    // (Step 6) round-trips it through SHADER_READ_ONLY_OPTIMAL and back before resume.
+    // round-trips it through SHADER_READ_ONLY_OPTIMAL and back before resume.
     hdrAlb = hdrNorm; // albedo rides the same LOAD + round-trip contract
     hdrMotion.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
 
@@ -440,10 +423,8 @@ void VK_CreateSwapchain(int width, int height)
     VK_CreateImage(vk.swapchainExtent.width, vk.swapchainExtent.height, vk.depthFormat,
                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &vk.depthImage, &vk.depthMemory);
-    // For combined depth+stencil formats, the framebuffer attachment view must include
-    // VK_IMAGE_ASPECT_STENCIL_BIT so stencil test/clear work correctly.
-    // A separate depth-only view (depthSampledView) is created for shader sampling —
-    // Vulkan does not allow sampling a combined depth+stencil view.
+    // The attachment view needs the stencil aspect for stencil test/clear; shaders sample the
+    // depth-only depthSampledView, since a combined depth+stencil view can't be sampled.
     {
         VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
         if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
@@ -508,11 +489,8 @@ void VK_DestroySwapchain(void)
 
 void VK_RecreateSwapchain(int width, int height)
 {
-    // Query surface size FIRST, before touching any Vulkan objects.
-    // On Windows (and some other platforms) the surface extent becomes 0x0 when
-    // the window is minimized.  Creating a swapchain with a 0x0 extent is
-    // illegal, so bail out here and let VK_RB_DrawView skip frames until the
-    // window is restored.
+    // Query the surface first: a minimized window reports 0x0, which is illegal for a
+    // swapchain, so bail and let VK_RB_DrawView skip frames until it is restored.
     VkSurfaceCapabilitiesKHR caps;
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk.physicalDevice, vk.surface, &caps);
     if (caps.currentExtent.width == 0 || caps.currentExtent.height == 0)
@@ -540,11 +518,8 @@ void VK_RecreateSwapchain(int width, int height)
         }
     }
 
-    // Recreate semaphores and fences to clear any stale signaled state.
-    // When vkQueuePresentKHR returns OUT_OF_DATE, the wait semaphores may not
-    // have been consumed, leaving renderFinishedSemaphores in a signaled state.
-    // Signaling an already-signaled semaphore is undefined behavior and causes
-    // every subsequent present to also fail.
+    // Recreate sync objects: after OUT_OF_DATE the wait semaphores may stay signaled, and
+    // re-signaling one is undefined and fails every later present.
     {
         VkSemaphoreCreateInfo semInfo = {};
         semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -662,7 +637,7 @@ void VK_RecreateSwapchain(int width, int height)
     }
 
     // Rebuild HDR framebuffers — they reference vk.depthView which was just recreated.
-    // Also resizes the hdrScene, tonemapResolve, and gbufNormal (Stage 3.5) images
+    // Also resizes the hdrScene, tonemapResolve, and gbufNormal images
     // to the new swapchain extent.
     VK_RT_ResizeTonemap(vk.swapchainExtent.width, vk.swapchainExtent.height);
 

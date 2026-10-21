@@ -1,22 +1,17 @@
 /*
 ===========================================================================
 
-dhewm3-rt Vulkan ray tracing — shared light classifier (auto_relight.md §0).
+dhewm3-rt Vulkan ray tracing — shared light classifier.
 
-Doom 3 encodes "is this light real" in two independent bits that the RT path
-used to test in different combinations depending on which pass was asking:
+Doom 3 encodes "is this light real" in two independent bits:
 
   - entity-level parms.noShadows       (per light-entity override, mapper set)
   - material-level lightShader keyword (fogLight / ambientLight / blendLight /
     the "noshadows" material flag — see idMaterial::LightCastsShadows())
 
-The GI/volumetric light collector (vk_gi.cpp) historically tested only the
-entity bit.  That let material-level ambient-fill lights (paint-bucket washes
-with no falloff origin) through GI/vol while rejecting small mapper-placed
-colored accents that happen to carry entity noShadows — backwards from what
-either pass wants.  This file is the single place that makes the real/fake
-call, so GI, volumetrics, and the (future) noShadows shadow unlock can't
-drift out of sync on the answer.
+Testing only one of them lets ambient fills through and rejects small accent
+lights that carry entity noShadows.  This file is the single place that makes the
+real/fake call, so GI, volumetrics and the noShadows shadow unlock agree.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -35,15 +30,13 @@ Code release.
 
 idCVar r_rtLightAccentMaxRadius(
     "r_rtLightAccentMaxRadius", "300", CVAR_RENDERER | CVAR_FLOAT,
-    "auto_relight.md §0/§6: a noShadows light with radius below this is classed ACCENT "
-    "(admitted to GI/volumetrics, eligible for the noShadows shadow unlock); at or above "
-    "it, classed AMBIENT_FILL (semantic mapper fill — never admitted, never unlocked)");
+    "A noShadows light with radius below this is classed ACCENT (admitted to GI/volumetrics, "
+    "eligible for the shadow unlock); at or above it, AMBIENT_FILL (never admitted).");
 
 idCVar r_rtUnlockNoShadows(
     "r_rtUnlockNoShadows", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-    "auto_relight.md §6: give ACCENT-classified noShadows lights (see r_rtLightAccentMaxRadius) "
-    "a real RT shadow layer instead of rendering unshadowed. Does not affect GI/volumetric "
-    "admission — ACCENT lights already participate there regardless of this cvar (§0).");
+    "Give ACCENT-classified noShadows lights (see r_rtLightAccentMaxRadius) a real RT shadow "
+    "layer instead of rendering unshadowed. Does not affect GI/volumetric admission.");
 
 // ---------------------------------------------------------------------------
 // VK_RT_ClassifyLight
@@ -73,11 +66,8 @@ vkRTLightClass_t VK_RT_ClassifyLight(const renderLight_t &parms, const idMateria
     if (!noShadows)
         return RT_LIGHT_REAL;
 
-    // noShadows and not material-ambient: either a small placed accent (LED,
-    // monitor glow, alarm strobe — usually entity-flagged noShadows by the
-    // mapper for stencil-shadow cost, not because it's fake) or a large
-    // noShadows fill used the same way ambientLight is used semantically.
-    // Radius is the only signal left to tell them apart.
+    // A small accent (LED, monitor glow; mappers flag these noShadows for stencil cost)
+    // or a large fill. Radius is the only signal left to tell them apart.
     float radius = Max(Max(parms.lightRadius.x, parms.lightRadius.y), parms.lightRadius.z);
     return (radius < r_rtLightAccentMaxRadius.GetFloat()) ? RT_LIGHT_ACCENT : RT_LIGHT_AMBIENT_FILL;
 }
