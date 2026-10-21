@@ -256,6 +256,7 @@ Check, per preset, using routes mchq and commfire with `r_vkRTProfileCSV`:
 | Preset | Pass condition |
 |---|---|
 | Low | Fast machine at 1920x1080: `frame.backend` p95 ≤ ~5.5 ms. This stands in for a 2070, assuming the 2070 is about 3x slower on RT |
+| Med | Somewhere between.  |
 | High | Fast machine at 1440p: `frame.backend` p95 ≤ 16.6 ms on commfire, the worst route |
 | Ultra | Runs without device loss, and the froxel grid allocates at 320x180x128 |
 
