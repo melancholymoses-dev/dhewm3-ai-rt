@@ -109,9 +109,8 @@ struct vkState_t
     // Capabilities
     bool rayTracingSupported; // VK_KHR_ray_tracing_pipeline
     bool asSupported;         // VK_KHR_acceleration_structure
-    // independentBlend: required by the G-buffer normal/F0 pass (two color attachments with
-    // differing per-attachment blend/write-mask state). See docs/plans/gbuffer_normal_pass.md.
-    // If false, the G-buffer prepass must not be enabled; fall back to the existing depth-only path.
+    // independentBlend: the G-buffer prepass needs per-attachment blend/write masks.
+    // If false the prepass stays off and the depth-only path is used.
     bool gbufferSupported;
     // separateDepthStencilLayouts, which FSR 2's backend needs for its depth-aspect-only
     // barriers on our combined depth+stencil buffer.  False = r_fsr 2 falls back.
@@ -159,11 +158,9 @@ struct vkPipelines_t
     VkPipeline depthPipeline;     // opaque surfaces — no texture sample
     VkPipeline depthClipPipeline; // MC_PERFORATED — samples diffuse, discards on alpha
 
-    // G-buffer normal/F0 prepass (Stage 3.5, see docs/plans/gbuffer_normal_pass.md).
-    // Only created when vk.gbufferSupported; replaces depthPipeline/depthClipPipeline
-    // in VK_RB_FillDepthBuffer when RT is active. Writes world-space bump-mapped
-    // normal + F0 to gbufNormal (attachment 1); attachment 0 is write-masked off,
-    // same as the depth pipelines it replaces.
+    // G-buffer prepass, only when vk.gbufferSupported. Replaces the depth pipelines in
+    // VK_RB_FillDepthBuffer when RT is active: writes bumped world normal + F0 to gbufNormal
+    // (attachment 1); attachment 0 stays write-masked off.
     VkDescriptorSetLayout gbufferDescLayout;
     VkPipelineLayout gbufferLayout;
     VkPipeline gbufferPipeline;     // opaque surfaces

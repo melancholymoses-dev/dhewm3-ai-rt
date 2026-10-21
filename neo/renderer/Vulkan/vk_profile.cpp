@@ -2,11 +2,10 @@
 ===========================================================================
 
 dhewm3-rt Vulkan backend - profiling aggregation, debug labels and resource
-accounting.  Stage A0 of docs/plans/20261010_vk_core_audit.md.
+accounting.
 
-The console prints a window summary; the CSV keeps every frame.  Before this,
-r_vkRTProfile 1 printed one frame in 30 and discarded the rest, so a hitch was
-only logged if it happened to land on the sampled frame.
+The console prints a window summary; the CSV keeps every frame, so a hitch is
+never lost to sampling.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -280,11 +279,8 @@ void VK_Prof_BeginFrameSlot(int slot)
 {
     VK_Prof_CheckCSV();
 
-    // A partial window from before profiling was switched off describes whatever the
-    // settings were back then.  PushFrame is unreachable while off, so those rows sat
-    // in the ring and the first window after re-enabling blended them with fresh ones
-    // — the 2026-10-12 capture reported a p50 from the old 0.667 render scale in its
-    // first window and the correct 1:1 value in its p95.  Same for a window resize.
+    // Drop the partial window when profiling toggles or the window size changes, so
+    // stale rows from older settings don't blend into the next window's stats.
     {
         static bool s_wasActive = false;
         static int s_lastWindowSize = -1;
@@ -302,12 +298,8 @@ void VK_Prof_BeginFrameSlot(int slot)
         return;
     memset(s_cur[slot], 0, sizeof(s_cur[slot]));
 
-    // Sampled at frame open, not at push: push happens two frames later, so sampling
-    // there attributed "now" to a frame that had already been presented.
-    //
-    // Deliberately NOT gated on the memory group bit.  r_vkRTProfileGroups filters
-    // what the console prints; it must not decide what gets collected, or a group the
-    // console happens to hide comes back as a column of zeros in the CSV.
+    // Sampled at frame open; push is two frames later. Not gated on the memory group:
+    // r_vkRTProfileGroups filters printing only, so CSV columns stay populated.
     if (VK_Prof_Active())
         VK_Prof_SampleMemory(slot);
 }

@@ -21,7 +21,7 @@ void VK_Image_Purge(idImage *img);
 // purge/reupload pair and so cannot detect one.
 uint32_t VK_Image_ChangeCounter(void);
 
-// U3a: mipLodBias is baked into each VkSampler at upload, so the FSR render-scale
+// mipLodBias is baked into each VkSampler at upload, so the FSR render-scale
 // term, image_lodbias, image_anisotropy and image_filter all need every sampler
 // recreated when they change.  Request queues it; Apply does the device-idle
 // rebuild and must be called only where no command buffer is recording.

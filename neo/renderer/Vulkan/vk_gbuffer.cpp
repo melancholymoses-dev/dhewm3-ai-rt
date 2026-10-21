@@ -3,20 +3,18 @@
 
 dhewm3-rt Vulkan — vk_gbuffer.cpp — G-buffer normal/F0 + albedo image lifetime.
 
-Stage 3.5 (see docs/plans/gbuffer_normal_pass.md): two thin per-frame images
-written by the depth prepass (VK_RB_FillDepthBuffer) — gbufNormal, sampled by
-the RT reflection/AO/GI rgens, and gbufAlbedo (docs/plans/gi_albedo_target.md),
-sampled by the GI albedo-modulate compute pass. Both R8G8B8A8_UNORM:
+Two thin per-frame images written by the depth prepass (VK_RB_FillDepthBuffer):
+gbufNormal, sampled by the RT reflection/AO/GI rgens, and gbufAlbedo, sampled by the GI albedo-modulate compute pass. Both R8G8B8A8_UNORM:
   gbufNormal: rgb = world-space bump-mapped shading normal (n * 0.5 + 0.5),
-              a = normalized F0 (the Stage-2 specular remap); 0 means "no
+              a = normalized F0 (the specular remap); 0 means "no
               G-buffer data here" so consumers fall back to rt_ReconstructNormal.
   gbufAlbedo: rgb = diffuse map sample; unwritten pixels stay at the WHITE
               clear value (vk_backend.cpp) so GI passes through unmodulated
               rather than being killed to black.
 
 Requires VkPhysicalDeviceFeatures.independentBlend (multiple colour attachments
-with differing per-attachment blend/write-mask state — see Step 0 in the
-plan). vk.gbufferSupported latches that check at device-creation time; when
+with differing per-attachment blend/write-mask state).
+vk.gbufferSupported latches that check at device-creation time; when
 false, every function here is a no-op and vkRT.gbufNormal/gbufAlbedo stay
 all-NULL, leaving the existing depth-only prepass path untouched.
 
@@ -56,19 +54,16 @@ bool VK_GBufferPrepassActive(void)
     return r_useRayTracing.GetBool() || VK_RT_UpscaleNeedsMotionVectors();
 }
 
-// P9 (docs/plans/rt_optimization_tuning.md): AO and GI read their shading normal
-// from this buffer instead of rebuilding it from depth gradients. Set 0 to force
-// both back onto rt_ReconstructNormal for an A/B — the ALU cost returns, and so
-// does the flat-polygon look (no bump detail in AO/GI). Reflections are NOT
-// affected; they consume the G-buffer unconditionally (Wave 1b).
+// 0 = AO/GI rebuild normals from depth gradients (costlier, no bump detail), for A/B.
+// Reflections always read the G-buffer.
 idCVar r_rtGbufNormals("r_rtGbufNormals", "1", CVAR_RENDERER | CVAR_BOOL,
-                       "P9: AO/GI take their shading normal from the G-buffer "
-                       "(0 = legacy depth-gradient reconstruction, for A/B)");
+                       "AO/GI take their shading normal from the G-buffer "
+                       "(0 = depth-gradient reconstruction, for A/B)");
 
 // ---------------------------------------------------------------------------
 // VK_RT_CreateGBufferImages
 // Allocates per-frame R8G8B8A8_UNORM normal/F0 buffers at the given resolution,
-// plus the receiver-albedo buffers (gi_albedo_target.md) with identical
+// plus the receiver-albedo buffers with identical
 // lifetime: attachment 2 of the HDR render pass, written by the same prepass,
 // sampled by the GI albedo-modulate compute pass.
 // ---------------------------------------------------------------------------
