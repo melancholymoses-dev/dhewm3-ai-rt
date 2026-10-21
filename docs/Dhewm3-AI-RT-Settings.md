@@ -141,7 +141,6 @@ table had never listed, and moved six defaults. Defaults below are read from sou
 | `r_rtReflGlowDist` | Reflections | Glow reach | 1024 | C |
 | `r_rtReflGlowSmoke` / `…SmokeMinLum` | Reflections | Glow through smoke, min luminance | 1 / 0.3 | C |
 | `r_rtReflFlashGlow` / `…Gain` / `…Radius` / `…Offset` | Reflections | Flashlight lamp glow in reflections — the viewmodel can never reach a reflection ray, so the lamp is drawn analytically. Projected lights only (`flashPointLight 0`) | 1 / 1.5 / 1.5 / 0.0 | C |
-| `r_rtReflMuzzleGlow` / `…Gain` / `…Radius` | Reflections | The weapon's firing flash in reflections. Same light def as the flashlight, split on `pointLight`; textured with the flash material's `lights/round` so the `muzzleflashtable` ramp and flicker read as an animated flare | 1 / 1.0 / 6.0 | C |
 | `r_rtGlassNormalMode` | Reflections | Glass normal: 0 interpolated, 1 face, 2 crease-aware (arc 8b) | 2 | C |
 | `r_rtGlassCreaseRatio` | Reflections | Mode 2 threshold. Tuned once and settled | 0.25 | X |
 | `r_rtGuiReflGain` | Reflections | GUI screen brightness in reflections | 0.3 | C |

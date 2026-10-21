@@ -31,16 +31,17 @@ Code release.
 // texture by its own alpha. Must match RT_EMITTER_SRCALPHA in rt_emitter.glsl.
 #define VK_RT_EMITTER_SRCALPHA 0x80000000u
 
-// std430 mirror of RtEmitter in rt_emitter.glsl — 32 bytes.
+// std430 mirror of RtEmitter in rt_emitter.glsl — 64 bytes.
 struct vkRTEmitter_t
 {
     float pos[3];
     float radius;
     float rgb[3];
-    uint32_t texIndex; // bindless matTextures slot (0 = procedural falloff) | flags
+    uint32_t texIndex;  // bindless matTextures slot (0 = procedural falloff) | flags
+    float texMat[2][4]; // stage texture matrix rows, Doom 3 layout (m00 m01 0 m02), identity if none
 };
 
-// std430 mirror of RtGlowTri — 80 bytes. World-space triangle of an additive translucent
+// std430 mirror of RtGlowTri — 112 bytes. World-space triangle of an additive translucent
 // surface the BLAS excludes (noshadows), e.g. the Mars City bio-scanner beam.
 struct vkRTGlowTri_t
 {
@@ -48,6 +49,7 @@ struct vkRTGlowTri_t
     float t[4];    // t per vertex, w unused
     float rgb[3];
     uint32_t texIndex;
+    float texMat[2][4]; // as vkRTEmitter_t
 };
 
 // Emitter SSBO layout: VK_RT_MAX_EMITTERS discs, then VK_RT_MAX_GLOW_TRIS triangles.

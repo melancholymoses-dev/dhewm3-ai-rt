@@ -2497,8 +2497,6 @@ struct RTCVars
     idCVar *rtReflVol = nullptr;
     idCVar *rtReflVolStepLen = nullptr;
     idCVar *rtReflFlashGlow = nullptr;
-    idCVar *rtReflMuzzleGlow = nullptr;
-    idCVar *rtReflMuzzleGlowGain = nullptr;
     idCVar *rtGuiReflections = nullptr;
     idCVar *rtReflOpaqueHalfRes = nullptr;
     idCVar *rtReflAtrousFireflyClamp = nullptr;
@@ -2628,8 +2626,6 @@ static void InitRTOptionsMenu()
     rtCVars.rtReflVol = FindTabCVar("r_rtReflVol", rtTabCVars);
     rtCVars.rtReflVolStepLen = FindTabCVar("r_rtReflVolStepLen", rtTabCVars);
     rtCVars.rtReflFlashGlow = FindTabCVar("r_rtReflFlashGlow", rtTabCVars);
-    rtCVars.rtReflMuzzleGlow = FindTabCVar("r_rtReflMuzzleGlow", rtTabCVars);
-    rtCVars.rtReflMuzzleGlowGain = FindTabCVar("r_rtReflMuzzleGlowGain", rtTabCVars);
     rtCVars.rtGuiReflections = FindTabCVar("r_rtGuiReflections", rtTabCVars);
     rtCVars.rtReflOpaqueHalfRes = FindTabCVar("r_rtReflOpaqueHalfRes", rtTabCVars);
     rtCVars.rtReflAtrousFireflyClamp = FindTabCVar("r_rtReflAtrousFireflyClamp", rtTabCVars);
@@ -3000,8 +2996,6 @@ static void DrawRTAdvancedOptions(bool rtEnabled)
         RTSliderFloat("Max Reflection Distance", rtCVars.rtReflectionDistance, 100.0f, 5000.0f, "%.0f");
         RTCheckbox("Projectiles in Reflections", rtCVars.rtReflGlow);
         RTCheckbox("Flashlight Lamp in Reflections", rtCVars.rtReflFlashGlow);
-        RTCheckbox("Muzzle Flash in Reflections", rtCVars.rtReflMuzzleGlow);
-        RTSliderFloat("Muzzle Flash Brightness", rtCVars.rtReflMuzzleGlowGain, 0.0f, 4.0f, "%.2f");
         ImGui::TableNextColumn();
         RTSliderFloat("Rough Highlight Damping", rtCVars.rtReflRoughLumExp, 0.0f, 8.0f, "%.1f");
         RTCheckbox("Light Shafts in Reflections", rtCVars.rtReflVol);
