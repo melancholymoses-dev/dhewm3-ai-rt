@@ -305,6 +305,7 @@ class idCommon
         RUMBLE_HIT,
         RUMBLE_DAMAGE,
         RUMBLE_STEP, // big-monster footsteps; append new categories so older engines reject them
+        RUMBLE_SHAKE, // screen shake from sound shaders with `shakes`
         RUMBLE_NUM_CATEGORIES
     };
 

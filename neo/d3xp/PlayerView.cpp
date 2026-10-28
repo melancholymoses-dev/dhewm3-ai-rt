@@ -453,6 +453,13 @@ void idPlayerView::CalculateShake()
     shakeAng[0] = gameLocal.random.CRandomFloat() * shakeVolume;
     shakeAng[1] = gameLocal.random.CRandomFloat() * shakeVolume;
     shakeAng[2] = gameLocal.random.CRandomFloat() * shakeVolume;
+
+    // dhewm3-rt: shake rumble, re-posted each frame so it holds while the shake lasts.
+    if (shakeVolume > 0.0f && player == gameLocal.GetLocalPlayer())
+    {
+        Game_Rumble(idCommon::RUMBLE_SHAKE, idMath::ClampFloat(0.0f, 1.0f, shakeVolume),
+                    idMath::ClampFloat(0.0f, 0.5f, shakeVolume * 0.3f), 100);
+    }
 }
 
 /*

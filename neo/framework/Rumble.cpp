@@ -40,6 +40,8 @@ idCVar joy_rumbleDamage("joy_rumbleDamage", "1.0", CVAR_FLOAT | CVAR_ARCHIVE, "R
                         4.0f);
 idCVar joy_rumbleSteps("joy_rumbleSteps", "1.0", CVAR_FLOAT | CVAR_ARCHIVE,
                        "Rumble scale for big-monster footsteps", 0.0f, 4.0f);
+idCVar joy_rumbleShake("joy_rumbleShake", "1.0", CVAR_FLOAT | CVAR_ARCHIVE,
+                       "Rumble scale for screen shake (earthquakes, explosions)", 0.0f, 4.0f);
 idCVar joy_rumbleIdleMs("joy_rumbleIdleMs", "5000", CVAR_INTEGER | CVAR_ARCHIVE,
                         "Silence rumble when the gamepad has had no input for this long (ms). 0 = never", 0, 60000);
 idCVar joy_rumbleFloor("joy_rumbleFloor", "0.2", CVAR_FLOAT | CVAR_ARCHIVE,
@@ -76,8 +78,8 @@ static int s_stopResends = 0;   // extra zero updates still owed after a stop
 static bool s_gameLive = false; // last Rumble_Frame verdict, for transition logging
 static bool s_padIdle = false;  // no gamepad input within joy_rumbleIdleMs
 
-static const char *const s_categoryNames[idCommon::RUMBLE_NUM_CATEGORIES] = {"fire",   "melee", "hit",
-                                                                             "damage", "step"};
+static const char *const s_categoryNames[idCommon::RUMBLE_NUM_CATEGORIES] = {"fire", "melee", "hit",
+                                                                             "damage", "step", "shake"};
 
 static bool RumbleEnabled(void)
 {
@@ -104,6 +106,8 @@ static idCVar *CategoryScale(int category)
         return &joy_rumbleHit;
     case idCommon::RUMBLE_STEP:
         return &joy_rumbleSteps;
+    case idCommon::RUMBLE_SHAKE:
+        return &joy_rumbleShake;
     default:
         return &joy_rumbleDamage;
     }
