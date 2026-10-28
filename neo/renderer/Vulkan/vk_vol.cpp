@@ -59,6 +59,11 @@ idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_ARCHIVE |
                         "Max lights in the dedicated volumetric light selection (separate from "
                         "GI's own light buffer/cap).");
 
+// Sustained plasma fire puts a dozen-plus moving lights in the froxel fill for little visible fog.
+idCVar r_rtVolPlayerProjectiles("r_rtVolPlayerProjectiles", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
+                                "Include lights from the player's own projectiles (flight and explosion) in "
+                                "volumetric scattering.  They still light surfaces either way.");
+
 // --- Medium coefficients ---------------------------------------------------
 // Single-scatter transport has exactly two: extinction (drives transmittance) and
 // scattering (drives in-scatter), constrained by albedo = sigma_s/sigma_t <= 1.

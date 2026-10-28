@@ -2522,6 +2522,7 @@ struct RTCVars
     idCVar *rtVol = nullptr;
     idCVar *rtVolMaxDist = nullptr;
     idCVar *rtVolMaxLights = nullptr;
+    idCVar *rtVolPlayerProjectiles = nullptr;
     idCVar *rtVolExtinction = nullptr;
     idCVar *rtVolAlbedo = nullptr;
     idCVar *rtVolAttenuateBackground = nullptr;
@@ -2647,6 +2648,7 @@ static void InitRTOptionsMenu()
     rtCVars.rtVol = FindTabCVar("r_rtVol", rtTabCVars);
     rtCVars.rtVolMaxDist = FindTabCVar("r_rtVolMaxDist", rtTabCVars);
     rtCVars.rtVolMaxLights = FindTabCVar("r_rtVolMaxLights", rtTabCVars);
+    rtCVars.rtVolPlayerProjectiles = FindTabCVar("r_rtVolPlayerProjectiles", rtTabCVars);
     rtCVars.rtVolExtinction = FindTabCVar("r_rtVolExtinction", rtTabCVars);
     rtCVars.rtVolAlbedo = FindTabCVar("r_rtVolAlbedo", rtTabCVars);
     rtCVars.rtVolAttenuateBackground = FindTabCVar("r_rtVolAttenuateBackground", rtTabCVars);
@@ -2874,7 +2876,6 @@ static void DrawRTOptionsMenu()
     const bool giOn = rtCVars.rtGI && rtCVars.rtGI->GetBool();
     const bool volOn = rtCVars.rtVol && rtCVars.rtVol->GetBool();
     const bool tonemapOn = rtCVars.rtTonemap && rtCVars.rtTonemap->GetBool();
-    const bool bloomOn = rtCVars.rtBloom && rtCVars.rtBloom->GetBool();
     if (ImGui::BeginTable("##LookCols", 2, ImGuiTableFlags_None))
     {
         ImGui::TableNextColumn();
@@ -2885,18 +2886,11 @@ static void DrawRTOptionsMenu()
         // Extinction is per world unit: 5e-4 is T=0.78 at 500 units, 0.015 is dense smoke.
         RTSliderFloat("Fog Density", rtCVars.rtVolExtinction, 0.0f, 0.005f, "%.5f");
         ImGui::EndDisabled();
+        ImGui::TableNextColumn();
         RTCheckbox("Tonemapping", rtCVars.rtTonemap);
         ImGui::BeginDisabled(!tonemapOn);
         RTSliderFloat("Exposure", rtCVars.rtTonemapExposure, 0.1f, 4.0f, "%.2f");
         ImGui::EndDisabled();
-        ImGui::TableNextColumn();
-        ImGui::EndDisabled(); // bloom also runs without RT
-        RTCheckbox("Bloom", rtCVars.rtBloom);
-        ImGui::BeginDisabled(!bloomOn);
-        // Reaches 4: at the shipped toe of 2.7, strength below ~1 vanishes in dark surroundings.
-        RTSliderFloat("Bloom Strength", rtCVars.rtBloomStrength, 0.0f, 4.0f, "%.2f");
-        ImGui::EndDisabled();
-        ImGui::BeginDisabled(!rtEnabled);
         ImGui::EndTable();
     }
 
@@ -3034,6 +3028,7 @@ static void DrawRTAdvancedOptions(bool rtEnabled)
         ImGui::TextDisabled("General");
         RTSliderFloat("Max Dist##vol", rtCVars.rtVolMaxDist, 0.0f, 1024.0f, "%.0f");
         RTSliderInt("Max Lights##vol", rtCVars.rtVolMaxLights, 0, 96);
+        RTCheckbox("Player Projectile Lights##vol", rtCVars.rtVolPlayerProjectiles);
         RTSliderFloat("Isotropic Mix##vol", rtCVars.rtVolIsotropicMix, 0.0f, 1.0f, "%.2f");
         RTCheckbox("Attenuate Background", rtCVars.rtVolAttenuateBackground);
         RTSliderFloat("Albedo", rtCVars.rtVolAlbedo, 0.0f, 1.0f, "%.2f");
@@ -3065,10 +3060,13 @@ static void DrawRTAdvancedOptions(bool rtEnabled)
     // Bloom also runs without RT, so lift the caller's disable for this block.
     ImGui::EndDisabled();
     const bool bloomOn = rtCVars.rtBloom && rtCVars.rtBloom->GetBool();
-    ImGui::BeginDisabled(!bloomOn);
     ImGui::SeparatorText("Bloom");
+    RTCheckbox("Bloom", rtCVars.rtBloom);
+    ImGui::BeginDisabled(!bloomOn);
     ImGui::TextDisabled("Sourced from what the blend stages add, not from scene brightness,\n"
                         "so lit walls do not glow.");
+    // Reaches 4: at the shipped toe of 2.7, strength below ~1 vanishes in dark surroundings.
+    RTSliderFloat("Bloom Strength", rtCVars.rtBloomStrength, 0.0f, 4.0f, "%.2f");
     RTSliderInt("Radius (blur levels)", rtCVars.rtBloomMips, 2, 6);
     ImGui::TextDisabled("Radius changes spread only — brightness stays with Strength.");
     if (ImGui::TreeNode("Lit-surface term"))

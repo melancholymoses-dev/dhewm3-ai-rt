@@ -276,20 +276,24 @@ static inline uint32_t VK_FillHdrBlendAttachments(VkPipelineColorBlendAttachment
 //
 // VK_BeginSingleTimeCommands / VK_EndSingleTimeCommands accumulate all upload
 // commands into one command buffer per batch.  VK_EndSingleTimeCommands is a
-// no-op; call VK_FlushPendingUploads() once at frame start to submit the
-// batch with a single fence wait.  Register staging buffers that must stay
-// alive until the flush via VK_DeferStagingFree().
+// no-op.  VK_SubmitPendingUploads() submits at frame start without a CPU wait;
+// VK_FlushPendingUploads() submits and waits, for callers that need the result now.
+// Register staging buffers that must stay alive until the batch completes via
+// VK_DeferStagingFree().
 // ---------------------------------------------------------------------------
+
+static const int VK_UPLOAD_BATCHES = 2; // batches in rotation, one staging-ring segment each
 
 VkCommandBuffer VK_BeginSingleTimeCommands(void);
 void VK_EndSingleTimeCommands(VkCommandBuffer cmd); // no-op; kept for call-site compatibility
 void VK_DeferStagingFree(VkBuffer buf, VkDeviceMemory mem);
+void VK_SubmitPendingUploads(void);
 void VK_FlushPendingUploads(void);
 void VK_ShutdownUploadBatch(void);
 
-// Shared staging ring for vertex-cache uploads (vk_buffer.cpp). Reset after each flush,
-// destroyed with the upload batch.
-void VK_StagingRing_Reset(void);
+// Staging ring for vertex-cache uploads (vk_buffer.cpp), one segment per upload batch.
+// A batch claims its segment when it opens; destroyed with the upload batches.
+void VK_StagingRing_BeginSegment(int segment);
 void VK_StagingRing_Shutdown(void);
 
 // ---------------------------------------------------------------------------

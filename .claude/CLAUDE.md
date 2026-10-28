@@ -44,6 +44,7 @@ contract (what the renderer is trying to be), the correctness rules from debuggi
 If there are complex options, favour generating logs and debugging over theoretical discussions.  
 We can figure it out if we can see a log.  This goes for bugs, as well as analyzing graphical errors.  
 For graphical/GPU debugging suggest a way of outputting color coding for the relevant objects to allow visual inspection.
+At the end of the phase remove views that are unlikely to be useful in the future. 
 
 When adding new shaders update CMakelists.  For glsl files add them to the GLSL_INCLUDES.
 
@@ -63,9 +64,9 @@ Do not attempt to configure or build the project.  A separate process will handl
 
 ## Copyright Notices
 
-When adding a new file include a comment at the top describing the file.
+When adding a new source code file include a comment at the top describing the file.
 Then add this block to demarcate new additions so it is clear what our changes are.
-This does not apply to files under a license (like AMD FSR).
+This does not apply to files under a license (like AMD FSR), or markdown docs.
 ```
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source

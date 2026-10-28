@@ -63,6 +63,7 @@ Each cost a debugging session. They apply to any new RT code.
 | Per-object GPU buffers come from a `vk_buffer_pool`, never their own `vkAllocateMemory` | ~0.3 ms per call on Windows regardless of size; per-surface allocation made a 35-BLAS first-sight frame cost 133 ms |
 | A volume march's step **length** is capped in world units; the step count is only a ceiling | `hitT/n` stretches a fixed count over any segment, so a missed ray puts ~167 units of path behind one froxel tap. Near-camera cells are small and bright and grazing rays skim them — the over-estimate outlines reflective silhouettes in white |
 | The player's muzzle-flash light is the flashlight **and** every weapon's firing flash | `idWeapon` builds one `muzzleFlash` from the def's `mtr_flashShader`. Anything keyed on `VK_RT_PlayerSuppressesLight` gets both. Split on `pointLight`: `flashPointLight` defaults to 1, only `weapon_flashlight.def` sets 0 |
+| Frame-start uploads are submitted with no CPU wait; the frame command buffer's opening barrier is what orders them. Code that needs an upload finished on the CPU, or reads it from another submit, calls the blocking `VK_FlushPendingUploads` | Animated md5 and particle surfaces re-allocate every frame, so a blocking flush there serialises CPU and GPU: ~4 ms lost per frame, enough to tip a 9070 XT from 60 to 48 under FIFO |
 | `neo/game` and `neo/d3xp` are mirrored | Near-identical trees; a one-sided change is a latent expansion-pack bug |
 
 ---

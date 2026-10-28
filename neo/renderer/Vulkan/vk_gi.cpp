@@ -496,6 +496,7 @@ extern float VK_RT_PlayerExcludeRadius(void); // vk_shadows.cpp — 0 unless the
 extern idCVar r_rtVolMaxLights;               // defined in vk_vol.cpp — cap for the vol-only selection built below
 float g_vkVolMaxLightReach = 0.0f;            // consumed by VK_RT_Pass2CullRadius (vk_accelstruct.cpp)
 extern idCVar r_rtVolMaxDist;                 // defined in vk_vol.cpp — vol march reach, used to filter that selection
+extern idCVar r_rtVolPlayerProjectiles;       // defined in vk_vol.cpp — 0 keeps player projectile lights out of it
 
 // ---------------------------------------------------------------------------
 // VK_RT_CreateGILightSsbos / VK_RT_DestroyGILightSsbos
@@ -1440,6 +1441,7 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         int tier;           // distance tier 0-3 (0-128 / 128-320 / 320-768 / 768+)
         int lightIdx;       // index into lightDefs — stable identity for hysteresis
         float flickerDepth; // 1 - lowest s seen recently. 0 for a steady light
+        bool volExcluded;   // GI-only: kept out of the vol selection
         GILightEntry entry;
         GILightCookie cookie; // valid only when entry.flags & GI_LIGHT_FLAG_HAS_COOKIE
     };
@@ -1457,6 +1459,7 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     const int prevUploadFrame = s_prevUploadFrameNum;
 
     const float whiteWeight = idMath::ClampFloat(0.0f, 1.0f, r_rtGIWhiteWeight.GetFloat());
+    const bool volPlayerProjectiles = r_rtVolPlayerProjectiles.GetBool();
 
     // Classifier clock: the game's millisecond clock, so the hold survives frame-rate changes and pauses.
     const int nowMs = viewDef->renderView.time;
@@ -1564,6 +1567,7 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             c.distSq = dSq;
             c.lightIdx = li;
             c.flickerDepth = flicker.depth;
+            c.volExcluded = p.rtPlayerProjectile && !volPlayerProjectiles;
 
             // Distance tier (world units): 0-128 / 128-320 / 320-768 / 768+.
             const float dist = idMath::Sqrt(dSq);
@@ -1884,6 +1888,8 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             for (int i = 0; i < numCandidates && volLb->numLights < volCutoff; i++)
             {
                 const Candidate &c = s_candidates[i];
+                if (c.volExcluded)
+                    continue;
                 const float reach = volMaxDist + c.entry.posRadius[3];
                 if (c.distSq > reach * reach)
                     continue; // light's sphere/cone can never reach a march sample — skip, don't burn a slot
@@ -1993,6 +1999,8 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         for (int i = 0; i < numSelected && numVolSelected < volCutoff; i++)
         {
             const Candidate *c = s_selected[i];
+            if (c->volExcluded)
+                continue;
             const float reach = volMaxDist + c->entry.posRadius[3];
             if (c->distSq > reach * reach)
                 continue; // can never reach a march sample — skip, don't burn a vol slot

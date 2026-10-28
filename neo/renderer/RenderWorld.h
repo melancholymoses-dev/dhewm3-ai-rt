@@ -219,6 +219,10 @@ typedef struct renderLight_s
     const idMaterial *shader; // NULL = either lights/defaultPointLight or lights/defaultProjectedLight
     float shaderParms[MAX_ENTITY_SHADER_PARMS]; // can be used in any way by shader
     idSoundEmitter *referenceSound;             // for shader sound tables, allowing effects to vary with sounds
+
+    // dhewm3-rt: flight or explosion light of a player-fired projectile; volumetrics may skip it
+    // (r_rtVolPlayerProjectiles).  Kept last so the offsets of the fields above stay unchanged.
+    bool rtPlayerProjectile;
 } renderLight_t;
 
 typedef struct renderView_s

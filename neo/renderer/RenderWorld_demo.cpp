@@ -597,6 +597,7 @@ void idRenderWorldLocal::ReadRenderLight()
     {
         light.referenceSound = NULL;
     }
+    light.rtPlayerProjectile = false; // dhewm3-rt: not in the demo format
 
     UpdateLightDef(index, &light);
 

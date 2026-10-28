@@ -102,18 +102,20 @@ bool VK_CreateBufferPreferred(VkDeviceSize size, VkBufferUsageFlags usage, VkMem
 // VK_UploadBuffer - copy data into a device-local buffer via a staging buffer
 // ---------------------------------------------------------------------------
 
-// Staging ring: one persistently mapped host-visible buffer shared by every upload in the
-// open batch, replacing a create/alloc/map/free staging buffer per call. Reset once the
-// batch has been submitted and waited on (VK_FlushPendingUploads via VK_StagingRing_Reset).
-static const VkDeviceSize VK_STAGING_RING_SIZE = 16u * 1024u * 1024u;
+// Staging ring: one persistently mapped host-visible buffer, split into one segment per
+// upload batch, replacing a create/alloc/map/free staging buffer per call.  The open batch
+// writes only its own segment, so the previous batch can still be copying from its own.
+static const VkDeviceSize VK_STAGING_SEGMENT_SIZE = 16u * 1024u * 1024u;
 static const VkDeviceSize VK_STAGING_ALIGN = 16;
 static VkBuffer s_stagingRingBuf = VK_NULL_HANDLE;
 static VkDeviceMemory s_stagingRingMem = VK_NULL_HANDLE;
 static byte *s_stagingRingPtr = NULL;
-static VkDeviceSize s_stagingRingOffset = 0;
+static VkDeviceSize s_stagingSegmentBase = 0;
+static VkDeviceSize s_stagingRingOffset = 0; // within the current segment
 
-void VK_StagingRing_Reset(void)
+void VK_StagingRing_BeginSegment(int segment)
 {
+    s_stagingSegmentBase = (VkDeviceSize)segment * VK_STAGING_SEGMENT_SIZE;
     s_stagingRingOffset = 0;
 }
 
@@ -128,40 +130,43 @@ void VK_StagingRing_Shutdown(void)
     s_stagingRingBuf = VK_NULL_HANDLE;
     s_stagingRingMem = VK_NULL_HANDLE;
     s_stagingRingPtr = NULL;
+    s_stagingSegmentBase = 0;
     s_stagingRingOffset = 0;
 }
 
-// Returns false when the request can't use the ring (larger than the ring itself).
+// Returns false when the request can't use the ring (larger than one segment).
 static bool VK_UploadBufferRing(VkBuffer dstBuffer, VkDeviceSize dstOffset, const void *data, VkDeviceSize size)
 {
-    if (size > VK_STAGING_RING_SIZE)
+    if (size > VK_STAGING_SEGMENT_SIZE)
         return false;
 
     if (s_stagingRingBuf == VK_NULL_HANDLE)
     {
-        VK_CreateBuffer(VK_STAGING_RING_SIZE, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        const VkDeviceSize ringSize = VK_STAGING_SEGMENT_SIZE * VK_UPLOAD_BATCHES;
+        VK_CreateBuffer(ringSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &s_stagingRingBuf,
                         &s_stagingRingMem);
         void *mapped = NULL;
-        VK_CHECK(vkMapMemory(vk.device, s_stagingRingMem, 0, VK_STAGING_RING_SIZE, 0, &mapped));
+        VK_CHECK(vkMapMemory(vk.device, s_stagingRingMem, 0, ringSize, 0, &mapped));
         s_stagingRingPtr = (byte *)mapped;
-        s_stagingRingOffset = 0;
     }
 
+    // Opening the batch first selects the segment this copy will use.
+    VkCommandBuffer cmd = VK_BeginSingleTimeCommands();
     VkDeviceSize start = (s_stagingRingOffset + VK_STAGING_ALIGN - 1) & ~(VK_STAGING_ALIGN - 1);
-    if (start + size > VK_STAGING_RING_SIZE)
+    if (start + size > VK_STAGING_SEGMENT_SIZE)
     {
-        // Ring full: submit and wait on what is recorded so far, which also resets the ring.
+        // Segment full: submit and wait on what is recorded so far, then continue in a fresh batch.
         VK_FlushPendingUploads();
+        cmd = VK_BeginSingleTimeCommands();
         start = 0;
     }
 
-    memcpy(s_stagingRingPtr + start, data, (size_t)size);
+    memcpy(s_stagingRingPtr + s_stagingSegmentBase + start, data, (size_t)size);
     s_stagingRingOffset = start + size;
     VK_Prof_Add(VKPROF_UPLOAD_KB, (double)size / 1024.0);
 
-    VkCommandBuffer cmd = VK_BeginSingleTimeCommands();
-    VkBufferCopy region = {start, dstOffset, size};
+    VkBufferCopy region = {s_stagingSegmentBase + start, dstOffset, size};
     vkCmdCopyBuffer(cmd, s_stagingRingBuf, dstBuffer, 1, &region);
     VK_EndSingleTimeCommands(cmd);
     return true;
@@ -193,8 +198,7 @@ static void VK_UploadBufferAt(VkBuffer dstBuffer, VkDeviceSize dstOffset, const 
 
     VK_EndSingleTimeCommands(cmd);
 
-    // Staging buffer must stay alive until the GPU copy completes.
-    // VK_FlushPendingUploads() will wait on the fence then free it.
+    // Staging buffer must stay alive until the GPU copy completes; the batch frees it on retire.
     VK_DeferStagingFree(staging, stagingMem);
 }
 
@@ -323,7 +327,7 @@ void VK_VertexCache_Alloc(vertCache_t *block, const void *data, int size, bool i
     VK_UploadBufferAt(bd->range.buf, bd->range.offset, data, (VkDeviceSize)size);
     s_bufferLiveCount++;
     s_bufferLiveBytes += bd->size;
-    // Heavy frames allocate 7-27 of these, and each one forces the upload flush.
+    // Animated md5 and particle surfaces re-allocate every frame (~20-30 in combat).
     VK_Prof_Add(VKPROF_UPLOAD_STATICBLOCKS, 1.0);
     block->backendData = bd;
 }

@@ -550,20 +550,18 @@ static void VKimp_CreateSyncObjects(void)
 }
 
 // ---------------------------------------------------------------------------
-// Batched upload command buffer
+// Batched upload command buffers
 //
-// All VK_BeginSingleTimeCommands / VK_EndSingleTimeCommands calls within a
-// frame accumulate into ONE command buffer.  VK_EndSingleTimeCommands is a
-// no-op; staging memory is registered via VK_DeferStagingFree and kept alive
-// until VK_FlushPendingUploads() submits the batch, waits on a fence, then
-// frees everything at once.  This replaces N serial vkQueueWaitIdle calls
-// (one per texture/buffer upload) with a single wait at frame start.
+// All VK_BeginSingleTimeCommands / VK_EndSingleTimeCommands calls between submits
+// accumulate into ONE open batch.  Batches rotate through VK_UPLOAD_BATCHES slots; each
+// owns a staging-ring segment and its oversize staging buffers, released when its fence
+// signals.
+//
+// VK_SubmitPendingUploads (frame start) submits without a CPU wait.  The frame command
+// buffer opens with a global barrier, which covers the batch through queue submission
+// order.  VK_FlushPendingUploads submits and waits for every batch, for callers that
+// need the result on the CPU or before the next frame starts.
 // ---------------------------------------------------------------------------
-
-static VkCommandBuffer s_uploadCmdBuf = VK_NULL_HANDLE;
-static VkFence s_uploadFence = VK_NULL_HANDLE;
-static bool s_uploadBatchPoisoned = false;
-static uint64_t s_uploadBatchSerial = 0;
 
 struct vkStagingEntry_t
 {
@@ -571,77 +569,41 @@ struct vkStagingEntry_t
     VkDeviceMemory mem;
 };
 static const int VK_MAX_PENDING_STAGING = 512;
-static vkStagingEntry_t s_pendingStaging[VK_MAX_PENDING_STAGING];
-static int s_pendingStagingCount = 0;
 
-static void VK_ReleasePendingStagingUploads(void)
+struct vkUploadBatch_t
 {
-    for (int i = 0; i < s_pendingStagingCount; i++)
+    VkCommandBuffer cmd;
+    VkFence fence;
+    bool inFlight;
+    vkStagingEntry_t staging[VK_MAX_PENDING_STAGING];
+    int stagingCount;
+};
+
+static vkUploadBatch_t s_uploadBatches[VK_UPLOAD_BATCHES];
+static int s_openBatch = -1; // batch being recorded, -1 = none
+static int s_nextBatch = 0;
+static bool s_uploadBatchPoisoned = false;
+static uint64_t s_uploadBatchSerial = 0;
+
+static void VK_ReleaseUploadBatch(vkUploadBatch_t &b)
+{
+    for (int i = 0; i < b.stagingCount; i++)
     {
-        if (s_pendingStaging[i].buf != VK_NULL_HANDLE)
-            vkDestroyBuffer(vk.device, s_pendingStaging[i].buf, NULL);
-        if (s_pendingStaging[i].mem != VK_NULL_HANDLE)
-            vkFreeMemory(vk.device, s_pendingStaging[i].mem, NULL);
+        if (b.staging[i].buf != VK_NULL_HANDLE)
+            vkDestroyBuffer(vk.device, b.staging[i].buf, NULL);
+        if (b.staging[i].mem != VK_NULL_HANDLE)
+            vkFreeMemory(vk.device, b.staging[i].mem, NULL);
     }
-    s_pendingStagingCount = 0;
-    VK_StagingRing_Reset(); // every flush path ends here, so the ring is reusable once the batch is done
+    b.stagingCount = 0;
+    if (b.cmd != VK_NULL_HANDLE)
+    {
+        vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &b.cmd);
+        b.cmd = VK_NULL_HANDLE;
+    }
+    b.inFlight = false;
 }
 
-static void VK_DiscardUploadBatchCmdBuf(void)
-{
-    if (s_uploadCmdBuf != VK_NULL_HANDLE)
-    {
-        vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &s_uploadCmdBuf);
-        s_uploadCmdBuf = VK_NULL_HANDLE;
-    }
-}
-
-VkCommandBuffer VK_BeginSingleTimeCommands(void)
-{
-    if (s_uploadCmdBuf != VK_NULL_HANDLE)
-        return s_uploadCmdBuf; // accumulate into open batch
-
-    if (s_uploadFence == VK_NULL_HANDLE)
-    {
-        VkFenceCreateInfo fi = {};
-        fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        VK_CHECK(vkCreateFence(vk.device, &fi, NULL, &s_uploadFence));
-    }
-
-    VkCommandBufferAllocateInfo allocInfo = {};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandPool = vk.commandPool;
-    allocInfo.commandBufferCount = 1;
-    VK_CHECK(vkAllocateCommandBuffers(vk.device, &allocInfo, &s_uploadCmdBuf));
-
-    VkCommandBufferBeginInfo beginInfo = {};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    VK_CHECK(vkBeginCommandBuffer(s_uploadCmdBuf, &beginInfo));
-    return s_uploadCmdBuf;
-}
-
-void VK_EndSingleTimeCommands(VkCommandBuffer /*cmd*/)
-{
-    // No-op: the batch stays open until VK_FlushPendingUploads().
-}
-
-void VK_DeferStagingFree(VkBuffer buf, VkDeviceMemory mem)
-{
-    if (s_pendingStagingCount < VK_MAX_PENDING_STAGING)
-    {
-        s_pendingStaging[s_pendingStagingCount++] = {buf, mem};
-    }
-    else
-    {
-        // Overflow: flush now to make room (rare, only if > 512 uploads in one batch).
-        VK_FlushPendingUploads();
-        s_pendingStaging[s_pendingStagingCount++] = {buf, mem};
-    }
-}
-
-// Marks the batch unusable and says why — every later flush only logs "skipped".
+// Marks the batch state unusable and says why — every later submit only logs "skipped".
 static void VK_PoisonUploadBatch(const char *stage, VkResult result, uint64_t batchId, uint32_t pendingCount)
 {
     s_uploadBatchPoisoned = true;
@@ -650,87 +612,161 @@ static void VK_PoisonUploadBatch(const char *stage, VkResult result, uint64_t ba
     fflush(NULL);
 }
 
-void VK_FlushPendingUploads(void)
+// Waits for one submitted batch (normally already signaled) and frees what it held.
+static void VK_RetireUploadBatch(int idx)
 {
-    if (s_uploadCmdBuf == VK_NULL_HANDLE)
+    vkUploadBatch_t &b = s_uploadBatches[idx];
+    if (!b.inFlight)
         return;
+    VkResult waitResult = VK_Prof_WaitForFences(VKPROF_WAIT_UPLOAD_FLUSH, 1, &b.fence, VK_TRUE, UINT64_MAX);
+    if (waitResult != VK_SUCCESS)
+        VK_PoisonUploadBatch("vkWaitForFences", waitResult, s_uploadBatchSerial, (uint32_t)b.stagingCount);
+    VK_ReleaseUploadBatch(b);
+}
+
+static void VK_RetireAllUploadBatches(void)
+{
+    for (int i = 0; i < VK_UPLOAD_BATCHES; i++)
+        VK_RetireUploadBatch(i);
+}
+
+VkCommandBuffer VK_BeginSingleTimeCommands(void)
+{
+    if (s_openBatch >= 0)
+        return s_uploadBatches[s_openBatch].cmd; // accumulate into open batch
+
+    const int idx = s_nextBatch;
+    VK_RetireUploadBatch(idx); // its staging segment is about to be overwritten
+    vkUploadBatch_t &b = s_uploadBatches[idx];
+
+    if (b.fence == VK_NULL_HANDLE)
+    {
+        VkFenceCreateInfo fi = {};
+        fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        VK_CHECK(vkCreateFence(vk.device, &fi, NULL, &b.fence));
+    }
+
+    VkCommandBufferAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool = vk.commandPool;
+    allocInfo.commandBufferCount = 1;
+    VK_CHECK(vkAllocateCommandBuffers(vk.device, &allocInfo, &b.cmd));
+
+    VkCommandBufferBeginInfo beginInfo = {};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    VK_CHECK(vkBeginCommandBuffer(b.cmd, &beginInfo));
+
+    // The previous batch may still be copying; order its writes before this batch's.
+    VkMemoryBarrier waw = {};
+    waw.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    waw.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    waw.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(b.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &waw, 0, NULL, 0,
+                         NULL);
+
+    VK_StagingRing_BeginSegment(idx);
+    s_openBatch = idx;
+    s_nextBatch = (idx + 1) % VK_UPLOAD_BATCHES;
+    return b.cmd;
+}
+
+void VK_EndSingleTimeCommands(VkCommandBuffer /*cmd*/)
+{
+    // No-op: the batch stays open until the next submit or flush.
+}
+
+void VK_DeferStagingFree(VkBuffer buf, VkDeviceMemory mem)
+{
+    VK_BeginSingleTimeCommands(); // the buffer belongs to the open batch
+    if (s_uploadBatches[s_openBatch].stagingCount >= VK_MAX_PENDING_STAGING)
+    {
+        // Overflow: flush now to make room (rare, only if > 512 uploads in one batch).
+        VK_FlushPendingUploads();
+        VK_BeginSingleTimeCommands();
+    }
+    vkUploadBatch_t &b = s_uploadBatches[s_openBatch];
+    b.staging[b.stagingCount++] = {buf, mem};
+}
+
+// Submits the open batch with its fence and no CPU wait.
+static void VK_SubmitOpenBatch(void)
+{
+    if (s_openBatch < 0)
+        return;
+    vkUploadBatch_t &b = s_uploadBatches[s_openBatch];
+    s_openBatch = -1;
 
     const uint64_t batchId = ++s_uploadBatchSerial;
-    const uint32_t pendingCount = s_pendingStagingCount;
+    const uint32_t pendingCount = (uint32_t)b.stagingCount;
 
     if (s_uploadBatchPoisoned)
     {
-        // Previous upload submit failed (typically device lost). Avoid replaying
+        // A previous submit failed (typically device lost). Avoid replaying
         // a one-time command buffer during shutdown/fatal cleanup.
         common->Warning("VK: upload batch #%llu skipped because batch state is poisoned", (unsigned long long)batchId);
         fflush(NULL);
-        VK_ReleasePendingStagingUploads();
-        VK_DiscardUploadBatchCmdBuf();
+        VK_ReleaseUploadBatch(b);
         return;
     }
 
-    VkResult endResult = vkEndCommandBuffer(s_uploadCmdBuf);
-    if (endResult != VK_SUCCESS)
+    VkResult result = vkEndCommandBuffer(b.cmd);
+    if (result == VK_SUCCESS)
+        result = vkResetFences(vk.device, 1, &b.fence);
+    if (result != VK_SUCCESS)
     {
-        VK_PoisonUploadBatch("vkEndCommandBuffer", endResult, batchId, pendingCount);
-        VK_ReleasePendingStagingUploads();
-        VK_DiscardUploadBatchCmdBuf();
-        return;
-    }
-
-    VkResult resetResult = vkResetFences(vk.device, 1, &s_uploadFence);
-    if (resetResult != VK_SUCCESS)
-    {
-        VK_PoisonUploadBatch("vkResetFences", resetResult, batchId, pendingCount);
-        VK_ReleasePendingStagingUploads();
-        VK_DiscardUploadBatchCmdBuf();
+        VK_PoisonUploadBatch("vkEndCommandBuffer/vkResetFences", result, batchId, pendingCount);
+        VK_ReleaseUploadBatch(b);
         return;
     }
 
     VkSubmitInfo si = {};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
-    si.pCommandBuffers = &s_uploadCmdBuf;
-    VkResult submitResult = vkQueueSubmit(vk.graphicsQueue, 1, &si, s_uploadFence);
-    if (submitResult != VK_SUCCESS)
+    si.pCommandBuffers = &b.cmd;
+    result = vkQueueSubmit(vk.graphicsQueue, 1, &si, b.fence);
+    if (result != VK_SUCCESS)
     {
-        VK_PoisonUploadBatch("vkQueueSubmit", submitResult, batchId, pendingCount);
-        VK_ReleasePendingStagingUploads();
-        VK_DiscardUploadBatchCmdBuf();
+        VK_PoisonUploadBatch("vkQueueSubmit", result, batchId, pendingCount);
+        VK_ReleaseUploadBatch(b);
         return;
     }
 
     VK_Prof_Add(VKPROF_UPLOAD_FLUSHES, 1.0);
-    VkResult waitResult = VK_Prof_WaitForFences(VKPROF_WAIT_UPLOAD_FLUSH, 1, &s_uploadFence, VK_TRUE, UINT64_MAX);
-    if (waitResult != VK_SUCCESS)
-    {
-        VK_PoisonUploadBatch("vkWaitForFences", waitResult, batchId, pendingCount);
-        VK_ReleasePendingStagingUploads();
-        VK_DiscardUploadBatchCmdBuf();
-        return;
-    }
+    b.inFlight = true;
+}
 
-    VK_ReleasePendingStagingUploads();
-    VK_DiscardUploadBatchCmdBuf();
+void VK_SubmitPendingUploads(void)
+{
+    // Batches from earlier frames ran ahead of the frame whose fence was just waited on,
+    // so this retire is expected to cost ~0.  It must precede the garbage drain: a block
+    // freed since then may still be the target of one of their copies.
+    VK_RetireAllUploadBatches();
+    VK_SubmitOpenBatch();
+}
+
+void VK_FlushPendingUploads(void)
+{
+    VK_SubmitOpenBatch();
+    VK_RetireAllUploadBatches();
 }
 
 void VK_ShutdownUploadBatch(void)
 {
-    if (!s_uploadBatchPoisoned)
-    {
-        VK_FlushPendingUploads();
-    }
-    else
-    {
-        VK_ReleasePendingStagingUploads();
-        VK_DiscardUploadBatchCmdBuf();
-    }
+    VK_FlushPendingUploads();
 
-    if (s_uploadFence != VK_NULL_HANDLE)
+    for (int i = 0; i < VK_UPLOAD_BATCHES; i++)
     {
-        vkDestroyFence(vk.device, s_uploadFence, NULL);
-        s_uploadFence = VK_NULL_HANDLE;
+        VK_ReleaseUploadBatch(s_uploadBatches[i]);
+        if (s_uploadBatches[i].fence != VK_NULL_HANDLE)
+        {
+            vkDestroyFence(vk.device, s_uploadBatches[i].fence, NULL);
+            s_uploadBatches[i].fence = VK_NULL_HANDLE;
+        }
     }
+    s_openBatch = -1;
+    s_nextBatch = 0;
 
     VK_StagingRing_Shutdown();
     s_uploadBatchPoisoned = false;

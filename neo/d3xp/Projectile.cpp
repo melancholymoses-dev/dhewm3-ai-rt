@@ -193,6 +193,8 @@ void idProjectile::Restore(idRestoreGame *savefile)
     savefile->ReadInt(thrust_end);
 
     savefile->ReadRenderLight(renderLight);
+    // dhewm3-rt: not in the savegame format; derive it from the owner.
+    renderLight.rtPlayerProjectile = owner.GetEntity() && owner.GetEntity()->IsType(idPlayer::Type);
     savefile->ReadInt((int &)lightDefHandle);
     savefile->ReadVec3(lightOffset);
     savefile->ReadInt(lightStartTime);
@@ -291,6 +293,8 @@ void idProjectile::Create(idEntity *owner, const idVec3 &start, const idVec3 &di
         renderLight.shaderParms[2] = light_color[2];
         renderLight.shaderParms[3] = 1.0f;
     }
+    // dhewm3-rt: survives into Explode(), which reuses renderLight for the explosion light.
+    renderLight.rtPlayerProjectile = owner && owner->IsType(idPlayer::Type);
 
     spawnArgs.GetVector("light_offset", "0 0 0", lightOffset);
 

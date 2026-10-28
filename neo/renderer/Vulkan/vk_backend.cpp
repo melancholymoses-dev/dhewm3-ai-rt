@@ -4496,10 +4496,11 @@ void VK_RB_DrawView(const void *data)
         vkResetFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame]);
         common->DPrintf("VK: frame slot %u, image %u\n", vk.currentFrame, imageIndex);
 
-        // Flush queued uploads (one submit + one fence wait).  Before the drain: the batch can
-        // copy into buffers freed since the last flush.
+        // Submit queued uploads without a CPU wait; the barrier after vkBeginCommandBuffer orders
+        // them before this frame.  Before the drain: it retires older batches that may copy into
+        // buffers freed since.
         const uint64_t cpuUploadStart = VK_RTProfile_CPUStamp();
-        VK_FlushPendingUploads();
+        VK_SubmitPendingUploads();
         const uint64_t cpuUploadEnd = VK_RTProfile_CPUStamp();
 
         // Drain deferred image, buffer, and BLAS deletions queued during the previous use of this frame slot.
@@ -4531,6 +4532,18 @@ void VK_RB_DrawView(const void *data)
         {
             common->Warning("VK: vkBeginCommandBuffer failed, aborting frame");
             return;
+        }
+
+        // Upload batches are separate submits with no CPU wait.  A barrier's first scope spans
+        // every earlier submission on the queue, so this makes their copies and layout
+        // transitions visible to everything the frame does.
+        {
+            VkMemoryBarrier uploadsDone = {};
+            uploadsDone.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            uploadsDone.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+            uploadsDone.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+            vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1,
+                                 &uploadsDone, 0, NULL, 0, NULL);
         }
 
         VK_RTProfile_BeginFrame(cmdBuf, (int)vk.currentFrame);
