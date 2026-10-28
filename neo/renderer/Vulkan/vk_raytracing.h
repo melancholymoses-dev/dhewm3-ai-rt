@@ -1017,6 +1017,11 @@ void VK_RT_MatTableLevelLoadReset(void);
 bool VK_RT_MaterialIsEmissive(const idMaterial *shader, idImage **outEmissiveImage, bool *outGuiEmissive,
                               bool *outIsCinematic = NULL);
 
+// SURFTYPE_GLASS minus translucent materials that only mask: `glass` is the impact type,
+// so cherub wings carry it.  A filter-only or specular/bump-only translucent stage set
+// has a texture-shaped mask the RT glass paths can't see.
+bool VK_RT_IsGlassPane(const idMaterial *shader);
+
 // Public wrapper around the material table's bindless-slot assignment
 // (vk_material_table.cpp's file-local GetOrAssignTexIndex), for callers
 // outside that file that need to register an image into the same bindless

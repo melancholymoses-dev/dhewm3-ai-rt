@@ -2496,8 +2496,8 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
         // --- RT reflection overlay for glass surfaces ---
         // One extra additive draw of the reflection buffer after the surface's stages.
-        // SURFTYPE_GLASS only, not coronas, halos or other MC_TRANSLUCENT surfaces.
-        if (mat->GetSurfaceType() == SURFTYPE_GLASS && !reflDebugActive && r_useRayTracing.GetBool() &&
+        // Glass panes only, not coronas, halos, cherub wings or other MC_TRANSLUCENT surfaces.
+        if (VK_RT_IsGlassPane(mat) && !reflDebugActive && r_useRayTracing.GetBool() &&
             r_rtReflections.GetBool() && vk.rayTracingSupported && vkRT.isInitialized &&
             vkPipes.glassReflPipeline != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE &&
             VK_RT_ReflReadReady(vk.currentFrame))

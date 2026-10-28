@@ -1955,7 +1955,7 @@ void VK_RT_ResizeReflections(uint32_t width, uint32_t height)
 
 // ---------------------------------------------------------------------------
 // VK_RT_GlassScreenRect
-// Union of every SURFTYPE_GLASS surface's frontend scissorRect, in Vulkan Y-down pixels.
+// Union of every glass pane's (VK_RT_IsGlassPane) frontend scissorRect, in Vulkan Y-down pixels.
 // False = no glass in view.  The display-space rect is scaled into render space and
 // clamped to renderExtent, not the buffer; otherwise glass reflections silently go missing.
 // ---------------------------------------------------------------------------
@@ -1975,7 +1975,7 @@ static bool VK_RT_GlassScreenRect(const viewDef_t *viewDef, uint32_t bufW, uint3
         const drawSurf_t *surf = viewDef->drawSurfs[i];
         if (!surf || !surf->material)
             continue;
-        if (surf->material->GetSurfaceType() != SURFTYPE_GLASS)
+        if (!VK_RT_IsGlassPane(surf->material))
             continue;
         if (surf->scissorRect.IsEmpty())
             continue;

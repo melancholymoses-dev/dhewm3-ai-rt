@@ -618,6 +618,38 @@ bool VK_RT_MaterialIsEmissive(const idMaterial *shader, idImage **outEmissiveIma
 }
 
 // ---------------------------------------------------------------------------
+// VK_RT_IsGlassPane
+// Translucent glass needs a diffuse stage or an ambient stage that isn't a
+// multiplicative filter.  Opaque/perforated glass keeps the plain surface-type test.
+// ---------------------------------------------------------------------------
+
+bool VK_RT_IsGlassPane(const idMaterial *shader)
+{
+    if (!shader || shader->GetSurfaceType() != SURFTYPE_GLASS)
+        return false;
+    if (shader->Coverage() != MC_TRANSLUCENT)
+        return true;
+
+    for (int i = 0; i < shader->GetNumStages(); i++)
+    {
+        const shaderStage_t *stage = shader->GetStage(i);
+        if (!stage)
+            continue;
+        if (stage->lighting == SL_DIFFUSE)
+            return true;
+        if (stage->lighting != SL_AMBIENT)
+            continue;
+        const int srcBlend = stage->drawStateBits & GLS_SRCBLEND_BITS;
+        const int dstBlend = stage->drawStateBits & GLS_DSTBLEND_BITS;
+        const bool isFilter = (srcBlend == GLS_SRCBLEND_DST_COLOR && dstBlend == GLS_DSTBLEND_ZERO) ||
+                              (srcBlend == GLS_SRCBLEND_ZERO && dstBlend == GLS_DSTBLEND_SRC_COLOR);
+        if (!isFilter)
+            return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
 // VK_RT_MakeMaterialEntry
 //
 // Converts an idMaterial + vkBLAS_t into a VkMaterialEntry ready for upload
@@ -662,9 +694,9 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
     if (shader->Coverage() == MC_TRANSLUCENT)
     {
         entry.flags |= VK_MAT_FLAG_GLASS;
-        // Same SURFTYPE_GLASS test as the BLAS filter and compositing overlay; only these
+        // Same pane test as the BLAS filter and compositing overlay; only these
         // may act as a reflection plane.
-        if (shader->GetSurfaceType() == SURFTYPE_GLASS)
+        if (VK_RT_IsGlassPane(shader))
             entry.flags |= VK_MAT_FLAG_REAL_GLASS;
     }
 

@@ -563,7 +563,7 @@ static bool VK_RT_NoShadowsExcluded(const idMaterial *shader)
         return false;
     if (shader->Coverage() != MC_TRANSLUCENT)
         return true;
-    return shader->GetSurfaceType() != SURFTYPE_GLASS && !shader->HasGui();
+    return !VK_RT_IsGlassPane(shader) && !shader->HasGui();
 }
 
 // Point a GUI surface's material entry at its live texture slot, resolving the GUI per

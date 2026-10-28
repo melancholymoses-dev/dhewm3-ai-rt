@@ -777,7 +777,7 @@ static void CollectSmokeEmitters(const idRenderEntityLocal *ent, const viewDef_t
 static bool IsGlowOnlyMaterial(const idMaterial *mat)
 {
     return mat && mat->Coverage() == MC_TRANSLUCENT && mat->TestMaterialFlag(MF_NOSHADOWS) &&
-           mat->GetSurfaceType() != SURFTYPE_GLASS && mat->Deform() == DFRM_NONE && !mat->HasGui();
+           !VK_RT_IsGlassPane(mat) && mat->Deform() == DFRM_NONE && !mat->HasGui();
 }
 
 struct glowSurfCandidate_t
