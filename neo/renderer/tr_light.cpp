@@ -247,14 +247,14 @@ void R_SkyboxTexGen(drawSurf_t *surf, const idVec3 &viewOrg)
 
 /*
 ==================
-R_WobbleskyTexGen
+R_WobbleskyTransform
+
+dhewm3-rt: split out of R_WobbleskyTexGen so the Vulkan skybox pipeline can apply
+the same rotation in its vertex shader.  Only the 3x3 part of transform is written.
 ==================
 */
-void R_WobbleskyTexGen(drawSurf_t *surf, const idVec3 &viewOrg)
+void R_WobbleskyTransform(const drawSurf_t *surf, float floatTime, float transform[16])
 {
-    int i;
-    idVec3 localViewOrigin;
-
     const int *parms = surf->material->GetTexGenRegisters();
 
     float wobbleDegrees = surf->shaderRegisters[parms[0]];
@@ -266,8 +266,7 @@ void R_WobbleskyTexGen(drawSurf_t *surf, const idVec3 &viewOrg)
     rotateSpeed = rotateSpeed * 2 * idMath::PI / 60;
 
     // very ad-hoc "wobble" transform
-    float transform[16];
-    float a = tr.viewDef->floatTime * wobbleSpeed;
+    float a = floatTime * wobbleSpeed;
     float s = sin(a) * sin(wobbleDegrees);
     float c = cos(a) * sin(wobbleDegrees);
     float z = cos(wobbleDegrees);
@@ -290,8 +289,8 @@ void R_WobbleskyTexGen(drawSurf_t *surf, const idVec3 &viewOrg)
     axis[0].Cross(axis[1], axis[2]);
 
     // add the rotate
-    s = sin(rotateSpeed * tr.viewDef->floatTime);
-    c = cos(rotateSpeed * tr.viewDef->floatTime);
+    s = sin(rotateSpeed * floatTime);
+    c = cos(rotateSpeed * floatTime);
 
     transform[0] = axis[0][0] * c + axis[1][0] * s;
     transform[4] = axis[0][1] * c + axis[1][1] * s;
@@ -307,6 +306,21 @@ void R_WobbleskyTexGen(drawSurf_t *surf, const idVec3 &viewOrg)
 
     transform[3] = transform[7] = transform[11] = 0.0f;
     transform[12] = transform[13] = transform[14] = 0.0f;
+    transform[15] = 1.0f;
+}
+
+/*
+==================
+R_WobbleskyTexGen
+==================
+*/
+void R_WobbleskyTexGen(drawSurf_t *surf, const idVec3 &viewOrg)
+{
+    int i;
+    idVec3 localViewOrigin;
+
+    float transform[16];
+    R_WobbleskyTransform(surf, tr.viewDef->floatTime, transform);
 
     R_GlobalPointToLocal(surf->space->modelMatrix, viewOrg, localViewOrigin);
 

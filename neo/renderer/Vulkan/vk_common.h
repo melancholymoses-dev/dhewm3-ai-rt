@@ -171,7 +171,7 @@ struct vkPipelines_t
     VkPipelineLayout guiLayout;
     VkPipeline guiOpaquePipeline; // blend disabled (opaque stages)
     VkPipeline guiAlphaPipeline;  // SRC_ALPHA / ONE_MINUS_SRC_ALPHA
-    VkPipeline skyboxPipeline;    // samplerCube skybox path (TG_SKYBOX_CUBE)
+    VkPipeline skyboxPipeline;    // samplerCube skybox path (TG_SKYBOX_CUBE / TG_WOBBLESKY_CUBE)
 
     // Glass RT-reflection overlay pipeline.
     // Drawn additively over MC_TRANSLUCENT surfaces to add ray-traced reflections.

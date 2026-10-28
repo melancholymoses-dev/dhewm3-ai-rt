@@ -1398,7 +1398,7 @@ static VkPipeline VK_CreateGuiPipeline(VkPipelineLayout layout, bool alphaBlend)
                                   VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
 }
 
-// Dedicated skybox pipeline (TG_SKYBOX_CUBE): samplerCube + per-vertex direction.
+// Dedicated skybox pipeline (TG_SKYBOX_CUBE / TG_WOBBLESKY_CUBE): samplerCube + per-vertex direction.
 // Uses the same descriptor layout as guiLayout:
 //   binding 0 = UBO, binding 1 = combined image sampler.
 static VkPipeline VK_CreateSkyboxPipeline(VkPipelineLayout layout)

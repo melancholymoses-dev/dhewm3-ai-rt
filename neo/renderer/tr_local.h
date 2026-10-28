@@ -1368,6 +1368,7 @@ void R_SetLightProject(idPlane lightProject[4], const idVec3 origin, const idVec
 
 void R_AddLightSurfaces(void);
 void R_AddModelSurfaces(void);
+void R_WobbleskyTransform(const drawSurf_t *surf, float floatTime, float transform[16]); // dhewm3-rt
 void R_RemoveUnecessaryViewLights(void);
 
 void R_FreeDerivedData(void);

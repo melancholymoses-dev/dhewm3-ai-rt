@@ -26,6 +26,7 @@ layout(set=0, binding=0) uniform SkyboxParams {
     vec4 u_LocalViewOrigin;
     vec4 u_ColorModulate;
     vec4 u_ColorAdd;
+    vec4 u_CubeRot[3];  // rows of the wobblesky rotation; identity for plain skybox
 };
 
 layout(location = 0) out vec3 vary_CubeDir;
@@ -35,6 +36,7 @@ void main() {
     vec4 position = vec4(in_Position, 1.0);
     gl_Position = u_ModelViewProjection * position;
 
-    vary_CubeDir = in_Position - u_LocalViewOrigin.xyz;
+    vec3 d = in_Position - u_LocalViewOrigin.xyz;
+    vary_CubeDir = vec3(dot(u_CubeRot[0].xyz, d), dot(u_CubeRot[1].xyz, d), dot(u_CubeRot[2].xyz, d));
     vary_Color = clamp(in_Color * u_ColorModulate + u_ColorAdd, 0.0, 1.0);
 }
