@@ -30,26 +30,31 @@ Code release.
 idCVar joy_rumbleEnable("joy_rumbleEnable", "1", CVAR_BOOL | CVAR_ARCHIVE, "Enable gamepad rumble");
 idCVar joy_rumble("joy_rumble", "1.0", CVAR_FLOAT | CVAR_ARCHIVE,
                   "Gamepad rumble overall strength. 0 also disables rumble", 0.0f, 4.0f);
-idCVar joy_rumbleFire("joy_rumbleFire", "1.0", CVAR_FLOAT | CVAR_ARCHIVE, "Rumble scale for weapon fire", 0.0f,
-                      4.0f);
+idCVar joy_rumbleFire("joy_rumbleFire", "1.0", CVAR_FLOAT | CVAR_ARCHIVE, "Rumble scale for weapon fire", 0.0f, 4.0f);
 idCVar joy_rumbleMelee("joy_rumbleMelee", "1.0", CVAR_FLOAT | CVAR_ARCHIVE, "Rumble scale for melee hits and strikes",
                        0.0f, 4.0f);
 idCVar joy_rumbleHit("joy_rumbleHit", "1.0", CVAR_FLOAT | CVAR_ARCHIVE,
                      "Rumble scale for hit confirmation (your shots landing)", 0.0f, 4.0f);
 idCVar joy_rumbleDamage("joy_rumbleDamage", "1.0", CVAR_FLOAT | CVAR_ARCHIVE, "Rumble scale for damage taken", 0.0f,
                         4.0f);
-idCVar joy_rumbleSteps("joy_rumbleSteps", "1.0", CVAR_FLOAT | CVAR_ARCHIVE,
-                       "Rumble scale for big-monster footsteps", 0.0f, 4.0f);
-idCVar joy_rumbleShake("joy_rumbleShake", "1.0", CVAR_FLOAT | CVAR_ARCHIVE,
+idCVar joy_rumbleSteps("joy_rumbleSteps", "1.0", CVAR_FLOAT | CVAR_ARCHIVE, "Rumble scale for big-monster footsteps",
+                       0.0f, 4.0f);
+idCVar joy_rumbleShake("joy_rumbleShake", "0.40", CVAR_FLOAT | CVAR_ARCHIVE,
                        "Rumble scale for screen shake (earthquakes, explosions)", 0.0f, 4.0f);
+idCVar joy_rumbleShakeMin("joy_rumbleShakeMin", "0.4", CVAR_FLOAT | CVAR_ARCHIVE,
+                          "Screen shake (degrees) below which it doesn't rumble", 0.0f, 10.0f);
+idCVar joy_rumbleShakeFull("joy_rumbleShakeFull", "1.5", CVAR_FLOAT | CVAR_ARCHIVE,
+                           "Screen shake (degrees) that gives full shake rumble", 0.1f, 20.0f);
+idCVar joy_rumbleHum("joy_rumbleHum", "1.0", CVAR_FLOAT | CVAR_ARCHIVE,
+                     "Rumble scale for a held weapon's idle hum (chainsaw)", 0.0f, 4.0f);
 idCVar joy_rumbleIdleMs("joy_rumbleIdleMs", "5000", CVAR_INTEGER | CVAR_ARCHIVE,
                         "Silence rumble when the gamepad has had no input for this long (ms). 0 = never", 0, 60000);
-idCVar joy_rumbleFloor("joy_rumbleFloor", "0.2", CVAR_FLOAT | CVAR_ARCHIVE,
+idCVar joy_rumbleFloor("joy_rumbleFloor", "0.1", CVAR_FLOAT | CVAR_ARCHIVE,
                        "Lowest nonzero motor level, to get past the motor's dead band. 0 = linear", 0.0f, 0.6f);
 idCVar joy_rumbleGamma("joy_rumbleGamma", "0.6", CVAR_FLOAT | CVAR_ARCHIVE,
                        "Motor response curve; below 1 lifts weak effects more than strong ones. 1 = linear", 0.2f,
                        1.0f);
-idCVar joy_rumbleLength("joy_rumbleLength", "1.5", CVAR_FLOAT | CVAR_ARCHIVE,
+idCVar joy_rumbleLength("joy_rumbleLength", "1.25", CVAR_FLOAT | CVAR_ARCHIVE,
                         "Scales every effect's duration. 1 = original lengths", 0.5f, 4.0f);
 idCVar joy_rumbleMinMs("joy_rumbleMinMs", "90", CVAR_INTEGER | CVAR_ARCHIVE,
                        "Shortest effect in ms, so the motor has time to spin up. 0 = no minimum", 0, 300);
@@ -78,8 +83,8 @@ static int s_stopResends = 0;   // extra zero updates still owed after a stop
 static bool s_gameLive = false; // last Rumble_Frame verdict, for transition logging
 static bool s_padIdle = false;  // no gamepad input within joy_rumbleIdleMs
 
-static const char *const s_categoryNames[idCommon::RUMBLE_NUM_CATEGORIES] = {"fire", "melee", "hit",
-                                                                             "damage", "step", "shake"};
+static const char *const s_categoryNames[idCommon::RUMBLE_NUM_CATEGORIES] = {"fire", "melee", "hit",  "damage",
+                                                                             "step", "shake", "hum"};
 
 static bool RumbleEnabled(void)
 {
@@ -108,6 +113,8 @@ static idCVar *CategoryScale(int category)
         return &joy_rumbleSteps;
     case idCommon::RUMBLE_SHAKE:
         return &joy_rumbleShake;
+    case idCommon::RUMBLE_HUM:
+        return &joy_rumbleHum;
     default:
         return &joy_rumbleDamage;
     }
@@ -141,6 +148,19 @@ void Rumble_Post(int category, float low, float hi, int durMs)
     if (!RumbleEnabled() || !Rumble_GameLive() || PadIdle(now))
         return;
 
+    // Shake posts the raw view-shake amplitude in degrees; dead-zone it so only a visible
+    // shake rumbles, since MotorCurve's floor lifts any nonzero input.
+    if (category == idCommon::RUMBLE_SHAKE)
+    {
+        const float minDeg = joy_rumbleShakeMin.GetFloat();
+        const float range = Max(joy_rumbleShakeFull.GetFloat() - minDeg, 0.01f);
+        const float t = idMath::ClampFloat(0.0f, 1.0f, (low - minDeg) / range);
+        if (joy_rumbleDebug.GetInteger() >= 1)
+            common->Printf("RUMBLE shake raw=%.3f deg -> %.2f\n", low, t);
+        low = t;
+        hi = 0.3f * t;
+    }
+
     const float scale = CategoryScale(category)->GetFloat();
     low = idMath::ClampFloat(0.0f, 1.0f, low * scale);
     hi = idMath::ClampFloat(0.0f, 1.0f, hi * scale);
@@ -152,10 +172,12 @@ void Rumble_Post(int category, float low, float hi, int durMs)
     const float env = SlotEnvelope(s, now);
     const int remaining = env > 0.0f ? s.startMs + s.durMs - now : 0;
 
-    s.low = Max(low, s.low * env);
-    s.hi = Max(hi, s.hi * env);
+    // The hum tracks a waveform, so each post replaces the slot; holding the max would flatten the dips.
+    const bool hum = (category == idCommon::RUMBLE_HUM);
+    s.low = hum ? low : Max(low, s.low * env);
+    s.hi = hum ? hi : Max(hi, s.hi * env);
     s.startMs = now;
-    s.durMs = Max(durMs, remaining);
+    s.durMs = hum ? durMs : Max(durMs, remaining);
 
     if (joy_rumbleDebug.GetInteger() >= 1)
     {
@@ -208,7 +230,7 @@ void Rumble_Frame(bool gameLive)
     for (int i = 0; i < idCommon::RUMBLE_NUM_CATEGORIES; i++)
     {
         const float env = SlotEnvelope(s_slots[i], now);
-        if (env <= 0.0f)
+        if (env <= 0.0f || i == idCommon::RUMBLE_HUM)
             continue;
         low += s_slots[i].low * env;
         hi += s_slots[i].hi * env;
@@ -220,6 +242,17 @@ void Rumble_Frame(bool gameLive)
     const float rawHi = hi;
     low = MotorCurve(low);
     hi = MotorCurve(hi);
+
+    // A continuous hum has time to spin the motor up, so it skips the floor: added linearly
+    // after the curve, otherwise any hum sits at joy_rumbleFloor or above.
+    const rumbleSlot_t &hum = s_slots[idCommon::RUMBLE_HUM];
+    const float humEnv = SlotEnvelope(hum, now);
+    if (humEnv > 0.0f)
+    {
+        low = idMath::ClampFloat(0.0f, 1.0f, low + hum.low * humEnv * master);
+        hi = idMath::ClampFloat(0.0f, 1.0f, hi + hum.hi * humEnv * master);
+        active++;
+    }
 
     if (active == 0)
     {

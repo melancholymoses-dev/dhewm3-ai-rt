@@ -2272,6 +2272,22 @@ void idWeapon::PresentWeapon(bool showViewModel)
         StopSound(SND_CHANNEL_BODY, false);
     }
 
+    // dhewm3-rt: idle rumble that follows the hum's waveform, so the chainsaw chugs in your
+    // hands.  RUMBLE_HUM mixes linearly (no motor floor); values are direct motor levels.
+    if (sndHum && status == WP_READY && !WEAPON_ATTACK && refSound.referenceSound && gameLocal.isNewFrame &&
+        owner == gameLocal.GetLocalPlayer())
+    {
+        const bool saw = !idStr::Icmp(weaponDef->GetName(), "weapon_chainsaw");
+        const float idleLow = weaponDef->dict.GetFloat("rumble_idle_low", saw ? "0.10" : "0");
+        const float idleHi = weaponDef->dict.GetFloat("rumble_idle_hi", saw ? "0.12" : "0");
+        // CurrentAmplitude spans 0..~1.41 (atan of peak-to-peak / 45 degrees).
+        const float amp = idMath::ClampFloat(0.0f, 1.0f, refSound.referenceSound->CurrentAmplitude() / 1.41f);
+        if (amp > 0.0f && (idleLow > 0.0f || idleHi > 0.0f))
+        {
+            Game_Rumble(idCommon::RUMBLE_HUM, idleLow * amp, idleHi * amp, 60);
+        }
+    }
+
     UpdateSound();
 }
 
@@ -3428,8 +3444,8 @@ void idWeapon::Event_Melee(void)
         {
             const idDict &md = meleeDef->dict;
             const bool saw = !idStr::Icmp(weaponDef->GetName(), "weapon_chainsaw");
-            Game_Rumble(idCommon::RUMBLE_MELEE, md.GetFloat("rumble_rev_low", "0"),
-                        md.GetFloat("rumble_rev_hi", saw ? "0.08" : "0"), md.GetInt("rumble_rev_ms", "150"));
+            Game_Rumble(idCommon::RUMBLE_MELEE, md.GetFloat("rumble_rev_low", saw ? "0.1" : "0"),
+                        md.GetFloat("rumble_rev_hi", saw ? "0.25" : "0"), md.GetInt("rumble_rev_ms", "150"));
         }
 
         idVec3 start = playerViewOrigin;
@@ -3547,17 +3563,20 @@ void idWeapon::Event_Melee(void)
         if (ent && owner == gameLocal.GetLocalPlayer())
         {
             const idDict &md = meleeDef->dict;
+            // The saw's low motor is already maxed by damage; its bite is the high-frequency motor.
+            const bool saw = !idStr::Icmp(weaponDef->GetName(), "weapon_chainsaw");
             if (hit && (ent->IsType(idActor::Type) || ent->IsType(idAFAttachment::Type)))
             {
                 const float dmg = md.GetFloat("damage") * owner->PowerUpModifier(MELEE_DAMAGE);
                 const float defLow = idMath::ClampFloat(0.4f, 1.0f, dmg / 50.0f);
                 Game_Rumble(idCommon::RUMBLE_MELEE, md.GetFloat("rumble_hit_low", va("%f", defLow)),
-                            md.GetFloat("rumble_hit_hi", "0.3"), md.GetInt("rumble_hit_ms", "180"));
+                            md.GetFloat("rumble_hit_hi", saw ? "0.85" : "0.3"), md.GetInt("rumble_hit_ms", "180"));
             }
             else if (*hitSound != '\0')
             {
-                Game_Rumble(idCommon::RUMBLE_MELEE, md.GetFloat("rumble_strike_low", "0.15"),
-                            md.GetFloat("rumble_strike_hi", "0.45"), md.GetInt("rumble_strike_ms", "60"));
+                Game_Rumble(idCommon::RUMBLE_MELEE, md.GetFloat("rumble_strike_low", saw ? "0.4" : "0.15"),
+                            md.GetFloat("rumble_strike_hi", saw ? "0.7" : "0.45"),
+                            md.GetInt("rumble_strike_ms", saw ? "150" : "60"));
             }
         }
 

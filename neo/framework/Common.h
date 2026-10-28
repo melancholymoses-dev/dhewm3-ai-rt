@@ -305,7 +305,8 @@ class idCommon
         RUMBLE_HIT,
         RUMBLE_DAMAGE,
         RUMBLE_STEP, // big-monster footsteps; append new categories so older engines reject them
-        RUMBLE_SHAKE, // screen shake from sound shaders with `shakes`
+        RUMBLE_SHAKE, // screen shake; low = raw shake amplitude in degrees, remapped by the mixer
+        RUMBLE_HUM,   // continuous weapon hum (chainsaw idle); mixed linearly, no floor/gamma
         RUMBLE_NUM_CATEGORIES
     };
 

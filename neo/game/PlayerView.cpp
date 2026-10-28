@@ -417,11 +417,9 @@ void idPlayerView::CalculateShake()
     shakeAng[2] = gameLocal.random.CRandomFloat() * shakeVolume;
 
     // dhewm3-rt: shake rumble, re-posted each frame so it holds while the shake lasts.
+    // The mixer dead-zones the raw amplitude (joy_rumbleShakeMin/Full).
     if (shakeVolume > 0.0f && player == gameLocal.GetLocalPlayer())
-    {
-        Game_Rumble(idCommon::RUMBLE_SHAKE, idMath::ClampFloat(0.0f, 1.0f, shakeVolume),
-                    idMath::ClampFloat(0.0f, 0.5f, shakeVolume * 0.3f), 100);
-    }
+        Game_Rumble(idCommon::RUMBLE_SHAKE, shakeVolume, 0.0f, 100);
 }
 
 /*
