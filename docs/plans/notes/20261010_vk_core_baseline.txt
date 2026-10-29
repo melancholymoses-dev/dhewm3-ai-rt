@@ -308,6 +308,8 @@ r_rtShadowSamples 3, bloom off; probe resolve -0.9 and froxel fill -0.5 unexplai
 
 =====================================================================================
 PRESET SWEEP, 2026-10-28. Ryzen 9 5950X / RTX 2070 (8 GB), mchq, 1440p. PROVISIONAL.
+SUPERSEDED by docs/plans/notes/20261029_2070_preset_baseline.txt (4 routes, current
+build). Keep this block only for the 10-28 -> 10-29 comparison.
 =====================================================================================
 Files mchq2070_{high,med,low}.csv, ~2150 frames each, current build (batch cap 8, opaque
 reflections on). To be redone after the tuning passes; the 4070 has no capture of this build,

@@ -1,0 +1,115 @@
+PRESET BASELINE, 2026-10-29. Ryzen 9 5950X / RTX 2070 (8 GB). 2560x1440 output.
+=====================================================================================
+Supersedes the PROVISIONAL preset sweep of 2026-10-28 in 20261010_vk_core_baseline.txt
+(mchq only, pre-tuning, and its "low is not GPU-limited" reading no longer holds).
+Current build: shadow batch cap 8, opaque reflections on, non-blocking upload, pooled
+BLAS storage/scratch/geometry.
+
+Recipe as documented in 20261010_vk_core_baseline.txt ("Next capture"), com_fixedTic 1,
+r_swapInterval 0. Routes: mchq (Mars City HQ), r2r (Enpro / recycling 2), commfire
+(communications fire), delta (Delta Labs). Files base/{route}_{low,med,high}.csv.
+Reproduce any row with `python tools/vk_profile_report.py <file>.csv`.
+
+Presets (Dhewm3SettingsMenu.cpp rtQualityRows)
+----------------------------------------------
+                              low            med            high
+  r_fsr / fsrQuality       2 / Bal 1.7x   2 / Qual 1.5x   native (scale 1.0)
+  render resolution        1506x847       1706x960        2560x1440
+  r_rtReflectionMode       1 (glass)      3 (all)         3 (all)
+  r_rtShadowSamples        1              2               2
+  r_rtAOSamples            2              2               4
+  r_rtGIProbeRays          64             96              128
+  r_rtGIProbeUpdates/f     512            512             1024
+  r_rtVolFroxel XxYxZ      120x68x48      180x100x72      240x135x96
+
+FRAME TIME.  Wall clock = frame.backend + frame.game + frame.frontend.  p50 / p95 ms,
+fps in brackets.  frame.backend alone undercounts by 1.5-2.7 ms (game + frontend are
+real serial work), so do not quote backend as fps the way earlier blocks did.
+                   low                  med                  high
+  mchq        7.52 / 12.19  [133/82]  14.40 / 19.27 [70/52]  26.46 / 37.50 [38/27]
+  r2r         8.90 / 12.11  [112/83]  15.79 / 19.94 [63/50]  28.05 / 38.79 [36/26]
+  commfire   10.33 / 15.87  [97/63]   17.43 / 26.62 [57/38]  35.22 / 51.48 [28/19]
+  delta       7.07 / 14.11  [142/71]  13.16 / 22.59 [76/44]  29.55 / 52.38 [34/19]
+  gpu.total + gpu.raster is within 2-3% of wall p50 in all 12 captures and above it on
+  ~50% of frames: GPU-bound everywhere, with no measurement gap left to explain.
+
+Measured, p50 unless stated (ms)
+--------------------------------
+                     mchq L  M   H  |  r2r L  M   H  | cfire L  M   H  | delta L  M   H
+  gpu.total (RT)      3.99 9.11 20.26  3.66 9.23 20.57  6.44 12.23 28.15  4.74 9.17 20.76
+  gpu.raster          4.46 5.85  6.99  5.03 6.12  7.15  4.51  6.24  8.02  3.82 4.09  7.83
+  gpu.AO              1.41 1.80  6.57  1.35 1.77  6.30  1.84  2.30  8.88  1.45 1.84  6.91
+  gpu.Refl            0.00 1.85  3.28  0.00 2.10  3.55  1.20  3.02  5.95  0.34 1.93  4.29
+  gpu.ReflTemporal       - 0.42  0.47     - 0.40  0.46  0.13  0.56  0.80     - 0.47 0.61
+  gpu.ReflAtrous         - 0.58  1.09     - 0.54  1.10     -  0.46  0.94     - 0.60 1.21
+  gpu.Shadows         0.75 1.93  4.25  0.99 1.78  4.47  1.74  3.36  7.87  1.01 2.19 1.76
+  gpu.Interactions    1.55 2.74  5.54  2.49 3.27  6.15  1.45  2.92  6.30  0.95 1.12 6.31
+  gpu.FroxelFill      0.26 0.88  1.96  0.31 0.86  1.98  0.26  0.78  1.87  0.23 0.77 2.10
+  gpu.ProbeResolve    0.34 0.92  0.91  0.30 0.91  0.85  0.33  0.97  0.87  0.72 0.85 2.02
+  gpu.TLAS            0.24 0.24  0.24  0.24 0.25  0.24  0.22  0.22  0.22  0.23 0.23 0.23
+  gpu.Bloom           0.29 0.30  0.36  0.29 0.30  0.37  0.30  0.31  0.37  0.29 0.30 0.37
+  CPU busy            2.05 2.22  2.43  2.17 2.43  2.64  2.51  2.91  3.11  1.87 2.20 2.66
+  lights view/casting 16/12 17/12 17/12  41/19 39/18 35/17  20/11 21/11 21/11  13/10 13/10 15/12
+  frames over cap 8    81%  71%  73%    89%  84%  80%    74%  80%  86%    60%  67%  81%
+  serial handoff/light 0.20 0.30 0.58  0.23 0.43 0.86  0.41 0.60 0.86  0.41 0.83 1.93
+  RSS MB             313-317 318-320 272-294 | 177-242 204-254 190-322 | ~288 ~285 255-264 | 206-247 222-249 203-229
+  VRAM MB (of 7449)   2444 2504 2402  2377 2438 2299  2471 2532 2393  2389 2424 2290
+  frames              2576 2261 2044  5811 3997 3519  2437 1354 1020  4912 3226 1360
+  CPU is 2-3 ms against 8-35 ms of GPU in every capture. No CPU problem anywhere.
+
+What the presets actually buy
+-----------------------------
+AO is the biggest single step: 2 -> 4 samples plus native resolution takes it 1.4-1.8 ->
+6.3-8.9 ms, a 3.6-4.7x jump for one preset notch.  It is the top RT pass at high in all
+four routes.  Reflections are the second lever: low's glass-only mode reads 0.00 where no
+glass is in view (mchq, r2r) and 0.34-1.20 where there is (delta, commfire).
+Raster barely moves with the preset (3.8 -> 8.0 ms) because Interactions scale with
+pixels only; the preset does not change the light or surface count.
+gpu.TLAS is flat at 0.22-0.25 ms in all 12 captures, as expected for resolution-
+independent work.
+
+Low clears 90 fps on all four routes and is no longer pacing-limited.  The 2026-10-28
+"low reads GPU 8.6 but backend 14.9, fenceWait 12.1, something paces near 67 fps" is
+gone: backend p50 is now 4.9-7.8 ms with fenceWait 2.9-5.3.
+Medium is the 60 fps preset on this card (57-76 fps p50), high is 28-38.
+
+FINDING: the BLAS rebuild hitch is closed.  cpu.TLAS.BLAS p50 0.04-0.09 ms, max 0.28 ms
+  across all 12 captures, including frames carrying 15-20 rebuilds.  The 2026-10-13
+  block recorded 10-130 ms single frames on the same work.  Pooled storage plus the
+  non-blocking upload removed it; delta, which was the worst offender, now shows
+  cpu.TLAS.BLAS max 0.21 ms.  Drop this from the outstanding list.
+
+FINDING: serial shadow dispatch still dominates and gets worse with the preset.  The
+  handoff (Interactions climbs while Shadows falls) confirms in all 12 captures.  Cost
+  per serial light scales with the preset: 0.20-0.41 at low, 0.30-0.83 at med, 0.58-1.93
+  at high.  60-89% of frames overflow the cap of 8.  delta_high is the extreme:
+  Interactions +28.93 ms across 15 serial lights, and gpu.raster p95 28.1 against a p50
+  of 7.8.  This is the one unresolved GPU item in the sweep.
+
+FINDING: commfire remains the worst route and for the same reason as on every other
+  card.  gpu.Interactions p95 21.6 / max 27.1 at high; gpu.raster p95 23.6.  AO 8.88
+  and Shadows 7.87 are also the highest of the four.  28 fps p50 / 19 fps p95 at high.
+
+Remaining tails, none of them CPU work
+--------------------------------------
+  Worst single frames are all wait.uploadFlush: mchq_high 37.5 ms, r2r_high 29.1,
+  delta_med 20.3, delta_low 12.2, r2r_med 13.7.  p99 is 0.06-0.13 ms, i.e. n~=1 per
+  capture, and per the 2026-10-12 correction this tag is the CPU parking on the upload
+  fence while the GPU catches up, not upload work.  commfire and delta_high show max
+  0.11 ms, so it is not a property of the route.
+  frame.game p50 0.23-0.53 but p99 6.0-9.6 ms, in 8-12% of frames, clustered rather
+  than periodic.  Not explained by this capture and not attributed to any span.  First
+  thing to check on the next pass; suspect fixedTic catch-up.
+  No mid-frame image loads, no pipeline compiles above 0.33 ms, no VRAM pressure
+  (2.3-2.5 GB of 7.4), spans close exactly (|residual - frame.other| = 0) everywhere.
+  RSS is 180-320 MB and drifts under 70 MB per capture, i.e. the ~800 MB reading in the
+  10-28 block was the post-vid_restart footprint, not a steady state.
+
+Outstanding after this sweep
+----------------------------
+  Serial shadow dispatch: raise or remove the batch cap.  delta_high is the test case.
+  AO at high: 4 samples at native 1440p costs 6.3-8.9 ms on a 2070.  Either the samples
+  or the AO resolution needs a cheaper path before high is usable on this class of card.
+  frame.game's 6-10 ms p99.
+  No like-for-like capture of this build exists on the 4070 Ti Super or the 9070 XT, so
+  there is still no cross-card ratio for the current engine.
