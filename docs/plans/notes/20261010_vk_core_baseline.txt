@@ -306,6 +306,43 @@ r_rtShadowSamples 3, bloom off; probe resolve -0.9 and froxel fill -0.5 unexplai
   (CPU busy 3.40 ms). gpu.Refl has no internal split — trace, hit shading (<=8 shadow
   rays) and the reflected volumetric march are one span.
 
+=====================================================================================
+PRESET SWEEP, 2026-10-28. Ryzen 9 5950X / RTX 2070 (8 GB), mchq, 1440p. PROVISIONAL.
+=====================================================================================
+Files mchq2070_{high,med,low}.csv, ~2150 frames each, current build (batch cap 8, opaque
+reflections on). To be redone after the tuning passes; the 4070 has no capture of this build,
+so no like-for-like ratio exists yet. Do not quote the 4070 comparison below as final.
+
+                             high          med           low
+  gpu.total (RT) p50         21.14         9.70          4.39
+  gpu.raster p50              5.49         5.02          4.20
+  GPU frame p50 = fps        26.6 / 38     14.7 / 68     8.6 / 116
+  frame.backend p50 = fps    26.1 / 38     15.3 / 65     14.9 / 67   <- low is not GPU-limited
+  gpu.AO p50                  6.74         1.81          1.40
+  gpu.Refl p50 (+Temp +Atr)   4.44 +.50 +1.68   2.41 +.46 +.85   0.00
+  gpu.Shadows / Interact      3.52 / 4.35  1.90 / 2.04   1.14 / 1.57
+  gpu.FroxelFill p50          2.01         0.88          0.31
+  CPU busy p50                2.76         2.82          2.70
+  lights.view / casting       16 / 12      16 / 12       17 / 13
+  frames over batch cap (8)   69%          66%           73%
+  serial handoff ms/light     0.60         0.33          0.18
+  VRAM MB (of 7230)           2245         2384          2323
+  RSS MB                      801          809           809
+
+Reading:
+  GPU-bound at high and med. Presets scale through AO (6.7 -> 1.4) and Refl (6.6 -> 0).
+  Low: GPU 8.6 ms but backend 14.9 (p5-p95 13.6-15.9), fenceWait 12.1. Something paces
+  the frame near 67 fps; check r_swapInterval / com_fixedTic before quoting 116 fps.
+  Med backend 15.3 may sit on the same floor.
+  Serial shadow handoff reproduces (66-73% of frames overflow the cap); cost per light
+  is 0.60 ms on high vs 0.37 on the 4070 (old build).
+  Vs 9070 XT 10-17 (RT ~17 ms, 56 fps, same route): 2070 high is ~1.5x slower; med/low faster.
+  Raster 4.2-5.5 ms vs 3.47 on the 4070 (old build): ~1.2-1.6x.
+  Low RT 4.39 is below the old 4070 mchq RT 5.69 despite the slower card: low must disable
+  work the old baseline ran (AO/shadow samples or render scale). Confirm the low preset.
+  RSS ~800 MB vs 160-250 on earlier runs: same post-vid_restart jump as the R7 note.
+  No VRAM pressure, no image loads, no waits above 0.32 ms.
+
 Next capture
 ------------
 The only capture recipe. r_vkRTProfileGroups is a console filter and is always left at 63;
