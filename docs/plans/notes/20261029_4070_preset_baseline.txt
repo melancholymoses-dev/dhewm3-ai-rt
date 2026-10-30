@@ -1,0 +1,174 @@
+PRESET BASELINE, 2026-10-29. Ryzen 9 5950X / RTX 4070 Ti Super (16 GB). 2560x1440.
+=====================================================================================
+Companion to 20261029_2070_preset_baseline.txt (same build, same routes, same recipe).
+Presets med / high / ultra. Low was not re-run on this card; the low column in the 2070
+doc is the only low data and belongs to the 2070.
+
+Files base/{route}_{med,high,ultra}.csv, plus base/mchq_low.csv.
+Reproduce any row with `python tools/vk_profile_report.py <file>.csv`.
+
+
+
+Presets (Dhewm3SettingsMenu.cpp rtQualityRows)
+----------------------------------------------
+                          med             high            ultra
+  render resolution    1706x960        2560x1440       2560x1440
+  r_fsr / fsrQuality   2 / Qual 1.5x   native 1.0      native 1.0
+  r_rtReflectionMode   3 (all)         3 (all)         3 (all)
+  r_rtReflOpaqueHalfRes  1               1               0
+  r_rtReflShadowPicks    1               1               2
+  r_rtShadowSamples      2               2               4
+  r_rtAOSamples          2               4               8
+  r_rtGIProbeRays       96             128             192
+  r_rtGIProbeUpdates/f 512            1024            2048
+  r_rtVolFroxel      180x100x72      240x135x96      320x180x128
+  high -> ultra does not change resolution.  Its whole cost is sample counts plus
+  full-resolution opaque reflections (ReflOpaqueHalfRes 1 -> 0).
+
+FRAME TIME.  ms, and fps in brackets.  Per frame, max(CPU wall, gpu.total + gpu.raster),
+where CPU wall = frame.backend + frame.game + frame.frontend.  See MEASUREMENT below for
+why the max is needed on this card and what it does and does not bound.
+                    p50            p95           p99 (1% low)
+  mchq med     4.77 [210]     10.77 [93]      12.74 [79]
+  mchq high    8.66 [116]     11.43 [88]      12.50 [80]
+  mchq ultra  14.68 [68]      19.43 [52]      20.93 [48]
+  r2r med      4.88 [205]      7.40 [135]     10.70 [93]
+  r2r high     8.72 [115]     11.40 [88]      12.74 [79]
+  r2r ultra   14.89 [67]      18.72 [53]      20.41 [49]
+  cfire med    5.36 [187]     11.94 [84]      13.27 [75]
+  cfire high   9.81 [102]     15.32 [65]      16.04 [62]
+  cfire ultra 16.49 [61]      25.53 [39]      27.38 [37]
+  delta med    4.60 [217]     11.03 [91]      13.44 [74]
+  delta high   8.39 [119]     13.77 [73]      14.96 [67]
+  delta ultra 15.16 [66]      23.76 [42]      26.78 [37]
+  mchq low     3.08 [325]     11.27 [89]      12.86 [78]   (bonus, see caveat 2)
+
+HIGH IS THE 60 FPS PRESET, CONFIRMED, with margin at every percentile.  Worst route
+  (commfire) reads p50 102 / p95 65 / 1% low 62 fps.  Nothing on this card drops high
+  below 60 on any of the four routes.
+ULTRA DIPS, CONFIRMED.  p50 is 61-68 fps, so it sits on the line rather than above it,
+  and p95 falls to 39-53 with 1% lows of 37-49.  commfire and delta are the worst: p95
+  25.5 and 23.8 ms.  Ultra is a 40-50 fps experience in the heavy routes, not 60.
+MED is 187-217 fps p50 and is not GPU-limited on this card at all (see MEASUREMENT).
+
+Measured, p50 / p95 ms
+----------------------
+                     mchq M      mchq H      mchq U    | r2r M      r2r H      r2r U
+  gpu.total (RT)   2.77/3.78   6.13/8.82  11.73/14.72  2.85/4.05  6.30/8.95  11.96/15.74
+  gpu.raster       1.72/2.87   2.02/4.28   2.62/6.26   1.85/2.69  2.04/3.79   2.54/5.72
+  gpu.AO           0.45/0.54   1.71/2.11   3.13/3.69   0.45/0.57  1.72/2.32   2.99/3.98
+  gpu.Refl         0.63/1.30   1.13/2.39   3.67/5.22   0.67/1.15  1.19/2.05   3.76/5.01
+  gpu.ReflTemporal 0.13/0.18   0.19/0.30   0.19/0.31   0.13/0.17  0.18/0.25   0.18/0.25
+  gpu.ReflAtrous   0.19/0.21   0.35/0.43   0.36/0.45   0.18/0.22  0.34/0.46   0.33/0.43
+  gpu.Shadows      0.45/0.84   0.80/2.32   1.77/3.65   0.47/1.27  1.05/2.74   1.70/4.90
+  gpu.Interactions 0.62/1.77   1.46/3.66   1.97/5.73   0.86/1.74  1.63/3.36   2.10/5.29
+  gpu.FroxelFill   0.24/0.39   0.56/0.86   1.32/2.02   0.33/0.42  0.67/0.95   1.47/2.06
+  gpu.ProbeResolve 0.30/0.35   0.63/0.78   0.67/0.79   0.28/0.31  0.62/0.71   0.62/0.73
+  gpu.TLAS         0.16/0.17   0.17/0.17   0.17/0.18   0.16/0.18  0.17/0.18   0.16/0.18
+  CPU busy p50       1.59        1.80        2.13        1.78       2.08        2.20
+  lights view/cast  15/12       16/13       18/12       41/18      37/17       39/17
+  frames over cap 8   62%         72%         71%         83%        77%         87%
+  serial ms/light    0.07        0.17        0.25        0.08       0.16        0.33
+  VRAM MB (15506)    2688        2424        2600        2500       2352        2528
+  frames             3259        2754        2203       10166       6148        4512
+
+                     cfire M     cfire H     cfire U   | delta M    delta H     delta U
+  gpu.total (RT)   3.47/4.19   7.49/9.34  12.91/15.74  2.83/3.61  6.25/8.16  11.71/14.36
+  gpu.raster       1.86/3.66   2.32/6.86   3.69/11.22  1.81/3.80  2.16/5.89   3.44/10.94
+  gpu.AO           0.60/0.64   2.30/2.65   4.26/4.84   0.48/0.57  1.86/2.23   3.40/4.23
+  gpu.Refl         0.90/1.12   1.71/2.12   3.60/4.58   0.72/1.20  1.31/1.94   3.77/5.86
+  gpu.Shadows      0.67/1.30   1.53/2.76   1.60/5.16   0.26/0.78  0.61/1.86   1.04/3.63
+  gpu.Interactions 0.73/2.55   1.66/6.10   3.07/10.47  0.75/2.54  1.56/4.97   2.88/10.27
+  gpu.FroxelFill   0.27/0.38   0.64/1.04   1.36/2.01   0.22/0.41  0.49/0.90   1.15/2.17
+  gpu.ProbeResolve 0.31/0.33   0.29/0.30   0.29/0.30   0.30/0.33  0.64/0.74   0.28/0.73
+  CPU busy p50       1.83        2.19        2.36        1.69       1.96        2.18
+  lights view/cast  22/12       22/12       22/12       14/12      14/12       16/13
+  frames over cap 8   85%         83%         84%         87%        88%         88%
+  serial ms/light    0.12        0.62        1.04        0.21       0.35        0.64
+  VRAM MB            2585        2446        2622        2497       2358        2534
+  frames             2629        2243        1567        3912       3925        2606
+  mchq low: RT 1.32/2.20, raster 1.37/2.17, AO 0.34, Refl 0.00 (glass only, none in view),
+  Shadows 0.25, Interactions 0.36, CPU busy 1.48, VRAM 2627.
+
+What high -> ultra costs, and where
+-----------------------------------
+RT roughly doubles (6.1-7.5 -> 11.7-12.9 ms) with no resolution change.  Two passes own
+it almost entirely:
+  Refl  1.13-1.71 -> 3.60-3.77 ms.  ReflOpaqueHalfRes 1 -> 0 is 4x the reflection rays,
+        and it lands as a flat ~2.3 ms on every route.  This is the single most expensive
+        preset toggle in the engine.
+  AO    1.71-2.30 -> 2.99-4.26 ms, from 4 -> 8 samples.  Not quite 2x, so the pass has
+        meaningful fixed cost.
+  FroxelFill 0.49-0.67 -> 1.15-1.47 ms tracks the froxel grid's 2.5x voxel count.
+Reflection denoising does not scale: ReflTemporal and ReflAtrous are flat 0.18-0.40 ms
+from med through ultra.  Denoise is ~5% of reflection cost at ultra.
+gpu.TLAS is 0.15-0.17 ms in all 13 captures, as it should be for resolution-independent
+work.  It was 0.22-0.25 on the 2070.
+
+Vs the 2070, same build, same routes (p50 gpu.total + gpu.raster)
+-----------------------------------------------------------------
+                 2070      4070 Ti S    ratio
+  mchq med      14.95        4.68        3.2x
+  mchq high     27.25        8.44        3.2x
+  cfire med     18.48        5.28        3.5x
+  cfire high    36.17        9.66        3.7x
+  delta med     13.25        4.55        2.9x
+  delta high    28.58        8.20        3.5x
+  r2r high      27.71        8.56        3.2x
+  A flat ~3.2x on RT-dominated frames, widening to 3.7x on commfire where the 2070 is
+  also fighting Interactions.  The 4070 Ti Super at ultra (11.7-12.9 ms RT) is still
+  cheaper than the 2070 at high (20.3-28.2 ms).
+
+MEASUREMENT: the two frame-time estimates diverge on this card
+--------------------------------------------------------------
+On the 2070, CPU wall and gpu.total + gpu.raster agreed within 2-3% everywhere, so either
+could be quoted.  Here they do not:
+  ultra        wall 13.7-15.7 vs GPU sum 14.5-16.4.  Agree within 6%, frame.fenceWait p50
+               9.0-11.3 ms.  Clean GPU-bound; trust these numbers.
+  high         wall 6.0-8.8 vs GPU sum 8.2-9.7.  fenceWait p50 1.3-4.5 ms.  Mostly
+               GPU-bound.
+  med          wall 2.9-4.0 vs GPU sum 4.6-5.3, a 1.3-1.7x gap, and fenceWait p50 is
+               0.00 — nothing blocks.  A GPU span cannot exceed the frame it sits in while
+               nothing waits on it, so at med the GPU spans are inflated: the timestamps
+               bracket barrier bubbles and clock ramp-up on a card that is 60% idle.
+  The table above takes the per-frame max, which is a lower bound on frame time and an
+  upper bound on GPU work.  At med it is neither tight nor interesting; med on this card
+  is simply "far above any refresh rate you have".  At high and ultra it is accurate.
+  Rule earned: check frame.fenceWait before trusting a GPU-span sum as frame time.  Zero
+  fenceWait with a GPU sum above the frame means the spans are padded, not that the GPU
+  is behind.
+
+FINDING: at med and high the frame-time tail is the game tic, not the renderer.  Of the
+  frames at or above the capture's own p95: delta_med 96% carry frame.game > 4 ms,
+  r2r_med 91%, mchq_high 51%, commfire_high 18%, r2r_ultra 4%.  So the crossover is near
+  high — below it the game tic sets the tail, above it the GPU does.
+  The height of that tail tracks how big the game spikes are in the session, not the
+  preset.  mchq low / med / high and r2r high all land at p95 10.8-11.4 ms with
+  frame.game p95 7.8-9.0, while the r2r med re-run reads p95 7.40 ms with frame.game p95
+  3.85 — same mechanism, smaller spikes, 135 fps instead of ~90.  So do not quote a fixed
+  "~90 fps p95 ceiling": quote frame.game.
+  This promotes the 2070 doc's open frame.game item.  On a fast card it is the limit, and
+  at 4.8-12% of frames it is frequent enough to feel.
+
+FINDING: the BLAS rebuild hitch stays closed on this card.  cpu.TLAS.BLAS max is
+  0.10-0.43 ms across all 13 captures.
+  wait.uploadFlush is p99 0.00-0.05 ms everywhere, with n~=1 outliers at delta_ultra
+  18.67, r2r_ultra 15.06, delta_high 11.74 — the same GPU back-pressure
+  signature as before, and absent on commfire and mchq entirely.
+  No mid-frame image loads, spans close exactly, VRAM 2.35-2.69 GB of 15.5, RSS 158-344 MB.
+
+FINDING: serial shadow dispatch confirms in all 13 captures but is cheap here.  0.07-0.21
+  ms per serial light at med, 0.16-0.62 at high, 0.25-1.04 at ultra, against 0.20-1.93 on
+  the 2070.  62-88% of frames still overflow the cap of 8, and r2r_med overflows on 83%
+  of 10166 frames at 0.08 ms/light.  commfire_ultra is the worst
+  (1.04 ms/light, gpu.raster p95 11.2 against p50 3.7).  Still the top raster item, but
+  it no longer sets the frame on this card.
+
+Outstanding
+-----------
+  frame.game's 3.9-9.8 ms p95, now the binding constraint at med and high.
+  Opaque reflections at full resolution cost a flat ~2.3 ms: the only thing separating
+  ultra from high worth optimising.  Half-res + a better upsample would likely give most
+  of ultra's reflections at high's price.
+  Decide whether ultra should keep ReflOpaqueHalfRes 0 given it is what pushes the heavy
+  routes to 40-50 fps p95.

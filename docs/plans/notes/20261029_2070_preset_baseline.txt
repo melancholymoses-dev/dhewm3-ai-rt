@@ -9,6 +9,9 @@ Recipe as documented in 20261010_vk_core_baseline.txt ("Next capture"), com_fixe
 r_swapInterval 0. Routes: mchq (Mars City HQ), r2r (Enpro / recycling 2), commfire
 (communications fire), delta (Delta Labs). Files base/{route}_{low,med,high}.csv.
 Reproduce any row with `python tools/vk_profile_report.py <file>.csv`.
+Companion: 20261029_4070_preset_baseline.txt (4070 Ti Super, med/high/ultra).  The med/high 
+CPU-wall-equals-GPU-sum identity used below does NOThold on the faster card — 
+see that doc's MEASUREMENT section before reusing the method.
 
 Presets (Dhewm3SettingsMenu.cpp rtQualityRows)
 ----------------------------------------------
